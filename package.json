@@ -1,0 +1,31 @@
+{
+  "name": "command-manager",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev --features desktop",
+    "tauri:build": "tauri build --features desktop"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "dockview-vue": "^8.3.1",
+    "lucide-vue-next": "^1.0.0",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.5",
+    "@types/node": "^26.6.2",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vue-tsc": "^2.1.10"
+  }
+}

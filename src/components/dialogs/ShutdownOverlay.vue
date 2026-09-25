@@ -1,0 +1,209 @@
+<template>
+  <div v-if="visible" class="shutdown-overlay">
+    <div class="shutdown-card">
+      <div class="brand-header">
+        <div class="brand-badge">CM</div>
+        <h2 class="app-title">Command Manager</h2>
+      </div>
+
+      <div class="status-headline">
+        <RotateCw class="spin-icon" :size="20" />
+        <span>Đang dừng an toàn các tiến trình (Graceful Shutdown)...</span>
+      </div>
+
+      <p class="description">
+        Đang gửi tín hiệu <code>SIGTERM</code> tới toàn bộ tiến trình con đang chạy.
+        Nếu tiến trình không dừng trong <strong>{{ countdown }} giây</strong>, hệ thống sẽ gửi <code>SIGKILL</code>.
+      </p>
+
+      <!-- Active Stopping List -->
+      <div class="stopping-list">
+        <div
+          v-for="proc in processesList"
+          :key="proc.commandId"
+          class="stopping-item"
+        >
+          <span class="proc-name">{{ proc.commandName }}</span>
+          <span v-if="proc.pid" class="proc-pid">PID: {{ proc.pid }}</span>
+          <span class="proc-status">Đang dọn dẹp kết nối...</span>
+        </div>
+      </div>
+
+      <!-- Progress Bar -->
+      <div class="progress-bar-wrap">
+        <div class="progress-bar" :style="{ width: `${progressPercent}%` }" />
+      </div>
+
+      <div class="footer-actions">
+        <button class="btn btn-danger btn-sm" @click="$emit('force-kill')">
+          <Square :size="12" />
+          <span>Cưỡng Chế Thoát Ngay (Force Kill)</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+import { RotateCw, Square } from 'lucide-vue-next';
+import type { ActiveProcessInfo } from '@/types/models';
+
+const props = defineProps<{
+  visible: boolean;
+  countdown: number;
+  activeProcesses: Map<number, ActiveProcessInfo>;
+}>();
+
+defineEmits<{
+  (e: 'force-kill'): void;
+}>();
+
+const progressPercent = computed(() => {
+  const total = 8;
+  const current = props.countdown;
+  return Math.min(100, Math.max(0, ((total - current) / total) * 100));
+});
+
+const processesList = computed(() => {
+  return Array.from(props.activeProcesses.values()).filter(p => p.status === 'running' || p.status === 'starting');
+});
+</script>
+
+<style scoped>
+.shutdown-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(11, 13, 19, 0.92);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  user-select: none;
+}
+
+.shutdown-card {
+  width: 90%;
+  max-width: 520px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-xl);
+  padding: 30px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+}
+
+.brand-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand-badge {
+  background: var(--primary);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.app-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.status-headline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #cda8ee;
+}
+
+.spin-icon {
+  animation: spin 1.5s linear infinite;
+  color: var(--primary);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.description {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.description code {
+  font-family: var(--font-mono);
+  background: var(--bg-app-base);
+  padding: 1px 4px;
+  border-radius: 2px;
+  color: var(--text-primary);
+}
+
+.stopping-list {
+  width: 100%;
+  max-height: 140px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background-color: var(--bg-app-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 10px;
+  text-align: left;
+}
+
+.stopping-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+}
+
+.proc-name {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.proc-pid {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.proc-status {
+  font-size: 11px;
+  color: var(--status-starting);
+}
+
+.progress-bar-wrap {
+  width: 100%;
+  height: 6px;
+  background-color: var(--bg-app-base);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), #a855f7);
+  transition: width 1s linear;
+}
+
+.footer-actions {
+  margin-top: 6px;
+}
+</style>

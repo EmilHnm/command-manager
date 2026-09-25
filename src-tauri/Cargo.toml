@@ -1,0 +1,44 @@
+[package]
+name = "command-manager"
+version = "0.1.0"
+description = "Desktop command manager (Tauri backend)"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "command_manager_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = []
+desktop = [
+    "dep:tauri",
+    "dep:tauri-build",
+    "dep:tauri-plugin-single-instance",
+    "dep:tauri-plugin-autostart",
+]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [], optional = true }
+
+[dependencies]
+tauri = { version = "2", features = [], optional = true }
+tauri-plugin-single-instance = { version = "2", optional = true }
+tauri-plugin-autostart = { version = "2", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+dashmap = "6"
+portable-pty = "0.8"
+shell-words = "1"
+base64 = "0.22"
+tokio = { version = "1", features = ["sync", "time"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal", "process"] }
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

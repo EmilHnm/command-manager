@@ -1,0 +1,6 @@
+src-tauri/target
+src-tauri/gen
+src-tauri/WixTools
+dist
+node_modules
+.DS_Store

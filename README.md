@@ -1,0 +1,86 @@
+# Command Manager Desktop
+
+Ứng dụng Desktop Quản lý, Thực thi Lệnh và Terminal Đa nhiệm (Tauri v2 + Rust + Vue 3 + TypeScript + Vite + SQLite WAL).
+
+## Tài liệu Dự án
+
+- [docs/plan.md](./docs/plan.md): Báo cáo nghiên cứu & thiết kế kiến trúc hệ thống
+- [docs/checklist.md](./docs/checklist.md): Danh mục kiểm tra triển khai MVP
+- [docs/screens.md](./docs/screens.md): Đặc tả thiết kế chi tiết giao diện các màn hình (SCR-01…SCR-05 & Modals)
+- [docs/structure.md](./docs/structure.md): Bản đồ cấu trúc thư mục codebase frontend & backend
+
+---
+
+## Tính năng Cốt lõi (Frontend MVP)
+
+- **SCR-01 Terminal Workspace:** Quản lý cây nhóm lệnh, khởi chạy phiên `run_session`, giao diện tab xterm.js với hợp đồng vòng đời: **Đóng tab chỉ ẩn UI, tiến trình vẫn chạy ngầm**. Hỗ trợ nút Reattach xả lại log gần đây từ Ring Buffer in-memory.
+- **SCR-02 Thư viện Lệnh (Command Library):** CRUD danh mục câu lệnh độc lập (`command_definition`), phân biệt rõ `Direct Argv` vs `Shell (bash/sh)`.
+- **SCR-03 Nhóm Lệnh & Sequencer:** Quản lý nhóm (`command_group`), bật/tắt cờ `autostart`, và sắp xếp thứ tự thực thi tuần tự (`execution_order`).
+- **SCR-04 Lịch Sử Phiên Chạy:** Giám sát `run_session` và nhật ký sự kiện `run_event` chi tiết (mã thoát exit code, thời lượng, PID chẩn đoán tạm thời).
+- **SCR-05 Cài Đặt & Sao Lưu DB:** Cấu hình tự khởi động cùng OS, kích thước Ring Buffer in-memory (1MB/2MB), timeout dừng mềm (Graceful Shutdown) và quy trình Sao lưu (VACUUM INTO) / Khôi phục SQLite an toàn kèm tự động Rollback.
+- **Titlebar & Command Palette:** Tích hợp thanh tìm kiếm nhanh toàn cục (`Ctrl + K`), phím tắt điều hướng nhanh (`Ctrl + 1` .. `Ctrl + 5`).
+- **Graceful Shutdown Overlay:** Chặn sự kiện đóng cửa sổ để dừng an toàn các tiến trình con bằng tín hiệu SIGTERM trước khi cưỡng chế thoát.
+
+---
+
+## Cấu trúc Frontend (`src/`)
+
+```
+src/
+├── main.ts
+├── App.vue                       # Root app shell
+├── env.d.ts
+├── router.ts                     # Vue Router: /workspace, /commands, /groups, /history, /settings
+├── styles/
+│   ├── tokens.css                # Dark palette, Primary #744791, Process states
+│   └── global.css                # Reset, scrollbar, xterm & dockview dark theme
+├── layouts/
+│   └── AppShell.vue              # Titlebar + ActivityBar (60px) + Content + StatusBar (28px)
+├── views/
+│   ├── workspace/WorkspaceView.vue     # SCR-01
+│   ├── commands/CommandLibraryView.vue # SCR-02
+│   ├── groups/GroupsView.vue           # SCR-03
+│   ├── history/HistoryView.vue         # SCR-04
+│   └── settings/SettingsView.vue       # SCR-05
+├── components/
+│   ├── titlebar/ (Titlebar.vue, CommandPalette.vue)
+│   ├── nav/ (ActivityBar.vue, SidePanel.vue)
+│   ├── statusbar/StatusBar.vue
+│   ├── terminal/ (DockHost.vue, XtermPane.vue)
+│   ├── explorer/GroupTree.vue
+│   └── dialogs/ (ConfirmDialog.vue, StopProcessModal.vue, CommandEditorModal.vue, RestoreWizard.vue, ShutdownOverlay.vue)
+├── composables/
+│   ├── useCommands.ts
+│   ├── useGroups.ts
+│   ├── useRunSession.ts
+│   ├── usePtyStream.ts
+│   └── useAppLifecycle.ts
+├── ipc/
+│   ├── client.ts                 # Tauri invoke wrappers + Browser Mock fallback
+│   └── events.ts                 # Tauri IPC event constants
+└── types/
+    └── models.ts                 # SQLite schema & state TypeScript interfaces
+```
+
+---
+
+## Hướng dẫn Khởi chạy Frontend
+
+### 1. Cài đặt Dependencies
+
+```bash
+pnpm install
+```
+
+### 2. Chạy Dev Server (Browser Preview với Mock IPC)
+
+```bash
+pnpm dev
+```
+Truy cập `http://localhost:5173` để trải nghiệm đầy đủ giao diện, thao tác CRUD, khởi chạy nhóm lệnh, tab terminal xterm.js và các dialogs.
+
+### 3. Kiểm tra Kiểu TypeScript và Build Bundle
+
+```bash
+pnpm run build
+```
