@@ -7,6 +7,7 @@ pub struct Group {
     pub id: String,
     pub group_name: String,
     pub autostart: bool,
+    pub execution_mode: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,26 +18,30 @@ pub struct Membership {
 }
 
 pub fn list(conn: &Connection) -> Result<Vec<Group>> {
-    let mut stmt =
-        conn.prepare("SELECT id, group_name, autostart FROM command_group ORDER BY group_name")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, group_name, autostart, execution_mode FROM command_group ORDER BY group_name",
+    )?;
     let rows = stmt.query_map([], |row| {
         Ok(Group {
             id: row.get(0)?,
             group_name: row.get(1)?,
             autostart: row.get::<_, i64>(2)? != 0,
+            execution_mode: row.get(3)?,
         })
     })?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
 pub fn list_autostart(conn: &Connection) -> Result<Vec<Group>> {
-    let mut stmt =
-        conn.prepare("SELECT id, group_name, autostart FROM command_group WHERE autostart = 1")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, group_name, autostart, execution_mode FROM command_group WHERE autostart = 1",
+    )?;
     let rows = stmt.query_map([], |row| {
         Ok(Group {
             id: row.get(0)?,
             group_name: row.get(1)?,
             autostart: true,
+            execution_mode: row.get(3)?,
         })
     })?;
     Ok(rows.filter_map(|r| r.ok()).collect())
@@ -44,16 +49,16 @@ pub fn list_autostart(conn: &Connection) -> Result<Vec<Group>> {
 
 pub fn insert(conn: &Connection, g: &Group) -> Result<()> {
     conn.execute(
-        "INSERT INTO command_group (id, group_name, autostart) VALUES (?1, ?2, ?3)",
-        rusqlite::params![g.id, g.group_name, g.autostart as i64],
+        "INSERT INTO command_group (id, group_name, autostart, execution_mode) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![g.id, g.group_name, g.autostart as i64, g.execution_mode],
     )?;
     Ok(())
 }
 
 pub fn update(conn: &Connection, g: &Group) -> Result<()> {
     let n = conn.execute(
-        "UPDATE command_group SET group_name = ?2, autostart = ?3 WHERE id = ?1",
-        rusqlite::params![g.id, g.group_name, g.autostart as i64],
+        "UPDATE command_group SET group_name = ?2, autostart = ?3, execution_mode = ?4 WHERE id = ?1",
+        rusqlite::params![g.id, g.group_name, g.autostart as i64, g.execution_mode],
     )?;
     if n == 0 {
         return Err(crate::error::Error::msg("group not found"));

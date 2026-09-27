@@ -162,6 +162,7 @@ mod desktop {
                 ipc::commands::pty_reattach,
                 ipc::commands::backup_export,
                 ipc::commands::backup_info,
+                ipc::commands::backup_verify_bytes,
                 ipc::commands::backup_import,
                 ipc::commands::backup_import_bytes,
                 ipc::commands::settings_get,

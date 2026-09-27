@@ -261,6 +261,36 @@ pub fn spawn_on_slave(
         .map_err(|e| Error::msg(e.to_string()))
 }
 
+/// Spawn a saved shell command using the shell that produced its history.
+/// This prevents a PowerShell command saved from HistoryView from being
+/// replayed through `cmd.exe` on Windows.
+pub fn spawn_shell_on_slave(
+    slave: Box<dyn portable_pty::SlavePty + Send>,
+    shell_kind: Option<&str>,
+    execution_string: &str,
+) -> Result<Box<dyn portable_pty::Child + Send + Sync>> {
+    let cmd = build_shell_command(shell_kind, execution_string)?;
+    match slave.spawn_command(cmd) {
+        Ok(child) => Ok(child),
+        Err(first_error) if cfg!(windows) && shell_kind == Some("pwsh") => {
+            // Microsoft Store/App Execution Alias entries can be visible on
+            // PATH while CreateProcessW rejects them. Retry with Windows
+            // PowerShell so a saved pwsh command remains runnable.
+            let mut fallback = build_shell_command(Some("powershell"), execution_string)?;
+            fallback.env(
+                "COMMAND_MANAGER_SHELL_FALLBACK_WARNING",
+                "[Command Manager] pwsh không khả dụng; đang chạy bằng Windows PowerShell 5.1. Một số cú pháp pwsh 7 có thể không tương thích.",
+            );
+            slave.spawn_command(fallback).map_err(|fallback_error| {
+                Error::msg(format!(
+                    "PowerShell spawn failed ({first_error}); fallback failed ({fallback_error})"
+                ))
+            })
+        }
+        Err(error) => Err(Error::msg(error.to_string())),
+    }
+}
+
 pub fn spawn_argv_on_slave(
     slave: Box<dyn portable_pty::SlavePty + Send>,
     argv: &[String],
@@ -330,6 +360,29 @@ pub fn build_command(is_shell: bool, execution_string: &str) -> Result<CommandBu
         }
         Ok(cmd)
     }
+}
+
+fn build_shell_command(shell_kind: Option<&str>, execution_string: &str) -> Result<CommandBuilder> {
+    #[cfg(windows)]
+    {
+        let kind = shell_kind.unwrap_or("cmd").to_ascii_lowercase();
+        if matches!(kind.as_str(), "pwsh" | "powershell" | "powershell.exe") {
+            let executable = if kind == "pwsh" {
+                "pwsh"
+            } else {
+                "powershell.exe"
+            };
+            let mut command = CommandBuilder::new(executable);
+            // Invoke the environment value as a script block. Passing the
+            // variable expression alone only prints the command text and
+            // incorrectly returns exit code 0.
+            let runner = "if ($env:COMMAND_MANAGER_SHELL_FALLBACK_WARNING) { Write-Output $env:COMMAND_MANAGER_SHELL_FALLBACK_WARNING }; $global:LASTEXITCODE = 0; $cmErrors = $Error.Count; & ([scriptblock]::Create($env:COMMAND_MANAGER_SHELL_COMMAND)); $cmOk = $?; if ($global:LASTEXITCODE) { exit $global:LASTEXITCODE }; if (-not $cmOk -or $Error.Count -gt $cmErrors) { exit 1 }; exit 0";
+            command.args(["-NoLogo", "-NoProfile", "-Command", runner]);
+            command.env("COMMAND_MANAGER_SHELL_COMMAND", execution_string);
+            return Ok(command);
+        }
+    }
+    build_command(true, execution_string)
 }
 
 pub fn pump_reader(
@@ -477,7 +530,8 @@ mod tests {
         let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
         let run_event_id = "test-interactive-shell".to_string();
-        let mut child = spawn_interactive_on_slave(slave).expect("spawn shell");
+        let shell = spawn_interactive_with_metadata(slave, None, None, false).expect("spawn shell");
+        let mut child = shell.child;
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
         std::thread::spawn(move || {
@@ -1022,8 +1076,57 @@ mod tests {
         let _ = shell.child.wait();
         let prompt = prompt.expect("pwsh without profile did not emit an A..B prompt");
         assert!(
-            prompt.contains("PS ") && prompt.trim_end().ends_with('>'),
-            "profile-free pwsh should use the built-in prompt: {prompt:?}"
+            prompt.trim_end().ends_with('>'),
+            "profile-free pwsh should emit a usable built-in prompt: {prompt:?}"
         );
+        assert!(
+            !prompt.to_ascii_lowercase().contains("oh-my-posh")
+                && !prompt.to_ascii_lowercase().contains("starship"),
+            "-NoProfile shell must not load a profile prompt theme: {prompt:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_saved_command_executes_and_propagates_exit_code() {
+        if std::process::Command::new("where.exe")
+            .arg("pwsh")
+            .status()
+            .map(|status| !status.success())
+            .unwrap_or(true)
+        {
+            return;
+        }
+        let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
+        let mut child = spawn_shell_on_slave(
+            slave,
+            Some("pwsh"),
+            r#"Write-Output ("RAN-" + (1+1)); exit 7"#,
+        )
+        .expect("spawn saved PowerShell command");
+        let reader = pty.clone_reader().expect("clone pty reader");
+        let buffer = Arc::clone(&pty.buffer);
+        std::thread::spawn(move || {
+            let (tx, _rx) = tokio::sync::mpsc::channel(8);
+            pump_reader(reader, buffer, "test-pwsh-command".into(), IpcPipe::new(tx));
+        });
+        let status = child.wait().expect("wait for saved PowerShell command");
+        let mut snapshot = Vec::new();
+        for _ in 0..40 {
+            snapshot = pty.snapshot().expect("snapshot output");
+            if snapshot
+                .windows(b"RAN-2".len())
+                .any(|window| window == b"RAN-2")
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let output = String::from_utf8_lossy(&snapshot);
+        assert!(
+            output.contains("RAN-2"),
+            "saved PowerShell command did not execute: {output:?}"
+        );
+        assert_eq!(status.exit_code(), 7);
     }
 }

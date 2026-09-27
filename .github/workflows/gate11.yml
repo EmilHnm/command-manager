@@ -10,6 +10,7 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
+      - 'src-tauri/tauri.windows.conf.json'
       - '.github/workflows/gate11.yml'
   pull_request:
     paths:
@@ -20,6 +21,7 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
+      - 'src-tauri/tauri.windows.conf.json'
       - '.github/workflows/gate11.yml'
 
 jobs:

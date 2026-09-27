@@ -30,6 +30,21 @@ pub fn kill_force(pid: u32) -> Result<()> {
     }
 }
 
+/// Attach a spawned process to the platform's app-bound lifetime mechanism.
+/// Windows uses a Job Object with `KILL_ON_JOB_CLOSE`; other platforms do not
+/// need an additional registration here.
+pub fn register_process(pid: u32) -> Result<()> {
+    #[cfg(windows)]
+    {
+        windows::register_process(pid)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        Ok(())
+    }
+}
+
 /// Linux: set PDEATHSIG in the child before exec. No-op elsewhere.
 pub fn pdeathsig_pre_exec() -> Result<()> {
     #[cfg(target_os = "linux")]

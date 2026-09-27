@@ -8,11 +8,12 @@ pub struct CommandDef {
     pub name: String,
     pub execution_string: String,
     pub is_shell: bool,
+    pub shell_kind: Option<String>,
 }
 
 pub fn list(conn: &Connection) -> Result<Vec<CommandDef>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, execution_string, is_shell FROM command_definition ORDER BY name",
+        "SELECT id, name, execution_string, is_shell, shell_kind FROM command_definition ORDER BY name",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(CommandDef {
@@ -20,6 +21,7 @@ pub fn list(conn: &Connection) -> Result<Vec<CommandDef>> {
             name: row.get(1)?,
             execution_string: row.get(2)?,
             is_shell: row.get::<_, i64>(3)? != 0,
+            shell_kind: row.get(4)?,
         })
     })?;
     Ok(rows.filter_map(|r| r.ok()).collect())
@@ -27,7 +29,7 @@ pub fn list(conn: &Connection) -> Result<Vec<CommandDef>> {
 
 pub fn get(conn: &Connection, id: &str) -> Result<Option<CommandDef>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, execution_string, is_shell FROM command_definition WHERE id = ?1",
+        "SELECT id, name, execution_string, is_shell, shell_kind FROM command_definition WHERE id = ?1",
     )?;
     let mut rows = stmt.query_map([id], |row| {
         Ok(CommandDef {
@@ -35,6 +37,7 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<CommandDef>> {
             name: row.get(1)?,
             execution_string: row.get(2)?,
             is_shell: row.get::<_, i64>(3)? != 0,
+            shell_kind: row.get(4)?,
         })
     })?;
     Ok(rows.next().transpose()?)
@@ -42,16 +45,16 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<CommandDef>> {
 
 pub fn insert(conn: &Connection, cmd: &CommandDef) -> Result<()> {
     conn.execute(
-        "INSERT INTO command_definition (id, name, execution_string, is_shell) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![cmd.id, cmd.name, cmd.execution_string, cmd.is_shell as i64],
+        "INSERT INTO command_definition (id, name, execution_string, is_shell, shell_kind) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![cmd.id, cmd.name, cmd.execution_string, cmd.is_shell as i64, cmd.shell_kind],
     )?;
     Ok(())
 }
 
 pub fn update(conn: &Connection, cmd: &CommandDef) -> Result<()> {
     let n = conn.execute(
-        "UPDATE command_definition SET name = ?2, execution_string = ?3, is_shell = ?4 WHERE id = ?1",
-        rusqlite::params![cmd.id, cmd.name, cmd.execution_string, cmd.is_shell as i64],
+        "UPDATE command_definition SET name = ?2, execution_string = ?3, is_shell = ?4, shell_kind = ?5 WHERE id = ?1",
+        rusqlite::params![cmd.id, cmd.name, cmd.execution_string, cmd.is_shell as i64, cmd.shell_kind],
     )?;
     if n == 0 {
         return Err(crate::error::Error::msg("command not found"));
