@@ -35,8 +35,8 @@ Lược đồ cơ sở dữ liệu bao gồm 5 bảng chính để biểu diễn
 | Bảng Cơ sở Dữ liệu | Trực quan hóa Cấu trúc và Trường thông tin | Ràng buộc và Vai trò |
 | :---- | :---- | :---- |
 | command\_definition | id (PK), name, execution\_string, is\_shell. | Định nghĩa lõi của lệnh. Lựa chọn chạy thẳng qua argv hay bọc qua shell phải rõ ràng. |
-| command\_group | id (PK), group\_name, autostart (BOOLEAN). | Nhóm các lệnh. Cờ autostart áp dụng ở cấp độ nhóm để kích hoạt toàn nhóm khi app chạy. |
-| group\_membership | group\_id (FK), command\_id (FK), execution\_order. | Bảng trung gian định nghĩa các lệnh thuộc nhóm nào và thứ tự khởi chạy. |
+| command\_group | id (PK), group\_name, autostart (BOOLEAN), execution\_mode (`startup`/`sequential`). | Nhóm các lệnh. Cờ autostart áp dụng ở cấp độ nhóm để kích hoạt toàn nhóm khi app chạy; `startup` là mặc định để các daemon khởi động theo thứ tự mà không chờ nhau, còn `sequential` chờ từng lệnh kết thúc và dừng khi lỗi. |
+| group\_membership | group\_id (FK), command\_id (FK), execution\_order. | Bảng trung gian định nghĩa các lệnh thuộc nhóm nào và thứ tự khởi chạy. `execution_order` chỉ quy định thứ tự spawn ở `startup`, hoặc thứ tự chờ-kết thúc ở `sequential`. |
 | run\_session | id (PK), group\_id (FK), started\_at, status. | Đại diện cho một lần bấm "Play" tổng thể của một nhóm. |
 | run\_event | id (PK), session\_id (FK), command\_id, started\_at, ended\_at, status, exit\_code, pid. | Bản ghi sự kiện chi tiết cho mỗi lần thực thi lệnh. pid chỉ lưu để chẩn đoán tạm thời; không dùng để định danh tiến trình sau khi khởi động lại app. |
 
