@@ -1309,10 +1309,16 @@ pub fn session_stop(state: State<AppState>, session_id: String) -> Result<()> {
     state
         .db
         .write(|c| runs::set_session_status(c, &session_id, "stopped"))?;
+    let mut first_error = None;
     for id in state.processes.ids_for_session(&session_id) {
         if let Some(live) = state.processes.get(&id) {
-            shutdown::stop_pid(live.pid);
+            if let Err(error) = shutdown::stop_and_wait(live.pid, false) {
+                first_error.get_or_insert(error);
+            }
         }
+    }
+    if let Some(error) = first_error {
+        return Err(error);
     }
     Ok(())
 }
@@ -1327,11 +1333,7 @@ pub fn process_stop(
         .processes
         .get(&run_event_id)
         .ok_or_else(|| Error::msg("process not running"))?;
-    if force.unwrap_or(false) {
-        shutdown::kill_pid(live.pid);
-    } else {
-        shutdown::stop_pid(live.pid);
-    }
+    shutdown::stop_and_wait(live.pid, force.unwrap_or(false))?;
     Ok(())
 }
 

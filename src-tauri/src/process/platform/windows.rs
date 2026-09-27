@@ -9,6 +9,9 @@ use std::sync::OnceLock;
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const CREATE_PROCESS_ACCESS: u32 = 0x0001 | 0x0100 | 0x1000;
+const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+const SYNCHRONIZE: u32 = 0x0010_0000;
+const STILL_ACTIVE: u32 = 259;
 const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: u32 = 9;
 const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
 
@@ -50,6 +53,7 @@ extern "system" {
     fn CreateJobObjectW(attributes: *const u8, name: *const u16) -> isize;
     fn SetInformationJobObject(job: isize, class: u32, info: *const u8, length: u32) -> i32;
     fn OpenProcess(access: u32, inherit_handle: i32, process_id: u32) -> isize;
+    fn GetExitCodeProcess(process: isize, exit_code: *mut u32) -> i32;
     fn AssignProcessToJobObject(job: isize, process: isize) -> i32;
     fn CloseHandle(handle: isize) -> i32;
     fn GetLastError() -> u32;
@@ -166,4 +170,15 @@ pub fn kill_force(pid: u32) -> Result<()> {
         return Err(Error::msg("taskkill force failed"));
     }
     Ok(())
+}
+
+pub fn is_process_alive(pid: u32) -> bool {
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, 0, pid) };
+    if process == 0 {
+        return false;
+    }
+    let mut exit_code = 0;
+    let readable = unsafe { GetExitCodeProcess(process, &mut exit_code) != 0 };
+    let _ = unsafe { CloseHandle(process) };
+    readable && exit_code == STILL_ACTIVE
 }

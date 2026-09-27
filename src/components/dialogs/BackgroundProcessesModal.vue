@@ -26,17 +26,38 @@
               <button
                 v-if="runningProcesses.length > 0"
                 class="btn btn-danger btn-sm"
+                :disabled="stoppingAll || stopInProgress !== null"
                 title="Dừng tất cả các tiến trình ngầm đang chạy"
                 @click="handleStopAll"
               >
-                <Square :size="12" />
-                <span>Dừng Tất Cả Ngầm</span>
+                <LoaderCircle v-if="stoppingAll" :size="12" class="spin" />
+                <Square v-else :size="12" />
+                <span>{{ stoppingAll ? 'Đang dừng...' : 'Dừng Tất Cả Ngầm' }}</span>
               </button>
 
               <button class="btn btn-ghost btn-icon btn-sm" title="Đóng menu (Esc)" @click="handleClose">
                 <X :size="15" />
               </button>
             </div>
+          </div>
+
+          <div
+            v-if="stopFeedback"
+            class="stop-feedback"
+            :class="stopFeedback.type"
+            role="status"
+            aria-live="polite"
+          >
+            <span>{{ stopFeedback.message }}</span>
+            <button
+              class="feedback-close"
+              type="button"
+              aria-label="Đóng thông báo"
+              title="Đóng thông báo"
+              @click="dismissStopFeedback"
+            >
+              <X :size="13" />
+            </button>
           </div>
 
           <!-- Modal Body -->
@@ -117,19 +138,23 @@
                     <button
                       class="btn btn-danger-subtle btn-sm"
                       title="Dừng tiến trình (Gửi SIGTERM)"
+                      :disabled="stopInProgress !== null || stoppingAll"
                       @click="handleStopProcess(proc.commandId, false)"
                     >
-                      <Square :size="11" />
-                      <span>Dừng</span>
+                      <LoaderCircle v-if="stopInProgress === proc.commandId" :size="11" class="spin" />
+                      <Square v-else :size="11" />
+                      <span>{{ stopInProgress === proc.commandId ? 'Đang dừng...' : 'Dừng' }}</span>
                     </button>
 
                     <button
                       class="btn btn-danger btn-sm"
                       title="Ép buộc diệt tiến trình (Gửi SIGKILL)"
+                      :disabled="stopInProgress !== null || stoppingAll"
                       @click="handleStopProcess(proc.commandId, true)"
                     >
-                      <Skull :size="11" />
-                      <span>Force Kill</span>
+                      <LoaderCircle v-if="stopInProgress === proc.commandId" :size="11" class="spin" />
+                      <Skull v-else :size="11" />
+                      <span>{{ stopInProgress === proc.commandId ? 'Đang dừng...' : 'Force Kill' }}</span>
                     </button>
                   </div>
                 </div>
@@ -181,7 +206,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import {
   Zap,
   Square,
@@ -192,6 +217,7 @@ import {
   ExternalLink,
   FileText,
   Skull,
+  LoaderCircle,
   Terminal,
   RefreshCw,
   Copy,
@@ -217,6 +243,10 @@ const peekingCommandId = ref<number | null>(null);
 const peekLogText = ref('');
 const loadingPeek = ref(false);
 const copied = ref(false);
+const stopFeedback = ref<{ type: 'success' | 'error'; message: string } | null>(null);
+const stopInProgress = ref<number | null>(null);
+const stoppingAll = ref(false);
+let stopFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
 
 const runningProcesses = computed(() => {
   const list: ActiveProcessInfo[] = [];
@@ -235,6 +265,21 @@ const handleClose = () => {
   emit('close');
 };
 
+const dismissStopFeedback = () => {
+  stopFeedback.value = null;
+  if (stopFeedbackTimer) clearTimeout(stopFeedbackTimer);
+  stopFeedbackTimer = undefined;
+};
+
+const showStopFeedback = (feedback: { type: 'success' | 'error'; message: string }) => {
+  if (stopFeedbackTimer) clearTimeout(stopFeedbackTimer);
+  stopFeedback.value = feedback;
+  stopFeedbackTimer = setTimeout(() => {
+    stopFeedback.value = null;
+    stopFeedbackTimer = undefined;
+  }, 4000);
+};
+
 const handleOpenTab = (proc: ActiveProcessInfo) => {
   emit('open-tab', {
     commandId: proc.commandId,
@@ -245,20 +290,44 @@ const handleOpenTab = (proc: ActiveProcessInfo) => {
 };
 
 const handleStopProcess = async (commandId: number, force: boolean) => {
+  dismissStopFeedback();
+  stopInProgress.value = commandId;
   try {
     await stopCommandProcess(commandId, force);
+    showStopFeedback({
+      type: 'success',
+      message: `Đã xác nhận process #${commandId} dừng hoàn toàn.`,
+    });
     if (peekingCommandId.value === commandId) peekingCommandId.value = null;
   } catch (error) {
+    showStopFeedback({
+      type: 'error',
+      message: error instanceof Error ? error.message : String(error),
+    });
     console.error('[BackgroundProcessesModal] Không thể dừng tiến trình:', error);
+  } finally {
+    stopInProgress.value = null;
   }
 };
 
 const handleStopAll = async () => {
+  dismissStopFeedback();
+  stoppingAll.value = true;
   try {
     await stopGroupSession();
+    showStopFeedback({
+      type: 'success',
+      message: 'Đã xác nhận các process đã dừng hoàn toàn.',
+    });
     peekingCommandId.value = null;
   } catch (error) {
+    showStopFeedback({
+      type: 'error',
+      message: error instanceof Error ? error.message : String(error),
+    });
     console.error('[BackgroundProcessesModal] Không thể dừng tất cả tiến trình ngầm:', error);
+  } finally {
+    stoppingAll.value = false;
   }
 };
 
@@ -303,11 +372,16 @@ watch(
   () => props.visible,
   (val) => {
     if (!val) {
+      dismissStopFeedback();
       peekingCommandId.value = null;
       peekLogText.value = '';
     }
   }
 );
+
+onBeforeUnmount(() => {
+  if (stopFeedbackTimer) clearTimeout(stopFeedbackTimer);
+});
 </script>
 
 <style scoped>
@@ -345,6 +419,26 @@ watch(
   align-items: center;
   justify-content: space-between;
   flex-shrink: 0;
+}
+
+.stop-feedback {
+  margin: 10px 18px 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.stop-feedback.success {
+  color: #bbf7d0;
+  background: rgba(18, 53, 34, 0.95);
+  border: 1px solid rgba(74, 222, 128, 0.55);
+}
+
+.stop-feedback.error {
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.95);
+  border: 1px solid rgba(248, 113, 113, 0.55);
 }
 
 .header-left {

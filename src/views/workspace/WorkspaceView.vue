@@ -87,6 +87,24 @@
         <div v-if="launchError" class="workspace-error" role="alert">
           Không thể chạy lệnh: {{ launchError }}
         </div>
+        <div
+          v-if="stopFeedback"
+          class="workspace-feedback"
+          :class="stopFeedback.type"
+          role="status"
+          aria-live="polite"
+        >
+          <span>{{ stopFeedback.message }}</span>
+          <button
+            class="feedback-close"
+            type="button"
+            aria-label="Đóng thông báo"
+            title="Đóng thông báo"
+            @click="dismissStopFeedback"
+          >
+            <X :size="13" />
+          </button>
+        </div>
         <DockHost
           ref="dockHostRef"
           @request-stop-process="handleRequestStop"
@@ -100,6 +118,7 @@
       :command-id="stoppingCmdId"
       :command-name="stoppingCmdName"
       :pid="stoppingCmdPid"
+      :loading="stopInProgress"
       @confirm="confirmStopProcess"
       @cancel="showStopModal = false"
     />
@@ -114,9 +133,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { RefreshCw, Play, Square, Layers, Zap } from 'lucide-vue-next';
+import { RefreshCw, Play, Square, Layers, Zap, X } from 'lucide-vue-next';
 import GroupTree from '@/components/explorer/GroupTree.vue';
 import DockHost from '@/components/terminal/DockHost.vue';
 import StopProcessModal from '@/components/dialogs/StopProcessModal.vue';
@@ -139,6 +158,9 @@ const stoppingCmdId = ref(0);
 const stoppingCmdName = ref('');
 const stoppingCmdPid = ref<number | undefined>(undefined);
 const launchError = ref('');
+const stopFeedback = ref<{ type: 'success' | 'error'; message: string } | null>(null);
+const stopInProgress = ref(false);
+let stopFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
 const workspaceReady = ref(false);
 const launchingCommand = ref(false);
 const selectedGroupId = ref<number | undefined>(undefined);
@@ -278,10 +300,44 @@ const handleRequestStop = (commandId: number) => {
   showStopModal.value = true;
 };
 
-const confirmStopProcess = async (commandId: number, force: boolean) => {
-  await stopCommandProcess(commandId, force);
-  showStopModal.value = false;
+const dismissStopFeedback = () => {
+  stopFeedback.value = null;
+  if (stopFeedbackTimer) clearTimeout(stopFeedbackTimer);
+  stopFeedbackTimer = undefined;
 };
+
+const showStopFeedback = (feedback: { type: 'success' | 'error'; message: string }) => {
+  if (stopFeedbackTimer) clearTimeout(stopFeedbackTimer);
+  stopFeedback.value = feedback;
+  stopFeedbackTimer = setTimeout(() => {
+    stopFeedback.value = null;
+    stopFeedbackTimer = undefined;
+  }, 4000);
+};
+
+const confirmStopProcess = async (commandId: number, force: boolean) => {
+  dismissStopFeedback();
+  stopInProgress.value = true;
+  try {
+    await stopCommandProcess(commandId, force);
+    showStopFeedback({
+      type: 'success',
+      message: `Đã xác nhận process của "${stoppingCmdName.value}" đã dừng hoàn toàn.`,
+    });
+    showStopModal.value = false;
+  } catch (error) {
+    showStopFeedback({
+      type: 'error',
+      message: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    stopInProgress.value = false;
+  }
+};
+
+onBeforeUnmount(() => {
+  if (stopFeedbackTimer) clearTimeout(stopFeedbackTimer);
+});
 </script>
 
 <style scoped>
@@ -444,6 +500,52 @@ const confirmStopProcess = async (commandId: number, force: boolean) => {
   border: 1px solid rgba(248, 113, 113, 0.35);
   border-radius: var(--radius-sm);
   font-size: 12px;
+}
+
+.workspace-feedback {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 8px;
+  max-width: min(520px, calc(100% - 16px));
+  padding: 8px 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.feedback-close {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: -2px -3px 0 auto;
+  color: currentColor;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.feedback-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.workspace-feedback.success {
+  color: #bbf7d0;
+  background: rgba(18, 53, 34, 0.95);
+  border: 1px solid rgba(74, 222, 128, 0.55);
+}
+
+.workspace-feedback.error {
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.95);
+  border: 1px solid rgba(248, 113, 113, 0.55);
 }
 
 .cursor-pointer {

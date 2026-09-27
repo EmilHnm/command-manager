@@ -49,6 +49,7 @@
 - [x] **Chạy nhóm theo execution mode:** migration `009` thêm `startup` (mặc định: khởi động các member theo `execution_order` nhưng không chờ daemon trước thoát) và `sequential` (chờ exit từng member, dừng ở lỗi/dừng); coordinator kiểm tra session trước mỗi bước.
 - [x] **Điều khiển Start / Stop linh hoạt:**
   - Hỗ trợ dừng theo từng tiến trình (`process_stop`) và dừng theo phiên nhóm (`session_stop`).
+- [x] **Xác nhận dừng process:** sau graceful/force kill, backend kiểm tra liveness thật từ OS; nếu graceful không giải phóng process thì tự chuyển sang force-kill, chỉ trả thành công khi process đã biến mất. UI hiển thị thông báo thành công hoặc giữ process ở trạng thái đang chạy khi không xác nhận được.
 - [x] **Vai trò của trường `pid`:** `pid` chỉ được lưu tạm để chẩn đoán (hiển thị trên giao diện và kiểm toán lịch sử), không dùng để reattach sau khi ứng dụng khởi động lại.
 - [x] **Hợp đồng App-Bound:** Windows gắn child vào Job Object có `KILL_ON_JOB_CLOSE`; các đường dừng bình thường vẫn dùng child killer/process manager. Nếu môi trường đã lồng Job Object và Windows từ chối assignment, app ghi cảnh báo và giữ cleanup thông thường. Assignment diễn ra ngay sau spawn nên vẫn có khe rất ngắn khiến process cháu tạo trước assignment lọt khỏi Job Object; đây là giới hạn đã ghi nhận.
 - [x] **Đóng tab UI ≠ Dừng tiến trình:** Đóng thẻ tab tại [DockHost.vue](../src/components/terminal/DockHost.vue) chỉ ẩn giao diện terminal, tiến trình ở Rust vẫn tiếp tục chạy ngầm và ghi nhận log vào Ring Buffer.
