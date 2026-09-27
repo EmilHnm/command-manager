@@ -4,7 +4,7 @@
       <div class="header-left">
         <div class="title-row">
           <h2 class="view-title">Cài Đặt Hệ Thống & Quản Lý Dữ Liệu (SCR-05)</h2>
-          <span class="engine-badge">v2.1 Engine</span>
+          <span class="engine-badge">v1.0.0 Engine</span>
         </div>
         <span class="view-subtitle">Cấu hình PTY, biến môi trường toàn cục, khởi động cùng OS và cơ chế sao lưu SQLite an toàn</span>
       </div>
@@ -86,13 +86,13 @@
             </div>
             <div class="db-stat-item">
               <span class="db-stat-lbl">TRẠNG THÁI CƠ SỞ DỮ LIỆU</span>
-              <span class="db-stat-num font-mono text-accent">{{ backupInfo?.integrityOk ? 'WAL Synced' : 'Đang kiểm tra...' }}</span>
+              <span class="db-stat-num font-mono text-accent">{{ backupInfo?.integrityOk ? 'Integrity OK' : 'Đang kiểm tra...' }}</span>
             </div>
           </div>
 
           <div class="precheck-badges">
-            <span class="check-pill">✓ Zero Read Locks</span>
-            <span class="check-pill">✓ WAL Safe Flush</span>
+            <span class="check-pill">✓ VACUUM INTO</span>
+            <span class="check-pill">✓ WAL checkpoint</span>
             <span class="check-pill">✓ PRAGMA integrity_check</span>
           </div>
 
@@ -107,7 +107,7 @@
           </div>
         </div>
 
-        <!-- Card 2: Disaster Recovery Restore with 7-step rollback sequence -->
+        <!-- Card 2: Disaster Recovery Restore with the backend rollback sequence -->
         <div class="setting-card danger-card">
           <div class="card-header-row">
             <div class="card-title-group">
@@ -122,24 +122,22 @@
             các kết nối SQLite sẽ đóng lại và file cơ sở dữ liệu sẽ được thay thế có <strong>tự động Rollback</strong> dự phòng.
           </p>
 
-          <!-- 7-Step Rollback Visual Sequence Tracker (from Stitch SCR-05) -->
+          <!-- Backend restore sequence: inspect, snapshot, stop, replace, rollback. -->
           <div class="rollback-sequence-box">
-            <span class="sequence-box-title">QUY TRÌNH 7 BƯỚC KHÔI PHỤC AN TOÀN (ATOMIC SEQUENCE):</span>
+            <span class="sequence-box-title">QUY TRÌNH 5 BƯỚC KHÔI PHỤC AN TOÀN (ATOMIC SEQUENCE):</span>
             <ol class="step-list">
-              <li><span class="step-num">01.</span> Dừng an toàn tất cả tiến trình PTY daemons (SIGTERM)</li>
-              <li><span class="step-num">02.</span> Đóng kết nối SQLite connection pool</li>
-              <li><span class="step-num">03.</span> Tạo checkpoint an toàn dự phòng <code>backup_checkpoint.sqlite</code></li>
-              <li><span class="step-num">04.</span> Kiểm tra toàn vẹn tệp nạp vào <code>PRAGMA integrity_check</code></li>
-              <li><span class="step-num">05.</span> Thay thế tệp DB nguyên tử (Atomic File Swap)</li>
-              <li><span class="step-num">06.</span> Khởi động lại engine và kiểm tra phiên thực thi</li>
-              <li><span class="step-num">07.</span> Tự động Rollback hoàn nguyên nếu gặp bất kỳ lỗi nào</li>
+              <li><span class="step-num">01.</span> Kiểm tra toàn vẹn và migrate file nạp vào</li>
+              <li><span class="step-num">02.</span> Tạo snapshot rollback cho DB hiện tại</li>
+              <li><span class="step-num">03.</span> Dừng tiến trình, checkpoint WAL và đóng pool SQLite</li>
+              <li><span class="step-num">04.</span> Thay thế DB nguyên tử và mở lại engine</li>
+              <li><span class="step-num">05.</span> Tự động rollback nếu bất kỳ bước nào thất bại</li>
             </ol>
           </div>
 
           <div class="precheck-badges">
-            <span class="check-pill text-danger">✓ Checkpoint Snapshot Ready</span>
-            <span class="check-pill text-danger">✓ SHA-256 Validated</span>
-            <span class="check-pill text-danger">✓ Zero Data Loss Fallback</span>
+            <span class="check-pill text-danger">✓ Kiểm tra file trước khi nạp</span>
+            <span class="check-pill text-danger">✓ Snapshot rollback</span>
+            <span class="check-pill text-danger">✓ Tự động mở lại DB</span>
           </div>
 
           <div class="action-row">
@@ -332,7 +330,7 @@
     <RestoreWizard
       :visible="showRestoreModal"
       :file-path="selectedBackupPath"
-      :backup-info="backupInfo"
+      :backup-info="restoreInfo || backupInfo"
       @confirm-restore="confirmRestoreDatabase"
       @close="showRestoreModal = false"
     />
@@ -375,6 +373,7 @@ const showRestoreModal = ref(false);
 const restoreInput = ref<HTMLInputElement | null>(null);
 const selectedBackupPath = ref('');
 const selectedBackupFile = ref<File | null>(null);
+const restoreInfo = ref<BackupIntegrityResult | null>(null);
 const toastMessage = ref('');
 const toastType = ref<'error' | 'success'>('success');
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -437,7 +436,7 @@ const chooseRestoreFile = () => {
   restoreInput.value?.click();
 };
 
-const handleRestoreFile = (event: Event) => {
+const handleRestoreFile = async (event: Event) => {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   input.value = '';
@@ -445,7 +444,21 @@ const handleRestoreFile = (event: Event) => {
 
   selectedBackupFile.value = file;
   selectedBackupPath.value = file.name;
-  showRestoreModal.value = true;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = '';
+    bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+    restoreInfo.value = await ipcClient.verifyBackupBytes(btoa(binary));
+    if (!restoreInfo.value.integrityOk) {
+      showToast('Tệp sao lưu không vượt qua integrity_check.', 'error');
+      selectedBackupFile.value = null;
+      return;
+    }
+    showRestoreModal.value = true;
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error), 'error');
+    selectedBackupFile.value = null;
+  }
 };
 
 const confirmRestoreDatabase = async () => {

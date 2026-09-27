@@ -5,9 +5,9 @@
       <div class="header-left">
         <div class="title-row">
           <h2 class="view-title">Nhóm Lệnh & Sequencer (SCR-03)</h2>
-          <span class="engine-badge">v2.1 Orchestrator</span>
+          <span class="engine-badge">v1.0.0 Orchestrator</span>
         </div>
-        <span class="view-subtitle">Điều phối chuỗi thực thi tuần tự hoặc song song (Orchestration Pipeline)</span>
+        <span class="view-subtitle">Điều phối khởi động theo thứ tự hoặc tuần tự chờ xong (Orchestration Pipeline)</span>
       </div>
 
       <div class="header-right">
@@ -44,11 +44,11 @@
 
       <div class="stat-card">
         <div class="stat-header">
-          <span class="stat-title">DỪNG KHI LỖI</span>
-          <ShieldAlert :size="16" class="stat-icon text-accent" />
+          <span class="stat-title">ĐANG CHẠY</span>
+          <Zap :size="16" class="stat-icon text-accent" />
         </div>
-        <div class="stat-value font-mono">{{ groups.length }}</div>
-        <div class="stat-sub">Stop-on-Error mặc định bật</div>
+        <div class="stat-value font-mono">{{ runningProcessCount }}</div>
+        <div class="stat-sub">Tiến trình thuộc các nhóm</div>
       </div>
 
       <div class="stat-card">
@@ -75,10 +75,9 @@
           <div class="card-header">
             <div class="header-main">
               <div class="group-title-row">
-                <GripVertical :size="14" class="drag-handle" title="Kéo để đổi vị trí nhóm" />
                 <Folder class="folder-icon" :size="16" />
                 <h3 class="group-title">{{ group.group_name }}</h3>
-                <span class="mode-pill">Tuần tự</span>
+                <span class="mode-pill">{{ group.execution_mode === 'sequential' ? 'Tuần tự, chờ xong' : 'Khởi động theo thứ tự' }}</span>
               </div>
               <span class="commands-count">{{ group.commands.length }} tác vụ</span>
             </div>
@@ -106,7 +105,7 @@
                 class="sequence-item"
               >
                 <div class="item-left">
-                  <span class="order-badge">0{{ idx + 1 }}.</span>
+                  <span class="order-badge">{{ formatOrder(idx) }}.</span>
                   <div class="cmd-info">
                     <span class="cmd-text">{{ cmd.name }}</span>
                     <code class="cmd-snippet">{{ cmd.execution_string }}</code>
@@ -213,6 +212,14 @@
           </label>
 
           <div class="form-group">
+            <label class="form-label">Chế độ chạy nhóm</label>
+            <select v-model="groupForm.execution_mode" class="input">
+              <option value="startup">Khởi động theo thứ tự (không chờ lệnh trước thoát)</option>
+              <option value="sequential">Tuần tự, chờ xong (dừng khi lỗi)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
             <label class="form-label">Chọn các câu lệnh thuộc nhóm này:</label>
             <div class="commands-picker">
               <label
@@ -263,7 +270,7 @@ import { ref, computed, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   Plus, Folder, Play, Square, Edit3, Trash2, X, Save,
-  Zap, ShieldAlert, Layers, GripVertical, AlertCircle
+  Zap, Layers, AlertCircle
 } from 'lucide-vue-next';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import { useGroups } from '@/composables/useGroups';
@@ -274,13 +281,14 @@ import type { CommandGroupWithCommands } from '@/types/models';
 const router = useRouter();
 const { groups, fetchGroups, saveGroup, deleteGroup, toggleAutostart } = useGroups();
 const { commands: allCommands, fetchCommands } = useCommands();
-const { startGroupSession, stopGroupSession } = useRunSession();
+const { startGroupSession, stopGroupById, activeProcesses } = useRunSession();
 
 const showGroupModal = ref(false);
 const editingGroupId = ref<number | null>(null);
-const groupForm = ref<{ group_name: string; autostart: boolean }>({
+const groupForm = ref<{ group_name: string; autostart: boolean; execution_mode: 'startup' | 'sequential' }>({
   group_name: '',
   autostart: false,
+  execution_mode: 'startup',
 });
 const selectedCommandIds = ref<number[]>([]);
 
@@ -293,11 +301,16 @@ const totalCommandsInGroups = computed(() => {
   return groups.value.reduce((acc, g) => acc + g.commands.length, 0);
 });
 
+const runningProcessCount = computed(() => Array.from(activeProcesses.value.values())
+  .filter(process => process.status === 'running').length);
+const formatOrder = (index: number) => String(index + 1).padStart(2, '0');
+
 const handleRunAllGroups = async () => {
-  if (groups.value.length === 0) return;
-  // Kích hoạt nhóm đầu tiên và chuyển sang workspace
-  const firstGroup = groups.value[0];
-  await startGroupSession(firstGroup.id, firstGroup.group_name, firstGroup.commands);
+  for (const group of groups.value) {
+    if (group.commands.length > 0) {
+      await startGroupSession(group.id, group.group_name, group.commands);
+    }
+  }
   router.push('/workspace');
 };
 
@@ -318,7 +331,7 @@ const groupErrors = computed(() => {
 
 const openCreateGroupModal = () => {
   editingGroupId.value = null;
-  groupForm.value = { group_name: '', autostart: false };
+  groupForm.value = { group_name: '', autostart: false, execution_mode: 'startup' };
   selectedCommandIds.value = [];
   wasSubmittedGroup.value = false;
   touchedGroup.value = {};
@@ -328,7 +341,7 @@ const openCreateGroupModal = () => {
 watch(showGroupModal, (val) => {
   if (!val) {
     editingGroupId.value = null;
-    groupForm.value = { group_name: '', autostart: false };
+    groupForm.value = { group_name: '', autostart: false, execution_mode: 'startup' };
     selectedCommandIds.value = [];
     wasSubmittedGroup.value = false;
     touchedGroup.value = {};
@@ -340,6 +353,7 @@ const openEditGroupModal = (group: CommandGroupWithCommands) => {
   groupForm.value = {
     group_name: group.group_name,
     autostart: group.autostart,
+    execution_mode: group.execution_mode,
   };
   selectedCommandIds.value = group.commands.map(c => c.id);
   wasSubmittedGroup.value = false;
@@ -363,6 +377,7 @@ const saveGroupForm = async () => {
     id: editingGroupId.value ?? undefined,
     group_name: groupForm.value.group_name,
     autostart: groupForm.value.autostart,
+    execution_mode: groupForm.value.execution_mode,
     commandIds: selectedCommandIds.value,
   });
   showGroupModal.value = false;
@@ -381,6 +396,7 @@ const moveCommand = async (group: CommandGroupWithCommands, index: number, direc
     id: group.id,
     group_name: group.group_name,
     autostart: group.autostart,
+    execution_mode: group.execution_mode,
     commandIds: newCommandIds,
   });
 };
@@ -391,7 +407,7 @@ const handlePlayGroup = async (group: CommandGroupWithCommands) => {
 };
 
 const handleStopGroup = async (groupId: number) => {
-  await stopGroupSession();
+  await stopGroupById(groupId);
 };
 
 const requestDelete = (group: CommandGroupWithCommands) => {

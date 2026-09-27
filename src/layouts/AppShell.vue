@@ -1,5 +1,8 @@
 <template>
   <div class="app-shell">
+    <div v-if="showSingleInstanceAlert" class="instance-notice" role="status">
+      Command Manager đã được mở sẵn; cửa sổ hiện tại đã được đưa lên trước.
+    </div>
     <!-- Top Header: Titlebar with custom window controls & Command Palette trigger -->
     <Titlebar @open-palette="showPalette = true" />
 
@@ -76,6 +79,7 @@ const {
   cancelClose,
   confirmClose,
   forceExitApp,
+  showSingleInstanceAlert,
   initLifecycleListener,
   disposeLifecycleListener,
 } = useAppLifecycle();
@@ -146,6 +150,20 @@ onUnmounted(() => {
   background-color: var(--bg-app-base);
   color: var(--text-primary);
   overflow: hidden;
+}
+
+.instance-notice {
+  position: fixed;
+  top: 8px;
+  right: 16px;
+  z-index: 1000;
+  padding: 8px 12px;
+  border: 1px solid rgba(78, 222, 163, 0.45);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 }
 
 .shell-body {

@@ -218,7 +218,31 @@ const handleStopProcess = (commandId: number) => {
 };
 
 const handleRestartProcess = (commandId: number) => {
-  console.log('Restart process ID:', commandId);
+  void restartProcess(commandId);
+};
+
+const restartProcess = async (commandId: number) => {
+  try {
+    if (commandId <= 0) {
+      await openEmptyTerminal();
+      const oldTab = openTabs.value.find(item => item.commandId === commandId);
+      if (oldTab) {
+        openTabs.value = openTabs.value.filter(item => item.id !== oldTab.id);
+      }
+      return;
+    }
+    try {
+      await ipcClient.stopProcess(commandId, false);
+    } catch {
+      // A completed process may already have disappeared from ProcessManager.
+    }
+    const result = await ipcClient.runCommand(commandId);
+    const tab = openTabs.value.find(item => item.commandId === commandId);
+    if (tab) tab.runEventId = result.runEventId;
+    await refreshProcesses();
+  } catch (error) {
+    console.error('[DockHost] Không thể khởi động lại lệnh:', error);
+  }
 };
 
 const openTabCommandIds = computed(() => openTabs.value.map(t => t.commandId));

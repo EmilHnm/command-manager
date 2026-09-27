@@ -8,6 +8,7 @@ export interface CommandDefinition {
   name: string;
   execution_string: string;
   is_shell: boolean;
+  shell_kind?: string;
   cwd?: string;
 }
 
@@ -15,6 +16,7 @@ export interface CommandGroup {
   id: number;
   group_name: string;
   autostart: boolean;
+  execution_mode: 'startup' | 'sequential';
 }
 
 export interface GroupMembership {
@@ -75,6 +77,8 @@ export interface ActiveProcessInfo {
   startedAt?: string;
   exitCode?: number | null;
   sessionId?: number;
+  groupId?: number;
+  bufferBytes?: number;
 }
 
 export interface SystemSettings {

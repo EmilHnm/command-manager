@@ -24,12 +24,14 @@ type BackendCommand = {
   name: string;
   execution_string: string;
   is_shell: boolean;
+  shell_kind?: string | null;
 };
 
 type BackendGroup = {
   id: string;
   group_name: string;
   autostart: boolean;
+  execution_mode: 'startup' | 'sequential';
 };
 
 type BackendMembership = {
@@ -310,9 +312,9 @@ let mockCommands: CommandDefinition[] = [
 ];
 
 let mockGroups: CommandGroup[] = [
-  { id: 1, group_name: 'Web Platform Development', autostart: true },
-  { id: 2, group_name: 'Cloudflare Remote Tunnel', autostart: false },
-  { id: 3, group_name: 'Database Migration & Seed', autostart: false },
+  { id: 1, group_name: 'Web Platform Development', autostart: true, execution_mode: 'startup' },
+  { id: 2, group_name: 'Cloudflare Remote Tunnel', autostart: false, execution_mode: 'startup' },
+  { id: 3, group_name: 'Database Migration & Seed', autostart: false, execution_mode: 'sequential' },
 ];
 
 let mockMemberships: { group_id: number; command_id: number; execution_order: number }[] = [
@@ -409,10 +411,20 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
       const payload = args?.group as CommandGroup & { commandIds?: number[] };
       let groupId = payload.id;
       if (groupId) {
-        mockGroups = mockGroups.map(g => g.id === groupId ? { id: g.id, group_name: payload.group_name, autostart: payload.autostart } : g);
+        mockGroups = mockGroups.map(g => g.id === groupId ? {
+          ...g,
+          group_name: payload.group_name,
+          autostart: payload.autostart,
+          execution_mode: payload.execution_mode || 'startup',
+        } : g);
       } else {
         groupId = Math.max(...mockGroups.map(g => g.id), 0) + 1;
-        mockGroups.push({ id: groupId, group_name: payload.group_name, autostart: payload.autostart });
+        mockGroups.push({
+          id: groupId,
+          group_name: payload.group_name,
+          autostart: payload.autostart,
+          execution_mode: payload.execution_mode || 'startup',
+        });
       }
       if (payload.commandIds) {
         mockMemberships = mockMemberships.filter(m => m.group_id !== groupId);
@@ -633,6 +645,7 @@ export const ipcClient = {
       name: row.name,
       execution_string: row.execution_string,
       is_shell: row.is_shell,
+      shell_kind: row.shell_kind ?? undefined,
     }));
   },
 
@@ -650,6 +663,7 @@ export const ipcClient = {
           name: command.name,
           execution_string: command.execution_string,
           is_shell: Boolean(command.is_shell),
+          shell_kind: command.shell_kind ?? null,
         },
         confirmed: true,
       });
@@ -659,6 +673,7 @@ export const ipcClient = {
         name: command.name,
         execution_string: command.execution_string,
         is_shell: Boolean(command.is_shell),
+        shell_kind: command.shell_kind ?? null,
         confirmed: true,
       });
       rememberCommand(created);
@@ -860,6 +875,7 @@ export const ipcClient = {
         id: groupId,
         group_name: group.group_name,
         autostart: group.autostart,
+        execution_mode: group.execution_mode || 'startup',
         commands: groupCommands,
       };
     }));
@@ -875,12 +891,14 @@ export const ipcClient = {
         id: backendIdFor(groupUiToBackend, group.id, 'Nhóm'),
         group_name: group.group_name,
         autostart: Boolean(group.autostart),
+        execution_mode: group.execution_mode || 'startup',
       };
       await invokeTauri<void>('groups_update', { group: backendGroup, confirmed: true });
       groupNames.set(group.id, group.group_name);
     } else {
       backendGroup = await invokeTauri<BackendGroup>('groups_create', {
         group_name: group.group_name,
+        execution_mode: group.execution_mode || 'startup',
         confirmed: true,
       });
       rememberGroup(backendGroup);
@@ -1112,6 +1130,9 @@ export const ipcClient = {
     return rows.map((row) => {
       const commandId = commandUiIdForBackend(row.command_id);
       const sessionId = uiIdFor(sessionUiToBackend, sessionBackendToUi, row.session_id);
+      const groupId = row.group_id === 'terminal' || row.group_id === 'command'
+        ? undefined
+        : uiIdFor(groupUiToBackend, groupBackendToUi, row.group_id);
       runEventToCommand.set(row.run_event_id, commandId);
       runEventToSession.set(row.run_event_id, sessionId);
       return {
@@ -1121,6 +1142,8 @@ export const ipcClient = {
         pid: row.pid,
         status: 'running',
         sessionId,
+        groupId,
+        bufferBytes: row.buffer_bytes,
       };
     });
   },
@@ -1144,6 +1167,25 @@ export const ipcClient = {
     }>('backup_info');
     return {
       valid: true,
+      integrityOk: info.integrity_ok,
+      schemaVersion: String(info.schema_version),
+      commandCount: info.command_count,
+      groupCount: info.group_count,
+      historyCount: info.history_count,
+    };
+  },
+
+  verifyBackupBytes: async (b64: string): Promise<BackupIntegrityResult> => {
+    if (!usingNativeIpc()) return invokeTauri<BackupIntegrityResult>('backup_verify', { filePath: '' });
+    const info = await invokeTauri<{
+      schema_version: number;
+      command_count: number;
+      group_count: number;
+      history_count: number;
+      integrity_ok: boolean;
+    }>('backup_verify_bytes', { b64 });
+    return {
+      valid: info.integrity_ok,
       integrityOk: info.integrity_ok,
       schemaVersion: String(info.schema_version),
       commandCount: info.command_count,
@@ -1208,8 +1250,12 @@ export const ipcClient = {
       ['ghost_text_enabled', String(settings.ghostTextEnabled)],
       ['terminal_load_profile', String(settings.terminalLoadProfile)],
     ];
-    await Promise.all(values.map(([key, value]) => invokeTauri<void>('settings_set', { key, value })));
-    await invokeTauri<void>('autostart_os_set', { enabled: settings.autostartApp });
+    await Promise.all(values.map(([key, value]) => invokeTauri<void>('settings_set', {
+      key,
+      value,
+      confirmed: true,
+    })));
+    await invokeTauri<void>('autostart_os_set', { enabled: settings.autostartApp, confirmed: true });
     return true;
   },
 

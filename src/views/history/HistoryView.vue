@@ -5,7 +5,7 @@
       <div class="header-left">
         <div class="title-row">
           <h2 class="view-title">Lịch Sử Phiên & Nhật Ký Sự Kiện (SCR-04)</h2>
-          <span class="engine-badge">v2.1 Audit & Diagnostics</span>
+          <span class="engine-badge">Audit & Diagnostics</span>
           <span class="wal-badge">SQLite WAL: Synced</span>
         </div>
         <span class="view-subtitle">Theo dõi trạng thái run_session, tra cứu exit codes và nhật ký sự kiện tiến trình</span>
@@ -357,6 +357,7 @@ const saveAsCommand = async (item: CommandHistory) => {
       name: name.trim(),
       execution_string: item.command_line,
       is_shell: item.shell_kind !== 'argv',
+      shell_kind: item.shell_kind === 'argv' ? undefined : item.shell_kind,
     });
   } catch (error) {
     window.alert(error instanceof Error ? error.message : String(error));

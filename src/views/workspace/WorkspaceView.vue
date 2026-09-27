@@ -15,7 +15,9 @@
       <div class="sidebar-content">
         <GroupTree
           :groups="groups"
+          :selected-group-id="selectedGroupId"
           @select-command="handleSelectCommand"
+          @select-group="selectedGroupId = $event"
           @run-group="handleRunGroup"
           @stop-group="handleStopGroup"
         />
@@ -44,11 +46,6 @@
           </div>
 
           <div class="strip-stat">
-            <span class="stat-label">RAM:</span>
-            <span class="stat-val font-mono">{{ estimatedMemoryMb }} MB</span>
-          </div>
-
-          <div class="strip-stat">
             <span class="stat-label">Subprocesses:</span>
             <span class="stat-val font-mono">{{ runningProcessesCount }} / {{ totalCommandsCount }}</span>
           </div>
@@ -67,8 +64,8 @@
           <button
             class="btn btn-success btn-sm"
             title="Chạy toàn bộ nhóm đang chọn"
-            :disabled="!groups[0]"
-            @click="groups[0] && handleRunGroup(groups[0])"
+            :disabled="!selectedGroup"
+            @click="selectedGroup && handleRunGroup(selectedGroup)"
           >
             <Play :size="12" />
             <span>Chạy Nhóm</span>
@@ -134,7 +131,7 @@ const route = useRoute();
 const router = useRouter();
 
 const { groups, fetchGroups } = useGroups();
-const { startGroupSession, stopGroupSession, stopCommandProcess, getProcessInfo, refreshProcesses, activeProcesses } = useRunSession();
+const { activeSession, startGroupSession, stopGroupById, stopAllProcesses, stopCommandProcess, getProcessInfo, refreshProcesses, activeProcesses } = useRunSession();
 
 const showStopModal = ref(false);
 const showBgModal = ref(false);
@@ -144,9 +141,11 @@ const stoppingCmdPid = ref<number | undefined>(undefined);
 const launchError = ref('');
 const workspaceReady = ref(false);
 const launchingCommand = ref(false);
+const selectedGroupId = ref<number | undefined>(undefined);
 
 onMounted(async () => {
   await fetchGroups();
+  selectedGroupId.value ??= groups.value[0]?.id;
   workspaceReady.value = true;
   await openRequestedCommand();
 });
@@ -219,12 +218,16 @@ const refreshData = async () => {
 };
 
 const currentSessionName = computed(() => {
-  return groups.value[0]?.group_name || 'Web Platform Dev';
+  return activeSession.value?.group_name
+    || groups.value.find(group => group.id === selectedGroupId.value)?.group_name
+    || 'Chưa chọn nhóm';
 });
 
 const currentSessionId = computed(() => {
-  return 'sess-91a';
+  return activeSession.value?.id ?? '—';
 });
+
+const selectedGroup = computed(() => groups.value.find(group => group.id === selectedGroupId.value));
 
 const runningProcessesCount = computed(() => {
   let count = 0;
@@ -239,12 +242,7 @@ const totalCommandsCount = computed(() => {
   groups.value.forEach(g => {
     total += g.commands.length;
   });
-  return total || 7;
-});
-
-const estimatedMemoryMb = computed(() => {
-  // Ước lượng ~192MB cho mỗi daemon đang chạy hoặc base 64MB
-  return runningProcessesCount.value > 0 ? 192 * runningProcessesCount.value : 64;
+  return total;
 });
 
 const handleSelectCommand = (commandId: number, commandName: string) => {
@@ -256,6 +254,7 @@ const handleOpenBgTab = (proc: { commandId: number; commandName: string; runEven
 };
 
 const handleRunGroup = async (group: CommandGroupWithCommands) => {
+  selectedGroupId.value = group.id;
   await startGroupSession(group.id, group.group_name, group.commands);
   // Tự động mở tab cho từng lệnh trong nhóm
   group.commands.forEach(cmd => {
@@ -264,11 +263,11 @@ const handleRunGroup = async (group: CommandGroupWithCommands) => {
 };
 
 const handleStopGroup = async (groupId: number) => {
-  await stopGroupSession();
+  await stopGroupById(groupId);
 };
 
 const handleStopAll = async () => {
-  await stopGroupSession();
+  await stopAllProcesses();
 };
 
 const handleRequestStop = (commandId: number) => {

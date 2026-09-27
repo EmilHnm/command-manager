@@ -5,6 +5,7 @@ import type { RunSession, ActiveProcessInfo, ProcessLifecycleStatus } from '@/ty
 // State chia sẻ toàn app
 const activeSession = ref<RunSession | null>(null);
 const activeProcesses = ref<Map<number, ActiveProcessInfo>>(new Map());
+const sessionByGroup = new Map<number, number>();
 
 let statusListenerSetup: Promise<void> | null = null;
 
@@ -48,6 +49,7 @@ export function useRunSession() {
         ...session,
         group_name: groupName || session.group_name,
       };
+      sessionByGroup.set(groupId, session.id);
       await refreshProcesses();
       return session;
     } finally {
@@ -95,6 +97,45 @@ export function useRunSession() {
     }
   };
 
+  const stopAllProcesses = async (force = false) => {
+    loading.value = true;
+    try {
+      const runningIds = Array.from(activeProcesses.value.entries())
+        .filter(([, process]) => process.status === 'running')
+        .map(([commandId]) => commandId);
+      await Promise.all(runningIds.map(async (commandId) => {
+        try {
+          await ipcClient.stopProcess(commandId, force);
+        } catch (error) {
+          console.warn(`[useRunSession] Không thể dừng process #${commandId}:`, error);
+        }
+      }));
+      const next = new Map(activeProcesses.value);
+      next.forEach((process, commandId) => {
+        if (process.status === 'running') {
+          next.set(commandId, { ...process, status: 'stopped' });
+        }
+      });
+      activeProcesses.value = next;
+      activeSession.value = null;
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  const stopGroupById = async (groupId: number) => {
+    const sessionId = sessionByGroup.get(groupId);
+    if (sessionId !== undefined) {
+      await stopGroupSession(sessionId);
+      sessionByGroup.delete(groupId);
+      return;
+    }
+    const processIds = Array.from(activeProcesses.value.entries())
+      .filter(([, process]) => process.status === 'running' && process.groupId === groupId)
+      .map(([commandId]) => commandId);
+    await Promise.all(processIds.map(commandId => ipcClient.stopProcess(commandId).catch(() => undefined)));
+  };
+
   const getProcessStatus = (commandId: number): ProcessLifecycleStatus => {
     return activeProcesses.value.get(commandId)?.status || 'idle';
   };
@@ -110,6 +151,8 @@ export function useRunSession() {
     startGroupSession,
     stopGroupSession,
     stopCommandProcess,
+    stopAllProcesses,
+    stopGroupById,
     refreshProcesses,
     getProcessStatus,
     getProcessInfo,

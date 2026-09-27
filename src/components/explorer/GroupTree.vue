@@ -8,6 +8,7 @@
         type="text"
         placeholder="Lọc nhóm & lệnh... (Ctrl+F)"
         class="tree-search-input"
+        ref="searchInput"
       />
     </div>
 
@@ -60,7 +61,7 @@
         class="group-node"
       >
         <!-- Group Header -->
-        <div class="group-header" @click="toggleExpand(group.id)">
+        <div class="group-header" @click="selectGroup(group.id); toggleExpand(group.id)">
           <div class="header-left">
             <component
               :is="expandedGroups.has(group.id) ? ChevronDown : ChevronRight"
@@ -104,7 +105,7 @@
             @click="$emit('select-command', cmd.id, cmd.name)"
           >
             <div class="cmd-item-left">
-              <span class="order-tag">0{{ idx + 1 }}.</span>
+              <span class="order-tag">{{ formatOrder(idx) }}.</span>
               <span
                 class="status-dot"
                 :class="{
@@ -131,29 +132,46 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { Search, ChevronDown, ChevronRight, Play, Square, Folder } from 'lucide-vue-next';
 import type { CommandGroupWithCommands } from '@/types/models';
 import { useRunSession } from '@/composables/useRunSession';
 
 const props = defineProps<{
   groups: CommandGroupWithCommands[];
+  selectedGroupId?: number;
 }>();
 
 const emit = defineEmits<{
   (e: 'select-command', commandId: number, commandName: string): void;
   (e: 'run-group', group: CommandGroupWithCommands): void;
   (e: 'stop-group', groupId: number): void;
+  (e: 'select-group', groupId: number): void;
 }>();
 
 const { getProcessStatus, getProcessInfo, activeProcesses } = useRunSession();
 
 const filterText = ref('');
+const searchInput = ref<HTMLInputElement | null>(null);
 const expandedGroups = ref<Set<number>>(new Set([1, 2, 3])); // Mặc định mở các nhóm
 
 const targetGroup = computed(() => {
-  return props.groups[0] || null;
+  return props.groups.find(group => group.id === props.selectedGroupId) || props.groups[0] || null;
 });
+
+const formatOrder = (index: number) => String(index + 1).padStart(2, '0');
+const selectGroup = (groupId: number) => emit('select-group', groupId);
+const handleFindShortcut = (event: KeyboardEvent) => {
+  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'f') return;
+  const target = event.target as HTMLElement | null;
+  if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
+  event.preventDefault();
+  searchInput.value?.focus();
+  searchInput.value?.select();
+};
+
+onMounted(() => window.addEventListener('keydown', handleFindShortcut));
+onBeforeUnmount(() => window.removeEventListener('keydown', handleFindShortcut));
 
 const isTargetGroupRunning = computed(() => {
   if (!targetGroup.value) return false;

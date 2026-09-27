@@ -19,7 +19,13 @@ export function useGroups() {
     }
   };
 
-  const saveGroup = async (group: { id?: number; group_name: string; autostart: boolean; commandIds?: number[] }) => {
+  const saveGroup = async (group: {
+    id?: number;
+    group_name: string;
+    autostart: boolean;
+    execution_mode: 'startup' | 'sequential';
+    commandIds?: number[];
+  }) => {
     loading.value = true;
     error.value = null;
     try {
@@ -57,6 +63,7 @@ export function useGroups() {
       id: groupId,
       group_name: target.group_name,
       autostart: !currentVal,
+      execution_mode: target.execution_mode,
       commandIds,
     });
   };

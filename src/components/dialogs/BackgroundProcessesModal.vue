@@ -82,13 +82,8 @@
                     <!-- Telemetry Stats -->
                     <div class="proc-telemetry">
                       <span class="telemetry-item">
-                        <span class="label">RAM ước tính:</span>
-                        <span class="val font-mono">192 MB</span>
-                      </span>
-                      <span class="divider">•</span>
-                      <span class="telemetry-item">
                         <span class="label">Buffer:</span>
-                        <span class="val font-mono">210 KB / 2 MB</span>
+                        <span class="val font-mono">{{ formatBuffer(proc.bufferBytes) }}</span>
                       </span>
                       <span class="divider">•</span>
                       <span class="telemetry-item">
@@ -288,6 +283,11 @@ const fetchPeekLog = async (proc: ActiveProcessInfo) => {
   } finally {
     loadingPeek.value = false;
   }
+};
+
+const formatBuffer = (bytes?: number) => {
+  if (!bytes) return '0 B';
+  return bytes < 1024 ? `${bytes} B` : `${Math.round(bytes / 1024)} KB`;
 };
 
 const copyPeekLog = async () => {

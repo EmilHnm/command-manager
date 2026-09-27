@@ -5,7 +5,7 @@
       <div class="header-left">
         <div class="title-row">
           <h2 class="view-title">Thư Viện Lệnh (SCR-02)</h2>
-          <span class="engine-badge">v2.1 Engine</span>
+          <span class="engine-badge">v1.0.0 Engine</span>
         </div>
         <span class="view-subtitle">Định nghĩa các câu lệnh, phân định argv vs shell tường minh, kiểm soát môi trường thực thi</span>
       </div>
@@ -105,17 +105,16 @@
             <th style="width: 110px;">TRẠNG THÁI</th>
             <th style="width: 220px;">TÊN LỆNH</th>
             <th style="width: 140px;">KIỂU THỰC THI</th>
-            <th style="width: 160px;">THƯ MỤC (CWD)</th>
             <th>CHUỖI LỆNH (COMMAND / ARGS)</th>
             <th style="width: 140px; text-align: right;">THAO TÁC</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="loading">
-            <td colspan="6" class="empty-cell">Đang đồng bộ thư viện lệnh...</td>
+            <td colspan="5" class="empty-cell">Đang đồng bộ thư viện lệnh...</td>
           </tr>
           <tr v-else-if="filteredCommands.length === 0">
-            <td colspan="6" class="empty-cell">
+            <td colspan="5" class="empty-cell">
               Không tìm thấy lệnh nào phù hợp với bộ lọc tìm kiếm
             </td>
           </tr>
@@ -146,10 +145,6 @@
               <span v-else class="type-badge shell" title="Chạy qua vỏ lệnh shell (bash/sh/cmd)">
                 Shell (bash/sh)
               </span>
-            </td>
-
-            <td class="cwd-cell">
-              <span class="cwd-text font-mono" :title="cmd.cwd || './'">{{ cmd.cwd || './' }}</span>
             </td>
 
             <td class="code-cell">
@@ -307,8 +302,7 @@ const filteredCommands = computed(() => {
     const q = searchQuery.value.toLowerCase();
     return (
       cmd.name.toLowerCase().includes(q) ||
-      cmd.execution_string.toLowerCase().includes(q) ||
-      (cmd.cwd && cmd.cwd.toLowerCase().includes(q))
+      cmd.execution_string.toLowerCase().includes(q)
     );
   });
 });
@@ -339,7 +333,6 @@ const duplicateCommand = async (cmd: CommandDefinition) => {
     name: `${cmd.name} (Copy)`,
     execution_string: cmd.execution_string,
     is_shell: cmd.is_shell,
-    cwd: cmd.cwd,
   });
   if (saved) showToast('Đã nhân bản câu lệnh.', 'success');
 };

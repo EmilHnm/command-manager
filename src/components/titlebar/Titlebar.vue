@@ -4,7 +4,7 @@
     <div class="titlebar-brand" data-tauri-drag-region>
       <img src="/logo.svg" class="brand-logo" alt="Command Manager Logo" />
       <span class="brand-text">Command Manager</span>
-      <span class="version-tag">v2.1</span>
+      <span class="version-tag">v1.0.0</span>
       
       <!-- Daemon Running Status Indicator Pill (from Stitch) -->
       <div
