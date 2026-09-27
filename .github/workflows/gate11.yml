@@ -9,6 +9,7 @@ on:
       - 'docs/plan.md'
       - 'package.json'
       - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - '.github/workflows/gate11.yml'
   pull_request:
     paths:
@@ -18,6 +19,7 @@ on:
       - 'docs/plan.md'
       - 'package.json'
       - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - '.github/workflows/gate11.yml'
 
 jobs:
