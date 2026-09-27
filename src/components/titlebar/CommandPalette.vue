@@ -7,7 +7,7 @@
           ref="inputRef"
           v-model="query"
           class="palette-input"
-          placeholder="Nhập tên lệnh, nhóm hoặc hành động... (Dùng mũi tên ↑↓ để chọn)"
+          placeholder="Nhập tên lệnh, template, nhóm hoặc hành động... (Mũi tên ↑↓ để chọn)"
           @keydown.esc="$emit('close')"
           @keydown.down.prevent="moveSelection(1)"
           @keydown.up.prevent="moveSelection(-1)"
@@ -46,10 +46,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { Search, Terminal, Folder, Settings, History, Play } from 'lucide-vue-next';
+import { Search, Terminal, Folder, Settings, History, Play, Puzzle } from 'lucide-vue-next';
 import { useCommands } from '@/composables/useCommands';
 import { useGroups } from '@/composables/useGroups';
+import { useTemplates } from '@/composables/useTemplates';
 import { useRunSession } from '@/composables/useRunSession';
+import { useSuggestions } from '@/composables/useSuggestions';
 
 const props = defineProps<{
   visible: boolean;
@@ -66,10 +68,12 @@ const selectedIndex = ref(0);
 
 const { commands, fetchCommands } = useCommands();
 const { groups, fetchGroups } = useGroups();
+const { templates, fetchTemplates } = useTemplates();
 const { startGroupSession } = useRunSession();
+const { loadHistory, findSuggestions } = useSuggestions();
 
 onMounted(async () => {
-  await Promise.all([fetchCommands(), fetchGroups()]);
+  await Promise.all([fetchCommands(), fetchGroups(), fetchTemplates(), loadHistory()]);
 });
 
 watch(() => props.visible, (val) => {
@@ -84,7 +88,7 @@ const paletteItems = computed(() => {
   const items: any[] = [
     {
       id: 'nav-workspace',
-      title: 'Đi đến Workspace Terminal',
+      title: 'Đi đến Workspace Terminal (Ctrl+1)',
       subtitle: 'Xem các tab PTY và bảng điều khiển phiên chạy',
       icon: Terminal,
       category: 'nav',
@@ -93,7 +97,7 @@ const paletteItems = computed(() => {
     },
     {
       id: 'nav-commands',
-      title: 'Mở Thư Viện Lệnh',
+      title: 'Mở Thư Viện Lệnh (Ctrl+2)',
       subtitle: 'Quản trị và định nghĩa các lệnh CLI',
       icon: Terminal,
       category: 'nav',
@@ -101,8 +105,17 @@ const paletteItems = computed(() => {
       action: () => router.push('/commands'),
     },
     {
+      id: 'nav-templates',
+      title: 'Mở Thư Viện Mẫu Lệnh (Ctrl+6)',
+      subtitle: 'Định nghĩa template {{param}} và preset tham số',
+      icon: Puzzle,
+      category: 'nav',
+      categoryLabel: 'Chuyển màn',
+      action: () => router.push('/templates'),
+    },
+    {
       id: 'nav-groups',
-      title: 'Quản Lý Nhóm Lệnh & Sequencer',
+      title: 'Quản Lý Nhóm Lệnh & Sequencer (Ctrl+3)',
       subtitle: 'Sắp xếp thứ tự chạy và cờ autostart',
       icon: Folder,
       category: 'nav',
@@ -111,7 +124,7 @@ const paletteItems = computed(() => {
     },
     {
       id: 'nav-history',
-      title: 'Lịch Sử Phiên Chạy',
+      title: 'Lịch Sử Phiên Chạy (Ctrl+4)',
       subtitle: 'Xem lại các run_session và mã thoát exit code',
       icon: History,
       category: 'nav',
@@ -120,7 +133,7 @@ const paletteItems = computed(() => {
     },
     {
       id: 'nav-settings',
-      title: 'Cài Đặt & Sao Lưu DB',
+      title: 'Cài Đặt & Sao Lưu DB (Ctrl+5)',
       subtitle: 'Xuất/nhập SQLite, cấu hình timeout dừng mềm',
       icon: Settings,
       category: 'nav',
@@ -128,6 +141,40 @@ const paletteItems = computed(() => {
       action: () => router.push('/settings'),
     },
   ];
+
+  // Reuse the terminal suggestion engine so the palette can find recent
+  // commands using the same ranking and privacy-filtered source.
+  if (query.value.trim()) {
+    findSuggestions(query.value).slice(0, 8).forEach((historyItem) => {
+      items.push({
+        id: `history-${historyItem.id}`,
+        title: `Lịch sử: ${historyItem.command_line}`,
+        subtitle: `${historyItem.shell_kind} · chạy ${historyItem.run_count} lần`,
+        icon: History,
+        category: 'history',
+        categoryLabel: 'Lịch sử',
+        action: () => {
+          void navigator.clipboard?.writeText(historyItem.command_line);
+          router.push('/history');
+        },
+      });
+    });
+  }
+
+  // Thêm các Template để mở giao diện chạy trực tiếp
+  templates.value.forEach(tpl => {
+    items.push({
+      id: `template-run-${tpl.id}`,
+      title: `Thực thi Template: ${tpl.name}`,
+      subtitle: `Cấu trúc: ${tpl.template_string}`,
+      icon: Puzzle,
+      category: 'template',
+      categoryLabel: 'Template',
+      action: () => {
+        router.push({ path: '/templates', query: { openTemplateId: String(tpl.id) } });
+      },
+    });
+  });
 
   // Thêm các nhóm lệnh để có thể Play trực tiếp
   groups.value.forEach(g => {

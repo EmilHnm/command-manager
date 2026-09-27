@@ -26,7 +26,7 @@ command-manager/
 
 ## Frontend — `src/`
 
-Bám App Shell và sitemap SCR-01…SCR-05. Một view = một route. Modal/overlay dùng chung nằm ở `components/`, không nhét sâu vào từng màn.
+Bám App Shell và sitemap SCR-01…SCR-06. Một view = một route. Modal/overlay dùng chung nằm ở `components/`, không nhét sâu vào từng màn.
 
 ```
 src/
@@ -40,16 +40,18 @@ src/
 │   └── global.css
 ├── layouts/
 │   └── AppShell.vue              # titlebar, activity bar 64px, side panel 260px, status 28px
-├── router.ts                     # /workspace /commands /groups /history /settings
+├── router.ts                     # /workspace /commands /templates /groups /history /settings
 ├── views/
 │   ├── workspace/
 │   │   └── WorkspaceView.vue     # SCR-01: tree nhóm + dockview PTY
 │   ├── commands/
 │   │   └── CommandLibraryView.vue  # SCR-02
+│   ├── templates/
+│   │   └── TemplatesView.vue     # SCR-06: template lệnh có {{param}}, chạy lại chỉ cần điền params
 │   ├── groups/
 │   │   └── GroupsView.vue        # SCR-03: sequencer execution_order
 │   ├── history/
-│   │   └── HistoryView.vue       # SCR-04: run_session / run_event
+│   │   └── HistoryView.vue       # SCR-04: run_session / run_event + tab "Lệnh đã chạy"
 │   └── settings/
 │       └── SettingsView.vue      # SCR-05: autostart, buffer, backup
 ├── components/
@@ -63,18 +65,25 @@ src/
 │   │   └── StatusBar.vue         # running count, ring buffer, WAL, lock
 │   ├── terminal/
 │   │   ├── DockHost.vue          # dockview tabs; đóng tab ≠ stop
-│   │   └── XtermPane.vue         # xterm.js, resize → PTY, reattach buffer
+│   │   ├── XtermPane.vue         # xterm.js, resize → PTY, reattach buffer; OSC 633 → ghost text gợi ý
+│   │   └── SuggestionPopup.vue   # Ctrl+Space: fuzzy list lịch sử + command + template
 │   ├── explorer/
 │   │   └── GroupTree.vue         # workspace sidebar
+│   ├── history/
+│   │   └── CommandHistoryPanel.vue # tìm/xoá lịch sử, lưu thành Command / Template
 │   └── dialogs/
 │       ├── ConfirmDialog.vue     # privileged: edit command, autostart, import
 │       ├── StopProcessModal.vue  # MOD-01
 │       ├── CommandEditorModal.vue
+│       ├── TemplateEditorModal.vue # soạn template + khai báo param (kiểu, mặc định, bắt buộc, secret)
+│       ├── TemplateRunModal.vue  # MOD-10: form params → preview → chạy
 │       ├── RestoreWizard.vue     # MOD-08
 │       └── ShutdownOverlay.vue   # MOD-09
 ├── composables/
 │   ├── useCommands.ts
 │   ├── useGroups.ts
+│   ├── useTemplates.ts           # CRUD template/preset, preview, run
+│   ├── useSuggestions.ts         # lịch sử in-memory, khớp tiền tố + frecency (không IPC mỗi phím)
 │   ├── useRunSession.ts
 │   ├── usePtyStream.ts           # IPC events → xterm; backpressure phía Rust
 │   └── useAppLifecycle.ts        # close window, single-instance toast
@@ -82,7 +91,7 @@ src/
 │   ├── client.ts                 # invoke wrappers, một chỗ duy nhất
 │   └── events.ts                 # listen: pty-data, process-status, …
 └── types/
-    └── models.ts                 # Command, Group, RunSession, RunEvent, ProcessStatus
+    └── models.ts                 # Command, Group, CommandTemplate, TemplateParam, TemplatePreset, CommandHistoryEntry, RunSession, RunEvent, ProcessStatus
 ```
 
 Không tách `services/` hay `store/` trừ khi một composable phình ra. Trạng thái chạy sống ở Rust; frontend subscribe event, không giữ PID làm source of truth.
@@ -102,18 +111,22 @@ src-tauri/
 │   └── default.json              # tối thiểu: cửa sổ, fs dialog backup, pty, autostart
 ├── icons/
 ├── migrations/
-│   └── 001_init.sql              # 5 bảng + schema_version
+│   ├── 001_init.sql              # 5 bảng + schema_version
+│   ├── 002_templates.sql         # command_template, template_param, template_preset; run_session.template_id
+│   └── 003_history.sql           # command_history (UNIQUE command_line + shell_kind, upsert run_count)
 └── src/
     ├── main.rs                   # lock single-instance TRƯỚC process manager
     ├── lib.rs                    # setup: db pool, manager, plugins, handlers
     ├── error.rs
     ├── db/
     │   ├── mod.rs
-    │   ├── pool.rs               # 1 writer + 2–3 readers, WAL
-    │   ├── schema.rs
+    │   ├── pool.rs               # 1 writer + 2–3 readers, WAL; chạy migration 00N tuần tự
+    │   ├── schema.rs             # SCHEMA_VERSION = 2
     │   └── repos/
     │       ├── commands.rs
     │       ├── groups.rs
+    │       ├── templates.rs      # template + param + preset (không lưu param secret)
+    │       ├── history.rs        # upsert, lọc ignorespace/regex chặn, cắt theo history_max_entries
     │       └── runs.rs           # run_session / run_event (lifecycle only)
     ├── process/
     │   ├── mod.rs
@@ -126,20 +139,30 @@ src-tauri/
     │       └── windows.rs        # adapter process group
     ├── pty/
     │   ├── mod.rs
-    │   ├── session.rs            # PTY alloc, resize, byte stream
+    │   ├── session.rs            # PTY alloc, resize, byte stream; shell mặc định pwsh → powershell → cmd
     │   ├── buffer.rs             # ring buffer theo byte (1–2MB)
-    │   └── backpressure.rs       # pause / drop / chunk — một chính sách
+    │   ├── backpressure.rs       # pause / drop / chunk — một chính sách
+    │   ├── osc.rs                # OscScanner: bắt 633;E/D/P qua ranh giới chunk, kiểm tra nonce
+    │   └── shell_integration/
+    │       ├── mod.rs            # chọn script theo shell_kind, set CM_NONCE
+    │       ├── powershell.ps1    # bọc prompt + PSConsoleHostReadLine
+    │       ├── bash.sh           # --rcfile: PROMPT_COMMAND + trap DEBUG
+    │       └── zsh/.zshrc        # ZDOTDIR tạm: precmd / preexec
+    ├── template/
+    │   ├── mod.rs
+    │   ├── parse.rs              # trích placeholder {{name}}, đối chiếu với param khai báo
+    │   └── render.rs             # validate giá trị; argv: split trước rồi thay theo token; shell: quote từng giá trị
     ├── backup/
     │   ├── mod.rs
-    │   ├── export.rs             # VACUUM INTO + integrity_check
-    │   └── import.rs             # temp → check → confirm → snapshot → swap wal/shm → rollback
+    │   ├── export.rs             # VACUUM INTO + integrity_check; include_history=false → xoá command_history trên bản sao
+    │   └── import.rs             # temp → check → confirm → snapshot → swap wal/shm → rollback; backup v1 → migrate
     ├── app/
     │   ├── mod.rs
     │   ├── single_instance.rs
     │   └── autostart.rs          # plugin; sau lock, chỉ start nhóm autostart chưa active
     └── ipc/
         ├── mod.rs                # đăng ký invoke + emit
-        ├── commands.rs           # CRUD + start/stop + backup
+        ├── commands.rs           # CRUD + start/stop + backup + templates_* / template_run
         └── events.rs             # tên event PTY/status (khớp src/ipc/events.ts)
 ```
 
@@ -154,12 +177,19 @@ Tên invoke/event sống ở `src-tauri/src/ipc/` và `src/ipc/`. Không `invoke
 | Invoke (gợi ý) | Module Rust |
 | --- | --- |
 | `commands_*` / `groups_*` | `db/repos` |
+| `templates_*` / `template_presets_*` | `db/repos/templates` |
+| `template_preview` / `template_run` | `template` → `process` |
+| `history_list` / `history_delete` / `history_clear` | `db/repos/history` |
 | `session_start` / `session_stop` / `process_stop` | `process` |
 | `pty_resize` / `pty_write` / `pty_reattach` | `pty` |
 | `backup_export` / `backup_import` | `backup` |
 | `settings_get` / `settings_set` / `autostart_*` | `app` |
 
-Events: `pty://data`, `process://status`, `app://shutdown-progress`, `app://instance`.
+Template: WebView chỉ gửi `template_id` + giá trị params; render và validate nằm ở Rust (`template/render.rs`), không nhận chuỗi lệnh đã ghép sẵn từ frontend.
+
+Lịch sử lệnh: bắt ở Rust (`pty/osc.rs` trong `pump_reader`) để vẫn ghi khi tab đang ẩn; frontend chỉ đọc OSC để vẽ gợi ý, không gửi dòng lệnh vào lịch sử.
+
+Events: `pty://data`, `process://status`, `history://added`, `app://shutdown-progress`, `app://instance`.
 
 ---
 

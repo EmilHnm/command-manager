@@ -36,6 +36,15 @@
 
       <div class="tab-actions">
         <button
+          class="btn btn-ghost btn-sm"
+          title="Mở một terminal shell mới"
+          :disabled="openingTerminal"
+          @click="openEmptyTerminal"
+        >
+          <Plus :size="13" />
+          <span>Terminal mới</span>
+        </button>
+        <button
           v-if="openTabs.length > 0"
           class="btn btn-ghost btn-sm"
           title="Đóng tất cả tab đang mở (Ẩn UI)"
@@ -53,8 +62,14 @@
           <XtermPane
             :command-id="tab.commandId"
             :command-name="tab.name"
+            :run-event-id="tab.runEventId"
             :pid="getProcessInfo(tab.commandId)?.pid ?? undefined"
             :process-status="getProcessStatus(tab.commandId)"
+            :shell-kind="tab.shellKind"
+            :history-level="tab.historyLevel"
+            :ghost-text-enabled="ghostTextEnabled"
+            :font-family="terminalFontFamily"
+            :font-size="terminalFontSize"
             @stop-process="handleStopProcess"
             @restart-process="handleRestartProcess"
           />
@@ -71,6 +86,15 @@
           <p>
             Chọn một nhóm lệnh ở bảng điều khiển bên trái và bấm <strong>[▷ Chạy]</strong> hoặc chọn một lệnh để mở tab terminal PTY.
           </p>
+          <button
+            class="btn btn-primary btn-sm empty-terminal-btn"
+            :disabled="openingTerminal"
+            title="Mở một terminal shell mới"
+            @click="openEmptyTerminal"
+          >
+            <Plus :size="14" />
+            <span>Mở terminal mới</span>
+          </button>
           <div class="empty-hint">
             💡 Lưu ý: Khi đóng thẻ tab, tiến trình vẫn chạy ngầm và Ring Buffer sẽ lưu lại log gần đây.
           </div>
@@ -81,15 +105,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
-import { X, Terminal } from 'lucide-vue-next';
+import { ref, computed, onMounted } from 'vue';
+import { Plus, X, Terminal } from 'lucide-vue-next';
 import XtermPane from './XtermPane.vue';
 import { useRunSession } from '@/composables/useRunSession';
+import { ipcClient } from '@/ipc/client';
 
 export interface OpenTabItem {
   id: string; // e.g. `cmd-1`
   commandId: number;
   name: string;
+  runEventId?: string;
+  shellKind?: string;
+  historyLevel?: number;
 }
 
 const props = defineProps<{
@@ -100,17 +128,27 @@ const emit = defineEmits<{
   (e: 'request-stop-process', commandId: number): void;
 }>();
 
-const { getProcessStatus, getProcessInfo } = useRunSession();
+const { getProcessStatus, getProcessInfo, refreshProcesses } = useRunSession();
 
-// Khởi tạo các tab mặc định từ demo
-const openTabs = ref<OpenTabItem[]>(
-  props.initialTabs || [
-    { id: 'cmd-1', commandId: 1, name: 'Vite Frontend Dev' },
-    { id: 'cmd-2', commandId: 2, name: 'NestJS Backend API' },
-  ]
-);
+// Chỉ mở tab khi người dùng chọn/chạy command; không hiển thị dữ liệu demo mặc định.
+const openTabs = ref<OpenTabItem[]>(props.initialTabs ? [...props.initialTabs] : []);
 
 const activeTabId = ref<string>(openTabs.value[0]?.id || '');
+const openingTerminal = ref(false);
+const ghostTextEnabled = ref(true);
+const terminalFontFamily = ref('JetBrains Mono');
+const terminalFontSize = ref(13);
+
+onMounted(async () => {
+  try {
+    const settings = await ipcClient.getSettings();
+    ghostTextEnabled.value = settings.ghostTextEnabled;
+    terminalFontFamily.value = settings.fontFamily || 'JetBrains Mono';
+    terminalFontSize.value = settings.fontSize || 13;
+  } catch {
+    ghostTextEnabled.value = true;
+  }
+});
 
 const selectTab = (tabId: string) => {
   activeTabId.value = tabId;
@@ -131,15 +169,44 @@ const closeAllTabs = () => {
   activeTabId.value = '';
 };
 
-const openCommandTab = (commandId: number, commandName: string) => {
+const openEmptyTerminal = async () => {
+  if (openingTerminal.value) return;
+  openingTerminal.value = true;
+  try {
+    // Đăng ký listener trước khi backend phát event trạng thái terminal mới.
+    await refreshProcesses();
+    const terminal = await ipcClient.openTerminal();
+    await refreshProcesses();
+    const newTab: OpenTabItem = {
+      id: `terminal-${terminal.commandId}-${Date.now()}`,
+      commandId: terminal.commandId,
+      name: 'Terminal',
+      runEventId: terminal.runEventId,
+      shellKind: terminal.shellKind,
+      historyLevel: terminal.historyLevel,
+    };
+    openTabs.value.push(newTab);
+    activeTabId.value = newTab.id;
+  } catch (error) {
+    console.error('[DockHost] Không thể mở terminal mới:', error);
+  } finally {
+    openingTerminal.value = false;
+  }
+};
+
+const openCommandTab = (commandId: number, commandName: string, runEventId?: string) => {
   const existing = openTabs.value.find(t => t.commandId === commandId);
   if (existing) {
+    if (runEventId) existing.runEventId = runEventId;
     activeTabId.value = existing.id;
   } else {
     const newTab: OpenTabItem = {
       id: `cmd-${commandId}-${Date.now()}`,
       commandId,
       name: commandName,
+      runEventId,
+      shellKind: 'command',
+      historyLevel: 0,
     };
     openTabs.value.push(newTab);
     activeTabId.value = newTab.id;
@@ -154,8 +221,13 @@ const handleRestartProcess = (commandId: number) => {
   console.log('Restart process ID:', commandId);
 };
 
+const openTabCommandIds = computed(() => openTabs.value.map(t => t.commandId));
+
 defineExpose({
+  openEmptyTerminal,
   openCommandTab,
+  openTabCommandIds,
+  openTabs,
 });
 </script>
 
@@ -325,6 +397,10 @@ defineExpose({
   font-size: 12.5px;
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+.empty-terminal-btn {
+  margin-top: 4px;
 }
 
 .empty-hint {

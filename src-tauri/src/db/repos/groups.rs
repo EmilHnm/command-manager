@@ -81,13 +81,22 @@ pub fn memberships(conn: &Connection, group_id: &str) -> Result<Vec<Membership>>
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
-pub fn replace_memberships(conn: &Connection, group_id: &str, members: &[Membership]) -> Result<()> {
-    conn.execute("DELETE FROM group_membership WHERE group_id = ?1", [group_id])?;
+pub fn replace_memberships(
+    conn: &Connection,
+    group_id: &str,
+    members: &[Membership],
+) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM group_membership WHERE group_id = ?1",
+        [group_id],
+    )?;
     for m in members {
-        conn.execute(
+        tx.execute(
             "INSERT INTO group_membership (group_id, command_id, execution_order) VALUES (?1, ?2, ?3)",
             rusqlite::params![group_id, m.command_id, m.execution_order],
         )?;
     }
+    tx.commit()?;
     Ok(())
 }

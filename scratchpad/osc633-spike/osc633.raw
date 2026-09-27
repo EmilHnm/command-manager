@@ -1,0 +1,11 @@
+]633;D;0]633;P;Cwd=C:\\Users\\HOA]633;A]633;B[2J[m[HPS C:\Users\HOA>[1C]0;C:\Users\HOA\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell\pwsh.exe[?25h[?25l[93mW[?25h[m[93mWr[25l[m[93m[1;18HWrite-Output[m [36m"CM_SPIKE_ONE"[?25h[m]633;E;Write-Output\x20"CM_SPIKE_ONE";spike-20260926-rerun]633;C
+CM_SPIKE_ONE
+]633;D;0]633;P;Cwd=C:\\Users\\HOA]633;A]633;BPS C:\Users\HOA> [?25l[93mWr[?25h[25l[36m[93m[3;18HWrite-Output[m [36m"CM_SPIKE;Xin ch]633;E;Write-Output\x20"CM_SPIKE\x3bXin\x20chào";spike-20260926-rerun]633;C[m[93m[3;18HWrite-Output[m [36m"CM_SPIKE;Xin chào"
+[?25h]633;D;0]633;P;Cwd=C:\\Users\\HOA]633;A]633;B[mCM_SPIKE;Xin chào
+PS C:\Users\HOA> [?25l]633;E;&\x20{;spike-20260926-rerun]633;CPS C:\Users\HOA> & {
+>> [17X[?25h[?25l>>   [?25h>>   [93mWrite-Output[m [36m"CM_MULTI_1"]633;E;&\x20{\x0a\x20\x20Write-Output\x20"CM_MULTI_1";spike-20260926-rerun]633;C[m
+>> [?25l>>   [?25h>>   [93mWrite-Output[m [36m"CM_MULTI_[?25l]633;E;&\x20{\x0a\x20\x20Write-Output\x20"CM_MULTI_1"\x0a\x20\x20Write-Output\x20"CM_MULTI_2";spike-20260926-rerun]633;C[m>>   [93mWrite-Output[m [36m"CM_MULTI_2"[m
+>> [27X[?25h[?25l]633;E;&\x20{\x0a\x20\x20Write-Output\x20"CM_MULTI_1"\x0a\x20\x20Write-Output\x20"CM_MULTI_2"\x0a};spike-20260926-rerun]633;C>> }      
+CM_MULTI_1
+CM_MULTI_2
+[?25h]633;D;0]633;P;Cwd=C:\\Users\\HOA]633;A]633;BPS C:\Users\HOA> 

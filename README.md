@@ -84,3 +84,27 @@ Truy cập `http://localhost:5173` để trải nghiệm đầy đủ giao diệ
 ```bash
 pnpm run build
 ```
+
+## Hướng dẫn Khởi chạy Native Tauri
+
+Để chạy đầy đủ backend Rust, SQLite và PTY trên Windows, cần có:
+
+- Rust stable với target `x86_64-pc-windows-msvc` (cài qua Rustup)
+- Visual Studio với workload C++/MSVC
+- Microsoft Edge WebView2 Runtime
+
+Sau khi cài Rustup, mở terminal mới để PATH nhận `%USERPROFILE%\.cargo\bin`, rồi chạy:
+
+```bash
+pnpm run tauri:dev
+```
+
+Các lệnh kiểm tra native backend:
+
+```bash
+cd src-tauri
+cargo test
+cargo check --features desktop
+```
+
+`pnpm dev` chỉ chạy frontend trong browser với Mock IPC; `pnpm run tauri:dev` mới chạy toàn bộ ứng dụng desktop và IPC native.

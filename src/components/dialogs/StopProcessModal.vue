@@ -52,10 +52,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { Square, X } from 'lucide-vue-next';
 
-defineProps<{
+const props = defineProps<{
   visible: boolean;
   commandId: number;
   commandName: string;
@@ -68,6 +68,14 @@ defineEmits<{
 }>();
 
 const stopMode = ref<'graceful' | 'force'>('graceful');
+
+watch(
+  () => props.visible,
+  () => {
+    stopMode.value = 'graceful';
+  },
+  { immediate: true }
+);
 </script>
 
 <style scoped>

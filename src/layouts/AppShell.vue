@@ -27,10 +27,22 @@
       @close="showPalette = false"
     />
 
+    <!-- Global Close Confirmation Modal -->
+    <CloseConfirmModal
+      :visible="showCloseConfirm"
+      :active-processes="activeProcesses"
+      @confirm="confirmClose"
+      @cancel="cancelClose"
+      @hide-tray="handleHideToTray"
+    />
+
     <!-- Global Graceful Shutdown Overlay (MOD-09) -->
     <ShutdownOverlay
       :visible="isShuttingDown"
       :countdown="shutdownCountdown"
+      :timeout="shutdownTimeout"
+      :phase="shutdownPhase"
+      :error="shutdownError"
       :active-processes="activeProcesses"
       @force-kill="forceExitApp"
     />
@@ -45,6 +57,7 @@ import ActivityBar from '@/components/nav/ActivityBar.vue';
 import StatusBar from '@/components/statusbar/StatusBar.vue';
 import CommandPalette from '@/components/titlebar/CommandPalette.vue';
 import ShutdownOverlay from '@/components/dialogs/ShutdownOverlay.vue';
+import CloseConfirmModal from '@/components/dialogs/CloseConfirmModal.vue';
 import { useAppLifecycle } from '@/composables/useAppLifecycle';
 import { useRunSession } from '@/composables/useRunSession';
 import { usePtyStream } from '@/composables/usePtyStream';
@@ -52,13 +65,40 @@ import { usePtyStream } from '@/composables/usePtyStream';
 const router = useRouter();
 const showPalette = ref(false);
 
-const { isShuttingDown, shutdownCountdown, forceExitApp } = useAppLifecycle();
-const { activeProcesses } = useRunSession();
+const {
+  isShuttingDown,
+  showCloseConfirm,
+  shutdownCountdown,
+  shutdownTimeout,
+  shutdownPhase,
+  shutdownError,
+  requestClose,
+  cancelClose,
+  confirmClose,
+  forceExitApp,
+  initLifecycleListener,
+  disposeLifecycleListener,
+} = useAppLifecycle();
+const { activeProcesses, refreshProcesses } = useRunSession();
 const { initIpcListener } = usePtyStream();
+
+const handleHideToTray = () => {
+  cancelClose();
+  if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+    void import('@tauri-apps/api/core').then(({ invoke }) => invoke('app_hide'));
+  }
+};
 
 // Đăng ký phím tắt toàn cục theo ma trận Section 7.2 trong docs/screens.md
 const handleGlobalKeydown = (e: KeyboardEvent) => {
   const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+  // Ctrl+Q: Đóng ứng dụng (mở modal xác nhận)
+  if (isCtrlOrCmd && (e.key === 'q' || e.key === 'Q')) {
+    e.preventDefault();
+    requestClose();
+    return;
+  }
 
   // Ctrl+K: Mở Command Palette
   if (isCtrlOrCmd && (e.key === 'k' || e.key === 'K')) {
@@ -74,6 +114,7 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
     else if (e.key === '3') { e.preventDefault(); router.push('/groups'); }
     else if (e.key === '4') { e.preventDefault(); router.push('/history'); }
     else if (e.key === '5') { e.preventDefault(); router.push('/settings'); }
+    else if (e.key === '6') { e.preventDefault(); router.push('/templates'); }
   }
 
   // Ctrl+Shift+S: Mở nhanh Cài đặt
@@ -83,12 +124,15 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
   }
 };
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener('keydown', handleGlobalKeydown);
+  void initLifecycleListener().catch(console.error);
   initIpcListener();
+  await refreshProcesses();
 });
 
 onUnmounted(() => {
+  disposeLifecycleListener();
   window.removeEventListener('keydown', handleGlobalKeydown);
 });
 </script>

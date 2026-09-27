@@ -5,7 +5,7 @@
 Trong kỷ nguyên của điện toán đám mây và cơ sở hạ tầng dưới dạng mã (Infrastructure as Code), người dùng thành thạo thường xuyên phải duy trì hàng chục cửa sổ terminal, ghi nhớ hàng trăm tham số phức tạp, và tự động hóa thủ công các tiến trình khởi động. Báo cáo này trình bày bản thiết kế kiến trúc cho một ứng dụng desktop quản lý các tập hợp lệnh, kết hợp giữa sức mạnh của CLI và tính tiện dụng của GUI.  
 Để đảm bảo tính khả thi trong triển khai, **Phạm vi Sản phẩm Khả thi Tối thiểu (MVP)** được chốt lại như sau:
 
-* **Tính năng lõi:** Lưu trữ lệnh/nhóm lệnh; chạy bằng argv hoặc shell tường minh; hiển thị terminal PTY theo thẻ (tabs).  
+* **Tính năng lõi:** Lưu trữ lệnh/nhóm lệnh; chạy bằng argv hoặc shell tường minh; hiển thị terminal PTY theo thẻ (tabs), bao gồm cả terminal shell trống mở độc lập không cần lưu command.  
 * **Quản lý phiên chạy:** Theo dõi trạng thái (start/stop) và log trong phiên chạy.  
 * **Tự khởi động:** Hỗ trợ tự khởi động ứng dụng và các nhóm lệnh được cấu hình autostart, kết hợp khóa cấp ứng dụng để chống chạy trùng.  
 * **Sao lưu:** Sao lưu và khôi phục cục bộ (thủ công) với quy trình khép kín, kiểm tra tính toàn vẹn và có khả năng phục hồi (rollback).  
@@ -60,10 +60,54 @@ Khi backend phân bổ PTY thông qua plugin (như tauri-plugin-pty), luồng by
 * **Resize Terminal:** Kích thước xterm.js trên UI (cols/rows) phải được đồng bộ liên tục với PTY ở kernel thông qua các lệnh resize cụ thể mỗi khi người dùng thay đổi kích thước thẻ (tab) hoặc cửa sổ ứng dụng.  
 * **Gắn lại (Reattaching):** Khi người dùng chuyển qua lại giữa các thẻ, hoặc đóng một thẻ UI nhưng tiến trình vẫn chạy ngầm, backend tiếp tục lưu luồng byte vào buffer memory. Khi thẻ được mở lại, backend xả buffer này xuống xterm.js để **xem lại đầu ra gần đây (recent output)**. Cần lưu ý, việc xả buffer thô không thể khôi phục chính xác trạng thái màn hình của các chương trình terminal toàn màn hình (như vim, htop).  
 * **Lọc Bí mật (Secrets):** Cần lưu ý rằng luồng dữ liệu PTY chứa mọi ký tự, bao gồm cả mật khẩu người dùng gõ. Việc không ghi log PTY bừa bãi vào đĩa cứng là bắt buộc.
+* **Terminal shell độc lập:** Nút `Terminal mới` tạo một PTY chạy shell tương tác (Windows: `pwsh` → `powershell.exe` → `cmd.exe`; Linux: `$SHELL` → `/bin/bash` → `/bin/sh`), kèm shell integration để ghi lịch sử và gợi ý lệnh (xem 4.3). Phiên này chỉ nằm trong Process Manager/Ring Buffer memory, không tạo `command_definition`, `run_session` hoặc `run_event` trong SQLite.
 
 ### **4.2. Quản lý Bố cục (Layout Manager)**
 
 UI sử dụng dockview (thông qua dockview-react) để hỗ trợ thẻ (tabs)7. Khi một run\_session kích hoạt, frontend gọi api.addPanel() để sinh ra các tab tương ứng7. Việc tổ chức dạng lưới (grid) phức tạp sẽ được đánh giá ở giai đoạn sau nếu nhu cầu đa nhiệm tăng cao10. Chi tiết thiết kế toàn diện các màn hình và trạng thái xem tại [screens.md](./screens.md).
+
+### **4.3. Shell Integration, Lịch sử Lệnh và Gợi ý (Autosuggestion / Autocomplete)**
+
+Terminal tương tác của ứng dụng có **hệ thống gợi ý riêng**, hoạt động giống nhau trên Windows và Linux: ghost text khi gõ (tương tự zsh-autosuggestions) và popup `Ctrl+Space` (tương tự zsh-autocomplete). Tiến độ chi tiết theo dõi tại [checklist.md §11](./checklist.md).
+
+**Nguyên tắc thiết kế:**
+
+* **Không phụ thuộc shell:** nguồn dữ liệu duy nhất là bảng `command_history` của ứng dụng; không đọc lịch sử của PSReadLine, bash hay zsh, không dùng cơ chế gợi ý/completion của shell. Ứng dụng tự vẽ gợi ý trên xterm.js và tự xử lý phím nhận gợi ý; shell chỉ cung cấp **ranh giới prompt**.
+* **Không đụng cấu hình người dùng:** script integration chỉ có hiệu lực trong process shell do ứng dụng mở. Gợi ý có sẵn của shell (PSReadLine prediction, zsh-autosuggestions, ble.sh) bị tắt **chỉ trong phiên đó**; không ghi vào `$PROFILE`, `.bashrc`, `.zshrc`.
+* **Shell là nguồn sự thật:** khi người dùng nhận gợi ý, phần còn lại được gửi vào PTY như phím gõ; ứng dụng không tự sửa buffer của shell.
+
+**Giao thức OSC 633:** script integration khiến shell phát các mã theo quy ước shell integration của VS Code: `A` (đầu prompt), `B` (đầu vùng nhập), `E;<command>;<nonce>` (dòng lệnh), `C` (bắt đầu chạy), `D;<exit>` (kết thúc), `P;Cwd=<path>`. Giá trị trong `E` được escape theo dạng `\xAB` và `\\`. Mỗi phiên terminal có **nonce riêng** truyền qua biến môi trường `CM_NONCE`; script đọc xong phải xoá biến này để tiến trình con không lấy được, và frame `E` sai nonce bị bỏ qua — chống việc một chương trình chạy trong terminal in mã OSC giả để cài lệnh vào lịch sử.
+
+PowerShell/PSReadLine có thể phát nhiều `E/C` trung gian khi người dùng nhấn Enter để tạo lệnh nhiều dòng. `OscScanner`/`ShellTracker` thay thế buffer đang chờ bằng `E` mới và chỉ ghi lịch sử khi nhận `D`; nhờ vậy chỉ lưu toàn bộ buffer thực sự được chạy.
+
+**Luồng dữ liệu:**
+
+```
+Shell ──OSC 633──► PTY ──► pump_reader (Rust)
+                             ├─ Ring Buffer (giữ nguyên byte)
+                             ├─ OscScanner → command_history (cấp 1: E có nonce hợp lệ)
+                             └─ pty://data → xterm.js
+                                   ├─ registerOscHandler(633) → marker A/B/C
+                                   ├─ đọc vùng nhập (marker B → con trỏ)
+                                   ├─ cấp 2: Enter → history_record_typed
+                                   └─ SuggestionEngine (RAM) → ghost text · popup
+```
+
+* **Backend:** `OscScanner` là state machine theo byte trong `pump_reader`, giữ trạng thái qua ranh giới chunk, giới hạn kích thước frame, chỉ bật cho terminal tương tác. Việc ghi lịch sử nằm ở Rust để vẫn hoạt động khi tab đang ẩn.
+* **Frontend:** xterm.js tự đặt marker theo OSC 633 để biết chính xác vị trí vùng nhập trong buffer (kể cả dòng wrap, ký tự rộng, tiếng Việt). Gợi ý chỉ hiện khi đang ở vùng nhập, con trỏ ở cuối dòng, không ở alternate screen (vim/htop), không đang paste hoặc IME composition. `SuggestionEngine` xếp hạng frecency (`run_count` × độ gần), ưu tiên cùng `cwd` và lệnh có exit 0, chạy hoàn toàn trong RAM. Khi chọn một kết quả fuzzy không cùng prefix, frontend gửi phím xoá cho input hiện tại rồi gửi lệnh đầy đủ qua PTY; không tự sửa buffer nội bộ của xterm.
+
+**Hai cấp ghi lịch sử:**
+
+| Cấp | Cơ chế | Shell |
+| :---- | :---- | :---- |
+| 1 | Shell phát `E` kèm nonce; chính xác, bắt được lệnh sửa bằng mũi tên hoặc lấy từ lịch sử shell | pwsh 7, bash, zsh; PowerShell 5.1 qua handler Enter của PSReadLine nếu PSReadLine khả dụng |
+| 2 | Frontend chụp vùng nhập từ marker `B` ngay trước khi gửi Enter; giữ thêm input shadow cho browser/mock hoặc lúc echo chưa kịp, rồi fallback đọc trễ nếu cần; gửi `history_record_typed`, lưu `source = 'typed'` | cmd.exe (marker qua biến `PROMPT`), sh/dash (marker qua `PS1`) |
+
+Không thấy marker (ví dụ `ssh` sang máy khác) thì ứng dụng ẩn gợi ý, không đoán. Lịch sử tôn trọng quyền riêng tư: không ghi lệnh bắt đầu bằng dấu cách, lệnh khớp regex chặn (`password=`, `token`, `Authorization:`...), có công tắc tắt ghi lịch sử và giới hạn số bản ghi.
+
+**ConPTY trên Windows:** spike ngày 26/09/2026 cho thấy ConPTY đi kèm Windows 10 (build 19045) chuyển mã OSC đi ngay nhưng text lại do bộ render của conhost vẽ theo chu kỳ riêng, nên marker lệch khỏi text (output của lệnh xuất hiện sau prompt kế tiếp). Ứng dụng vì vậy đóng gói **`conpty.dll` + `OpenConsole.exe`** từ gói NuGet `Microsoft.Windows.Console.ConPTY` (giấy phép MIT, khoảng 1,2 MB), đặt cạnh file thực thi; `portable-pty` tự nạp `conpty.dll` sideload. Với bản sideload, 7/7 lần đo cho thứ tự OSC và text chính xác. Hệ quả: mọi PTY của ứng dụng (kể cả lệnh/nhóm chạy thường) dùng ConPTY mới, và ứng dụng phải tự cập nhật phiên bản khi Microsoft phát hành bản vá. Trên Linux, PTY của kernel giữ nguyên thứ tự byte nên không cần thành phần này.
+
+**Shell mặc định:** Windows chọn `pwsh` → `powershell.exe` → `cmd.exe`; Linux dùng `$SHELL`, fallback `/bin/bash` → `/bin/sh`. Hỗ trợ Linux (bash, zsh, sh/dash, pwsh) được hiện thực cùng lúc nhưng kiểm thử và hoàn thiện trên môi trường Linux riêng ở giai đoạn sau.
 
 ## **5\. Quản trị Vòng đời Tiến trình: Hợp đồng Tắt/Bật**
 

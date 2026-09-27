@@ -27,6 +27,10 @@ impl RingBuffer {
         self.len
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub fn push(&mut self, mut data: &[u8]) {
         if data.len() > self.cap {
             data = &data[data.len() - self.cap..];

@@ -1,0 +1,94 @@
+name: Gate 11 shell integration
+
+on:
+  push:
+    paths:
+      - 'src-tauri/**'
+      - 'src/**'
+      - 'docs/checklist.md'
+      - 'docs/plan.md'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/gate11.yml'
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - 'src/**'
+      - 'docs/checklist.md'
+      - 'docs/plan.md'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/gate11.yml'
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-x86_64-pc-windows-msvc
+          components: clippy
+      - name: Enable pnpm
+        shell: pwsh
+        run: corepack enable
+      - name: Install frontend dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib --features desktop
+      - name: Validate PowerShell integration script
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "src-tauri/src/pty/shell_integration/powershell.ps1",
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+      - name: Rust clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --features desktop -- -D warnings
+      - name: Frontend build
+        run: corepack pnpm run build
+      - name: Tauri bundle with ConPTY resources
+        run: corepack pnpm run tauri:build
+
+  linux-shells:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install supported shells
+        run: sudo apt-get update && sudo apt-get install --yes zsh dash
+      - name: Validate POSIX integration scripts
+        run: |
+          bash -n src-tauri/src/pty/shell_integration/bash.sh
+          dash -n src-tauri/src/pty/shell_integration/sh.sh
+          zsh -n src-tauri/src/pty/shell_integration/zsh.zsh
+      - name: Validate recorded OSC 633 spike
+        run: python3 scratchpad/osc633-spike/analyze.py --frames scratchpad/osc633-spike/osc633.frames.txt --nonce spike-20260926-rerun
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install frontend dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - name: Rust clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib -- -D warnings
+      - name: Frontend build
+        run: corepack pnpm run build

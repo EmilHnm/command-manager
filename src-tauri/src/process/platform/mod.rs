@@ -5,6 +5,9 @@ mod windows;
 
 use crate::error::Result;
 
+#[cfg(windows)]
+pub use windows::CREATE_NO_WINDOW;
+
 pub fn terminate_graceful(pid: u32) -> Result<()> {
     #[cfg(unix)]
     {

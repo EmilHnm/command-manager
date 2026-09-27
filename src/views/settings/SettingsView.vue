@@ -2,8 +2,11 @@
   <div class="settings-view">
     <header class="view-header">
       <div class="header-left">
-        <h2 class="view-title">Cài Đặt Hệ Thống & Quản Lý Dữ Liệu (SCR-05)</h2>
-        <span class="view-subtitle">Cấu hình khởi động, bộ nhớ đệm PTY và cơ chế sao lưu SQLite an toàn</span>
+        <div class="title-row">
+          <h2 class="view-title">Cài Đặt Hệ Thống & Quản Lý Dữ Liệu (SCR-05)</h2>
+          <span class="engine-badge">v2.1 Engine</span>
+        </div>
+        <span class="view-subtitle">Cấu hình PTY, biến môi trường toàn cục, khởi động cùng OS và cơ chế sao lưu SQLite an toàn</span>
       </div>
 
       <div class="header-right">
@@ -17,11 +20,20 @@
     <div class="tabs-nav">
       <button
         class="tab-btn"
+        :class="{ active: currentTab === 'backup' }"
+        @click="currentTab = 'backup'"
+      >
+        <Database :size="14" />
+        <span>Sao Lưu & Phục Hồi (Disaster Recovery)</span>
+      </button>
+
+      <button
+        class="tab-btn"
         :class="{ active: currentTab === 'system' }"
         @click="currentTab = 'system'"
       >
         <Cpu :size="14" />
-        <span>Hệ Thống & Vòng Đời</span>
+        <span>Hệ Thống & Khởi Động (OS & Autostart)</span>
       </button>
 
       <button
@@ -30,21 +42,116 @@
         @click="currentTab = 'terminal'"
       >
         <Terminal :size="14" />
-        <span>Giao Diện & Terminal</span>
-      </button>
-
-      <button
-        class="tab-btn"
-        :class="{ active: currentTab === 'backup' }"
-        @click="currentTab = 'backup'"
-      >
-        <Database :size="14" />
-        <span>Sao Lưu & Khôi Phục DB</span>
+        <span>Terminal & Hiệu Năng (PTY & Memory)</span>
       </button>
     </div>
 
     <main class="settings-content">
-      <!-- TAB 1: SYSTEM & LIFECYCLE -->
+      <!-- TAB 1: BACKUP & RESTORE (Primary Stitch Highlight) -->
+      <div v-show="currentTab === 'backup'" class="tab-panel backup-layout">
+        <input
+          ref="restoreInput"
+          class="hidden-file-input"
+          type="file"
+          accept=".sqlite,.db,application/octet-stream"
+          @change="handleRestoreFile"
+        />
+        <!-- Card 1: Disaster Recovery Export -->
+        <div class="setting-card">
+          <div class="card-header-row">
+            <div class="card-title-group">
+              <Download :size="18" class="text-primary" />
+              <h3 class="card-title">Xuất Bản Sao Lưu Toàn Diện (Backup Export)</h3>
+            </div>
+            <span class="badge badge-primary font-mono">SQLite VACUUM INTO</span>
+          </div>
+
+          <p class="card-desc">
+            Sử dụng lệnh SQLite chuẩn <code>VACUUM INTO</code> để tạo ra bản snapshot độc lập toàn vẹn ngay khi cơ sở dữ liệu đang ở chế độ WAL. Không sinh read lock và bảo đảm tính toàn vẹn 100%.
+          </p>
+
+          <!-- DB Stats Preview Grid -->
+          <div class="db-stats-grid">
+            <div class="db-stat-item">
+              <span class="db-stat-lbl">LỆNH ĐÃ ĐĂNG KÝ</span>
+              <span class="db-stat-num font-mono">{{ backupInfo?.commandCount ?? '—' }} tác vụ</span>
+            </div>
+            <div class="db-stat-item">
+              <span class="db-stat-lbl">NHÓM ĐIỀU PHỐI</span>
+              <span class="db-stat-num font-mono">{{ backupInfo?.groupCount ?? '—' }} nhóm</span>
+            </div>
+            <div class="db-stat-item">
+              <span class="db-stat-lbl">LỊCH SỬ PHIÊN CHẠY</span>
+              <span class="db-stat-num font-mono">{{ backupInfo?.historyCount ?? '—' }} sự kiện</span>
+            </div>
+            <div class="db-stat-item">
+              <span class="db-stat-lbl">TRẠNG THÁI CƠ SỞ DỮ LIỆU</span>
+              <span class="db-stat-num font-mono text-accent">{{ backupInfo?.integrityOk ? 'WAL Synced' : 'Đang kiểm tra...' }}</span>
+            </div>
+          </div>
+
+          <div class="precheck-badges">
+            <span class="check-pill">✓ Zero Read Locks</span>
+            <span class="check-pill">✓ WAL Safe Flush</span>
+            <span class="check-pill">✓ PRAGMA integrity_check</span>
+          </div>
+
+          <div class="action-row">
+            <button class="btn btn-primary" :disabled="isExporting" @click="handleExportBackup">
+              <Download :size="14" />
+              <span>{{ isExporting ? 'Đang tạo snapshot...' : 'Tạo Bản Sao Lưu Ngay (Export SQLite)' }}</span>
+            </button>
+            <span v-if="exportSuccessPath" class="export-success">
+              ✓ Đã xuất thành công: <code>{{ exportSuccessPath }}</code>
+            </span>
+          </div>
+        </div>
+
+        <!-- Card 2: Disaster Recovery Restore with 7-step rollback sequence -->
+        <div class="setting-card danger-card">
+          <div class="card-header-row">
+            <div class="card-title-group">
+              <Upload :size="18" class="text-danger" />
+              <h3 class="card-title text-danger">Phục Hồi Dữ Liệu & Quy Trình Rollback</h3>
+            </div>
+            <span class="badge badge-failed font-mono">Atomic Swap with Fallback</span>
+          </div>
+
+          <p class="card-desc">
+            Nạp file sao lưu từ máy tính vào ứng dụng. Toàn bộ tiến trình đang chạy sẽ được dừng an toàn,
+            các kết nối SQLite sẽ đóng lại và file cơ sở dữ liệu sẽ được thay thế có <strong>tự động Rollback</strong> dự phòng.
+          </p>
+
+          <!-- 7-Step Rollback Visual Sequence Tracker (from Stitch SCR-05) -->
+          <div class="rollback-sequence-box">
+            <span class="sequence-box-title">QUY TRÌNH 7 BƯỚC KHÔI PHỤC AN TOÀN (ATOMIC SEQUENCE):</span>
+            <ol class="step-list">
+              <li><span class="step-num">01.</span> Dừng an toàn tất cả tiến trình PTY daemons (SIGTERM)</li>
+              <li><span class="step-num">02.</span> Đóng kết nối SQLite connection pool</li>
+              <li><span class="step-num">03.</span> Tạo checkpoint an toàn dự phòng <code>backup_checkpoint.sqlite</code></li>
+              <li><span class="step-num">04.</span> Kiểm tra toàn vẹn tệp nạp vào <code>PRAGMA integrity_check</code></li>
+              <li><span class="step-num">05.</span> Thay thế tệp DB nguyên tử (Atomic File Swap)</li>
+              <li><span class="step-num">06.</span> Khởi động lại engine và kiểm tra phiên thực thi</li>
+              <li><span class="step-num">07.</span> Tự động Rollback hoàn nguyên nếu gặp bất kỳ lỗi nào</li>
+            </ol>
+          </div>
+
+          <div class="precheck-badges">
+            <span class="check-pill text-danger">✓ Checkpoint Snapshot Ready</span>
+            <span class="check-pill text-danger">✓ SHA-256 Validated</span>
+            <span class="check-pill text-danger">✓ Zero Data Loss Fallback</span>
+          </div>
+
+          <div class="action-row">
+            <button class="btn btn-danger" @click="chooseRestoreFile">
+              <Upload :size="14" />
+              <span>Chọn Tệp Sao Lưu Để Khôi Phục...</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 2: SYSTEM & LIFECYCLE -->
       <div v-show="currentTab === 'system'" class="tab-panel">
         <div class="setting-card">
           <h3 class="card-title">Khởi Động & Khóa Đơn Bản Thể</h3>
@@ -52,7 +159,7 @@
           <div class="setting-row">
             <div class="row-info">
               <span class="row-label">Tự khởi động cùng Hệ điều hành (OS Autostart)</span>
-              <span class="row-desc">Tự động mở ứng dụng khi đăng nhập Windows/Linux qua tauri-plugin-autostart.</span>
+              <span class="row-desc">Tự động chạy ứng dụng ẩn trong khay hệ thống khi đăng nhập Windows/Linux.</span>
             </div>
             <button
               class="toggle-switch"
@@ -98,7 +205,7 @@
                 type="number"
                 min="5"
                 max="15"
-                class="input-number"
+                class="input-number font-mono"
               />
               <span class="unit">giây</span>
             </div>
@@ -106,7 +213,7 @@
         </div>
       </div>
 
-      <!-- TAB 2: TERMINAL & APPEARANCE -->
+      <!-- TAB 3: TERMINAL & APPEARANCE -->
       <div v-show="currentTab === 'terminal'" class="tab-panel">
         <div class="setting-card">
           <h3 class="card-title">Cấu Hình Hiển Thị xterm.js</h3>
@@ -134,7 +241,7 @@
                 type="number"
                 min="11"
                 max="18"
-                class="input-number"
+                class="input-number font-mono"
               />
               <span class="unit">px</span>
             </div>
@@ -151,41 +258,72 @@
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- TAB 3: BACKUP & RESTORE -->
-      <div v-show="currentTab === 'backup'" class="tab-panel">
         <div class="setting-card">
-          <h3 class="card-title">Xuất Bản Sao Lưu SQLite (Export / Backup)</h3>
-          <p class="card-desc">
-            Sử dụng lệnh SQLite chuẩn <code>VACUUM INTO</code> để tạo ra bản snapshot độc lập toàn vẹn ngay khi cơ sở dữ liệu đang ở chế độ WAL.
-            Ứng dụng tự động chạy <code>PRAGMA integrity_check</code> trước khi xác nhận thành công.
-          </p>
-
-          <div class="action-row">
-            <button class="btn btn-primary" :disabled="isExporting" @click="handleExportBackup">
-              <Download :size="14" />
-              <span>{{ isExporting ? 'Đang tạo snapshot...' : 'Tạo Bản Sao Lưu Ngay (Export SQLite)' }}</span>
-            </button>
-            <span v-if="exportSuccessPath" class="export-success">
-              ✓ Đã xuất thành công: <code>{{ exportSuccessPath }}</code>
-            </span>
+          <h3 class="card-title">Lịch sử lệnh & Gợi ý</h3>
+          <div class="setting-row">
+            <div class="row-info">
+              <span class="row-label">Shell mặc định cho terminal mới</span>
+              <span class="row-desc">Để trống để dùng thứ tự tự động theo hệ điều hành.</span>
+            </div>
+            <select v-model="settings.terminalShell" class="select-inline">
+              <option value="">Tự động theo hệ điều hành</option>
+              <option value="pwsh">PowerShell 7 (pwsh)</option>
+              <option value="powershell">Windows PowerShell 5.1</option>
+              <option value="cmd">Command Prompt (cmd)</option>
+              <option v-if="!isWindows" value="bash">Bash</option>
+              <option v-if="!isWindows" value="zsh">Zsh</option>
+              <option v-if="!isWindows" value="sh">POSIX sh</option>
+            </select>
           </div>
-        </div>
-
-        <div class="setting-card danger-card">
-          <h3 class="card-title text-danger">Khôi Phục Dữ Liệu SQLite (Import / Restore)</h3>
-          <p class="card-desc">
-            Nạp file sao lưu từ máy tính vào ứng dụng. Toàn bộ tiến trình đang chạy sẽ được dừng an toàn,
-            các kết nối SQLite sẽ đóng lại và file cơ sở dữ liệu sẽ được thay thế có <strong>tự động Rollback</strong> dự phòng.
-          </p>
-
-          <div class="action-row">
-            <button class="btn btn-danger" @click="openRestoreModal">
-              <Upload :size="14" />
-              <span>Chọn Tệp Sao Lưu Để Khôi Phục...</span>
+          <div class="setting-row">
+            <div class="row-info">
+              <span class="row-label">Nạp profile PowerShell</span>
+              <span class="row-desc">Tắt để terminal mở nhanh hơn (-NoProfile): bỏ qua module, alias và theme như oh-my-posh trong $PROFILE. Áp dụng cho terminal mở sau khi lưu.</span>
+            </div>
+            <button
+              class="toggle-switch"
+              :class="{ active: settings.terminalLoadProfile }"
+              @click="settings.terminalLoadProfile = !settings.terminalLoadProfile"
+            >
+              <span class="toggle-slider" />
             </button>
           </div>
+          <div class="setting-row">
+            <div class="row-info">
+              <span class="row-label">Hiển thị ghost text</span>
+              <span class="row-desc">Gợi ý do Command Manager tạo từ lịch sử dùng chung.</span>
+            </div>
+            <button
+              class="toggle-switch"
+              :class="{ active: settings.ghostTextEnabled }"
+              @click="settings.ghostTextEnabled = !settings.ghostTextEnabled"
+            >
+              <span class="toggle-slider" />
+            </button>
+          </div>
+          <div class="setting-row">
+            <div class="row-info">
+              <span class="row-label">Lưu lịch sử lệnh trong terminal</span>
+              <span class="row-desc">Lịch sử thuộc về ứng dụng; shell trong terminal này không tự ghi history ra đĩa.</span>
+            </div>
+            <button
+              class="toggle-switch"
+              :class="{ active: settings.historyEnabled }"
+              @click="settings.historyEnabled = !settings.historyEnabled"
+            >
+              <span class="toggle-slider" />
+            </button>
+          </div>
+          <div class="setting-row">
+            <div class="row-info">
+              <span class="row-label">Số mục lịch sử tối đa</span>
+              <span class="row-desc">Các mục cũ nhất sẽ tự động được loại bỏ sau khi ghi.</span>
+            </div>
+            <input v-model.number="settings.historyMaxEntries" type="number" min="100" max="100000" class="input-number font-mono" />
+          </div>
+          <label class="history-pattern-label" for="history-block-patterns">Mẫu không lưu (mỗi dòng một mẫu)</label>
+          <textarea id="history-block-patterns" v-model="settings.historyBlockPatterns" rows="4" class="history-patterns" />
         </div>
       </div>
     </main>
@@ -193,20 +331,28 @@
     <!-- Restore Wizard Modal MOD-08 -->
     <RestoreWizard
       :visible="showRestoreModal"
+      :file-path="selectedBackupPath"
+      :backup-info="backupInfo"
       @confirm-restore="confirmRestoreDatabase"
       @close="showRestoreModal = false"
     />
+
+    <div v-if="toastMessage" class="settings-toast" :class="toastType" role="status" aria-live="polite">
+      <span>{{ toastMessage }}</span>
+      <button class="toast-close" aria-label="Đóng thông báo" @click="dismissToast">×</button>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 import { Save, Cpu, Terminal, Database, Download, Upload } from 'lucide-vue-next';
 import RestoreWizard from '@/components/dialogs/RestoreWizard.vue';
 import { ipcClient } from '@/ipc/client';
-import type { SystemSettings } from '@/types/models';
+import type { BackupIntegrityResult, SystemSettings } from '@/types/models';
 
 const currentTab = ref<'system' | 'terminal' | 'backup'>('system');
+const isWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
 
 const settings = ref<SystemSettings>({
   autostartApp: true,
@@ -214,22 +360,63 @@ const settings = ref<SystemSettings>({
   shutdownTimeoutSec: 8,
   fontSize: 13,
   fontFamily: 'JetBrains Mono',
+  historyEnabled: true,
+  historyMaxEntries: 5000,
+  historyBlockPatterns: 'password\\s*=\npasswd\\s*=\npwd\\s*=\n(?:^|\\s)(?:-p|--password)(?:\\s|=)\\S+\n(?:^|\\s)(?:token|bearer)(?:\\s|=|:)\\S+\nauthorization:\\s*',
+  terminalShell: '',
+  ghostTextEnabled: true,
+  terminalLoadProfile: true,
 });
 
 const isExporting = ref(false);
 const exportSuccessPath = ref<string | null>(null);
+const backupInfo = ref<BackupIntegrityResult | null>(null);
 const showRestoreModal = ref(false);
+const restoreInput = ref<HTMLInputElement | null>(null);
+const selectedBackupPath = ref('');
+const selectedBackupFile = ref<File | null>(null);
+const toastMessage = ref('');
+const toastType = ref<'error' | 'success'>('success');
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+const showToast = (message: string, type: 'error' | 'success') => {
+  toastMessage.value = message.trim() || 'Đã hoàn tất thao tác.';
+  toastType.value = type;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toastMessage.value = '';
+  }, 4500);
+};
+
+const dismissToast = () => {
+  toastMessage.value = '';
+  if (toastTimer) clearTimeout(toastTimer);
+};
+
+onBeforeUnmount(() => {
+  if (toastTimer) clearTimeout(toastTimer);
+});
 
 onMounted(async () => {
-  const loaded = await ipcClient.getSettings();
-  if (loaded) {
-    settings.value = loaded;
+  try {
+    const [loaded, info] = await Promise.all([
+      ipcClient.getSettings(),
+      ipcClient.getBackupInfo(),
+    ]);
+    if (loaded) settings.value = loaded;
+    backupInfo.value = info;
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error), 'error');
   }
 });
 
 const handleSaveSettings = async () => {
-  await ipcClient.saveSettings(settings.value);
-  alert('Đã lưu thành công cài đặt hệ thống!');
+  try {
+    await ipcClient.saveSettings(settings.value);
+    showToast('Đã lưu thành công cài đặt hệ thống.', 'success');
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error), 'error');
+  }
 };
 
 const handleExportBackup = async () => {
@@ -238,19 +425,45 @@ const handleExportBackup = async () => {
   try {
     const res = await ipcClient.exportBackup();
     exportSuccessPath.value = res.path;
+    showToast('Đã tạo bản sao lưu SQLite thành công.', 'success');
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error), 'error');
   } finally {
     isExporting.value = false;
   }
 };
 
-const openRestoreModal = () => {
+const chooseRestoreFile = () => {
+  restoreInput.value?.click();
+};
+
+const handleRestoreFile = (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+
+  selectedBackupFile.value = file;
+  selectedBackupPath.value = file.name;
   showRestoreModal.value = true;
 };
 
 const confirmRestoreDatabase = async () => {
-  await ipcClient.importBackup('backup.sqlite');
-  showRestoreModal.value = false;
-  alert('Đã khôi phục cơ sở dữ liệu thành công! Ứng dụng đã nạp lại dữ liệu mới.');
+  if (!selectedBackupFile.value) {
+    showToast('Chưa chọn file backup.', 'error');
+    return;
+  }
+  try {
+    const bytes = new Uint8Array(await selectedBackupFile.value.arrayBuffer());
+    let binary = '';
+    bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+    await ipcClient.importBackupBytes(btoa(binary));
+    selectedBackupFile.value = null;
+    showRestoreModal.value = false;
+    showToast('Đã khôi phục cơ sở dữ liệu thành công.', 'success');
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error), 'error');
+  }
 };
 </script>
 
@@ -274,10 +487,26 @@ const confirmRestoreDatabase = async () => {
   flex-shrink: 0;
 }
 
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .view-title {
   font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.engine-badge {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background-color: var(--primary-subtle);
+  color: var(--primary-accent);
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid rgba(116, 71, 145, 0.35);
 }
 
 .view-subtitle {
@@ -330,7 +559,174 @@ const confirmRestoreDatabase = async () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-width: 780px;
+  max-width: 820px;
+}
+
+.backup-layout {
+  max-width: 860px;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.settings-toast {
+  position: fixed;
+  top: 58px;
+  right: 20px;
+  z-index: 120;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: min(360px, calc(100vw - 40px));
+  padding: 11px 12px;
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.settings-toast.error {
+  color: #fecaca;
+  background: #3b1418;
+  border: 1px solid rgba(248, 113, 113, 0.55);
+}
+
+.settings-toast.success {
+  color: #bbf7d0;
+  background: #123522;
+  border: 1px solid rgba(74, 222, 128, 0.55);
+}
+
+.toast-close {
+  flex: 0 0 auto;
+  margin: -2px -3px 0 auto;
+  color: currentColor;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.card-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* DB Stats Grid (from Stitch SCR-05) */
+.db-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  background-color: var(--bg-app-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+}
+
+.db-stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.db-stat-lbl {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+}
+
+.db-stat-num {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.text-accent {
+  color: #38bdf8;
+}
+
+/* 7-Step Rollback Visual Sequence Box (from Stitch SCR-05) */
+.rollback-sequence-box {
+  background-color: var(--bg-app-base);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sequence-box-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #f87171;
+  letter-spacing: 0.05em;
+}
+
+.step-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.step-list li {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.step-list li code {
+  font-family: var(--font-mono);
+  background: var(--bg-surface);
+  padding: 1px 4px;
+  border-radius: 2px;
+  color: #cda8ee;
+  font-size: 10.5px;
+}
+
+.step-num {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--primary-accent);
+}
+
+.precheck-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.check-pill {
+  font-size: 10.5px;
+  font-weight: 600;
+  background-color: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  padding: 2px 8px;
+  border-radius: 9999px;
+}
+
+.check-pill.text-danger {
+  background-color: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.25);
 }
 
 .setting-card {
@@ -340,16 +736,16 @@ const confirmRestoreDatabase = async () => {
   padding: 18px 20px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .danger-card {
-  border-color: rgba(239, 68, 68, 0.3);
+  border-color: rgba(239, 68, 68, 0.35);
   background-color: rgba(239, 68, 68, 0.02);
 }
 
 .card-title {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
 }

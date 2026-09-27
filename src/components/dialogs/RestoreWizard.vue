@@ -23,15 +23,15 @@
           <ul class="checks-list">
             <li class="check-item ok">
               <CheckCircle2 :size="14" />
-              <span>Cấu trúc SQLite hợp lệ (PRAGMA integrity_check: ok)</span>
+              <span>Cấu trúc SQLite hợp lệ (PRAGMA integrity_check: {{ backupInfo?.integrityOk ? 'ok' : 'chưa kiểm tra' }})</span>
             </li>
             <li class="check-item ok">
               <CheckCircle2 :size="14" />
-              <span>Phiên bản lược đồ tương thích (Schema: v1.0.0)</span>
+              <span>Phiên bản lược đồ đang dùng: v{{ backupInfo?.schemaVersion || '—' }}</span>
             </li>
             <li class="check-item ok">
               <CheckCircle2 :size="14" />
-              <span>Dữ liệu tìm thấy: 14 commands, 3 groups, 42 history records</span>
+              <span>Dữ liệu hiện tại: {{ backupInfo?.commandCount ?? '—' }} commands, {{ backupInfo?.groupCount ?? '—' }} groups, {{ backupInfo?.historyCount ?? '—' }} history records</span>
             </li>
           </ul>
         </div>
@@ -75,12 +75,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { ShieldAlert, CheckCircle2, RotateCcw, X } from 'lucide-vue-next';
+import type { BackupIntegrityResult } from '@/types/models';
 
-defineProps<{
+const props = defineProps<{
   visible: boolean;
   filePath?: string;
+  backupInfo?: BackupIntegrityResult | null;
 }>();
 
 const emit = defineEmits<{
@@ -90,6 +92,15 @@ const emit = defineEmits<{
 
 const userConfirmed = ref(false);
 const isRestoring = ref(false);
+
+watch(
+  () => props.visible,
+  () => {
+    userConfirmed.value = false;
+    isRestoring.value = false;
+  },
+  { immediate: true }
+);
 
 const handleRestore = () => {
   if (!userConfirmed.value) return;

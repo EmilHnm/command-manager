@@ -1,18 +1,57 @@
 <template>
   <div class="group-tree-container">
+    <!-- Search Box -->
     <div class="search-box">
       <Search :size="13" class="search-icon" />
       <input
         v-model="filterText"
         type="text"
-        placeholder="Lọc nhóm & lệnh..."
+        placeholder="Lọc nhóm & lệnh... (Ctrl+F)"
         class="tree-search-input"
       />
     </div>
 
+    <!-- Target Group Quick Summary Box (from Stitch SCR-01) -->
+    <div v-if="targetGroup" class="target-group-card">
+      <div class="target-card-header">
+        <div class="target-title-wrap">
+          <Folder :size="14" class="target-icon" />
+          <span class="target-title">{{ targetGroup.group_name }}</span>
+        </div>
+        <span class="target-status-badge" :class="{ running: isTargetGroupRunning }">
+          <span class="pulse-dot" v-if="isTargetGroupRunning" />
+          {{ isTargetGroupRunning ? 'RUNNING' : 'IDLE' }}
+        </span>
+      </div>
+      <div class="target-meta">
+        <span>Tuần tự (Sequential)</span>
+        <span>•</span>
+        <span>{{ targetGroup.commands.length }} tác vụ</span>
+      </div>
+      <div class="target-actions">
+        <button
+          class="btn btn-success btn-sm target-btn"
+          title="Chạy toàn bộ nhóm"
+          @click="handleRunGroup(targetGroup)"
+        >
+          <Play :size="11" />
+          <span>Chạy</span>
+        </button>
+        <button
+          class="btn btn-danger btn-sm target-btn"
+          title="Dừng toàn bộ nhóm"
+          @click="handleStopGroup(targetGroup.id)"
+        >
+          <Square :size="10" />
+          <span>Dừng</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Groups & Execution Tree List -->
     <div class="groups-list">
       <div v-if="filteredGroups.length === 0" class="no-groups">
-        Không có nhóm nào
+        Không có nhóm nào phù hợp
       </div>
 
       <div
@@ -28,6 +67,7 @@
               :size="14"
               class="chevron-icon"
             />
+            <Folder :size="13" class="folder-mini-icon" />
             <span class="group-name">{{ group.group_name }}</span>
             <span class="cmd-count">({{ group.commands.length }})</span>
             <span v-if="group.autostart" class="autostart-pill" title="Tự khởi động cùng ứng dụng">Auto</span>
@@ -51,31 +91,37 @@
           </div>
         </div>
 
-        <!-- Commands Under Group -->
+        <!-- Commands Under Group (Sequential Tree Items) -->
         <div v-show="expandedGroups.has(group.id)" class="commands-list">
           <div
-            v-for="cmd in group.commands"
+            v-for="(cmd, idx) in group.commands"
             :key="cmd.id"
             class="command-item"
+            :class="{
+              running: getProcessStatus(cmd.id) === 'running',
+              failed: getProcessStatus(cmd.id) === 'failed',
+            }"
             @click="$emit('select-command', cmd.id, cmd.name)"
           >
             <div class="cmd-item-left">
-              <span class="order-tag">0{{ cmd.execution_order }}.</span>
+              <span class="order-tag">0{{ idx + 1 }}.</span>
               <span
                 class="status-dot"
                 :class="{
                   active: getProcessStatus(cmd.id) === 'running',
                   failed: getProcessStatus(cmd.id) === 'failed',
+                  starting: getProcessStatus(cmd.id) === 'starting',
                 }"
               />
-              <span class="cmd-title">{{ cmd.name }}</span>
+              <span class="cmd-title" :title="cmd.name">{{ cmd.name }}</span>
             </div>
 
             <div class="cmd-item-right">
-              <span v-if="getProcessInfo(cmd.id)?.pid" class="mini-pid">
-                {{ getProcessInfo(cmd.id)?.pid }}
+              <span v-if="getProcessInfo(cmd.id)?.pid" class="mini-pid" title="Process ID">
+                PID:{{ getProcessInfo(cmd.id)?.pid }}
               </span>
               <span v-if="cmd.is_shell" class="shell-badge">sh</span>
+              <span v-else class="argv-badge">argv</span>
             </div>
           </div>
         </div>
@@ -86,7 +132,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { Search, ChevronDown, ChevronRight, Play, Square } from 'lucide-vue-next';
+import { Search, ChevronDown, ChevronRight, Play, Square, Folder } from 'lucide-vue-next';
 import type { CommandGroupWithCommands } from '@/types/models';
 import { useRunSession } from '@/composables/useRunSession';
 
@@ -100,10 +146,19 @@ const emit = defineEmits<{
   (e: 'stop-group', groupId: number): void;
 }>();
 
-const { getProcessStatus, getProcessInfo } = useRunSession();
+const { getProcessStatus, getProcessInfo, activeProcesses } = useRunSession();
 
 const filterText = ref('');
 const expandedGroups = ref<Set<number>>(new Set([1, 2, 3])); // Mặc định mở các nhóm
+
+const targetGroup = computed(() => {
+  return props.groups[0] || null;
+});
+
+const isTargetGroupRunning = computed(() => {
+  if (!targetGroup.value) return false;
+  return targetGroup.value.commands.some(c => getProcessStatus(c.id) === 'running');
+});
 
 const toggleExpand = (groupId: number) => {
   if (expandedGroups.value.has(groupId)) {
@@ -164,12 +219,102 @@ const handleStopGroup = (groupId: number) => {
   font-family: var(--font-sans);
 }
 
+/* Target Group Quick Card */
+.target-group-card {
+  background: linear-gradient(145deg, var(--surface-container), #151824);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.target-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.target-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.target-icon {
+  color: var(--primary-accent);
+  flex-shrink: 0;
+}
+
+.target-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.target-status-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 9999px;
+  background-color: var(--status-idle-bg);
+  color: var(--status-idle);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.target-status-badge.running {
+  background-color: var(--status-running-bg);
+  color: #34d399;
+}
+
+.pulse-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--status-running);
+  animation: pulseDot 1.5s infinite;
+}
+
+.target-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.target-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.target-btn {
+  flex: 1;
+  padding: 3px 0;
+  font-size: 11px;
+}
+
 .groups-list {
   flex: 1;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.folder-mini-icon {
+  color: var(--primary-accent);
+  flex-shrink: 0;
 }
 
 .group-node {
@@ -327,6 +472,16 @@ const handleStopGroup = (groupId: number) => {
   color: var(--text-primary);
 }
 
+.command-item.running {
+  background-color: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.command-item.failed {
+  background-color: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
 .cmd-item-right {
   display: flex;
   align-items: center;
@@ -344,6 +499,15 @@ const handleStopGroup = (groupId: number) => {
   font-family: var(--font-mono);
   color: #fbbf24;
   background: rgba(245, 158, 11, 0.12);
+  padding: 0 3px;
+  border-radius: 2px;
+}
+
+.argv-badge {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.12);
   padding: 0 3px;
   border-radius: 2px;
 }

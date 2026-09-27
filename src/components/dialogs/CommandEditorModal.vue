@@ -12,14 +12,27 @@
       </div>
 
       <div class="modal-body">
+        <!-- Validation Error Banner -->
+        <div v-if="wasSubmitted && hasErrors" class="validation-banner" role="alert">
+          <AlertCircle :size="14" />
+          <span>Vui lòng điền đầy đủ các thông tin bắt buộc bên dưới.</span>
+        </div>
+
         <!-- Name Field -->
         <div class="form-group">
           <label class="form-label">Tên gợi nhớ của lệnh (*)</label>
           <input
             v-model="form.name"
             class="input"
+            :class="{ 'has-error': isFieldInvalid('name') }"
             placeholder="Ví dụ: Vite Frontend Dev, Docker PostgreSQL..."
+            @blur="touched.name = true"
+            @input="touched.name = true"
           />
+          <span v-if="isFieldInvalid('name')" class="field-error-msg">
+            <AlertCircle :size="12" />
+            <span>{{ errors.name }}</span>
+          </span>
         </div>
 
         <!-- is_shell Execution Mode -->
@@ -54,8 +67,27 @@
             v-model="form.execution_string"
             rows="4"
             class="textarea font-mono"
+            :class="{ 'has-error': isFieldInvalid('execution_string') }"
             placeholder="Ví dụ: pnpm --filter web dev --port 3000"
+            @blur="touched.execution_string = true"
+            @input="touched.execution_string = true"
           />
+          <div v-if="editorSuggestions.length" class="editor-suggestions" role="listbox" aria-label="Gợi ý câu lệnh">
+            <button
+              v-for="suggestion in editorSuggestions"
+              :key="suggestion.id"
+              type="button"
+              class="editor-suggestion"
+              @mousedown.prevent="applySuggestion(suggestion.command_line)"
+            >
+              <span>{{ suggestion.command_line }}</span>
+              <small>{{ suggestion.source }} · {{ suggestion.run_count }}×</small>
+            </button>
+          </div>
+          <span v-if="isFieldInvalid('execution_string')" class="field-error-msg">
+            <AlertCircle :size="12" />
+            <span>{{ errors.execution_string }}</span>
+          </span>
         </div>
       </div>
 
@@ -65,7 +97,6 @@
         </button>
         <button
           class="btn btn-primary"
-          :disabled="!canSave"
           @click="handleSave"
         >
           <Save :size="14" />
@@ -77,9 +108,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
-import { Zap, Save, X } from 'lucide-vue-next';
+import { ref, computed, watch, onMounted } from 'vue';
+import { Zap, Save, X, AlertCircle } from 'lucide-vue-next';
 import type { CommandDefinition } from '@/types/models';
+import { useSuggestions } from '@/composables/useSuggestions';
 
 const props = defineProps<{
   visible: boolean;
@@ -97,11 +129,47 @@ const form = ref<Partial<CommandDefinition>>({
   is_shell: false,
 });
 
+const touched = ref<Record<string, boolean>>({});
+const wasSubmitted = ref(false);
+const { loadHistory, findSuggestions } = useSuggestions();
+
+const editorSuggestions = computed(() => {
+  const input = form.value.execution_string?.trim() || '';
+  return input ? findSuggestions(input).slice(0, 5) : [];
+});
+
+const errors = computed(() => {
+  const errs: { name?: string; execution_string?: string } = {};
+  if (!form.value.name?.trim()) {
+    errs.name = 'Tên gợi nhớ không được để trống.';
+  }
+  if (!form.value.execution_string?.trim()) {
+    errs.execution_string = 'Chuỗi dòng lệnh thực thi không được để trống.';
+  }
+  return errs;
+});
+
+const hasErrors = computed(() => Object.keys(errors.value).length > 0);
+
+const isFieldInvalid = (field: 'name' | 'execution_string') => {
+  return (wasSubmitted.value || touched.value[field]) && !!errors.value[field];
+};
+
 watch(
-  () => props.command,
-  (val) => {
-    if (val) {
-      form.value = { ...val };
+  [() => props.visible, () => props.command],
+  ([visible, val]) => {
+    wasSubmitted.value = false;
+    touched.value = {};
+    if (visible) {
+      if (val) {
+        form.value = { ...val };
+      } else {
+        form.value = {
+          name: '',
+          execution_string: '',
+          is_shell: false,
+        };
+      }
     } else {
       form.value = {
         name: '',
@@ -113,12 +181,18 @@ watch(
   { immediate: true }
 );
 
-const canSave = computed(() => {
-  return form.value.name?.trim() && form.value.execution_string?.trim();
+onMounted(() => {
+  void loadHistory();
 });
 
+const applySuggestion = (commandLine: string) => {
+  form.value.execution_string = commandLine;
+  touched.value.execution_string = true;
+};
+
 const handleSave = () => {
-  if (!canSave.value) return;
+  wasSubmitted.value = true;
+  if (hasErrors.value) return;
   emit('save', { ...form.value });
 };
 </script>
@@ -203,5 +277,67 @@ const handleSave = () => {
 .mode-desc {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.input.has-error,
+.textarea.has-error {
+  border-color: var(--status-failed, #ef4444) !important;
+  background-color: rgba(239, 68, 68, 0.05);
+}
+
+.field-error-msg {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--status-failed, #ef4444);
+  margin-top: 2px;
+}
+
+.editor-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: var(--bg-app-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.editor-suggestion {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 8px;
+  color: var(--text-primary);
+  background: transparent;
+  border: 0;
+  text-align: left;
+  font: 11px var(--font-mono);
+  cursor: pointer;
+}
+
+.editor-suggestion:hover {
+  background: var(--bg-surface-hover);
+}
+
+.editor-suggestion small {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.validation-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-md);
+  color: var(--status-failed, #ef4444);
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 12px;
 }
 </style>

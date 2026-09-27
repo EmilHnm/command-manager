@@ -2,6 +2,15 @@ import { ref } from 'vue';
 import { ipcClient } from '@/ipc/client';
 import type { CommandDefinition } from '@/types/models';
 
+function errorMessage(error: unknown, fallback: string) {
+  if (typeof error === 'string' && error.trim()) return error.trim();
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim()) return message.trim();
+  }
+  return fallback;
+}
+
 export function useCommands() {
   const commands = ref<CommandDefinition[]>([]);
   const loading = ref(false);
@@ -13,7 +22,7 @@ export function useCommands() {
     try {
       commands.value = await ipcClient.listCommands();
     } catch (err: any) {
-      error.value = err?.message || 'Không thể tải danh sách lệnh';
+      error.value = errorMessage(err, 'Không thể tải danh sách lệnh');
     } finally {
       loading.value = false;
     }
@@ -27,7 +36,7 @@ export function useCommands() {
       await fetchCommands();
       return true;
     } catch (err: any) {
-      error.value = err?.message || 'Không thể lưu câu lệnh';
+      error.value = errorMessage(err, 'Không thể lưu câu lệnh');
       return false;
     } finally {
       loading.value = false;
@@ -42,7 +51,7 @@ export function useCommands() {
       await fetchCommands();
       return true;
     } catch (err: any) {
-      error.value = err?.message || 'Không thể xóa câu lệnh';
+      error.value = errorMessage(err, 'Không thể xóa câu lệnh');
       return false;
     } finally {
       loading.value = false;

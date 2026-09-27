@@ -8,6 +8,7 @@ export interface CommandDefinition {
   name: string;
   execution_string: string;
   is_shell: boolean;
+  cwd?: string;
 }
 
 export interface CommandGroup {
@@ -30,8 +31,10 @@ export type RunSessionStatus = 'running' | 'completed' | 'failed' | 'stopped';
 
 export interface RunSession {
   id: number;
-  group_id: number;
+  group_id?: number;
   group_name?: string;
+  template_id?: number;
+  template_name?: string;
   started_at: string;
   ended_at?: string;
   status: RunSessionStatus;
@@ -51,7 +54,20 @@ export interface RunEvent {
   pid?: number | null;
 }
 
+export interface CommandHistory {
+  id: string;
+  command_line: string;
+  shell_kind: string;
+  cwd?: string;
+  last_exit_code?: number | null;
+  run_count: number;
+  first_used_at: string;
+  last_used_at: string;
+  source: 'command' | 'template' | 'shell' | 'typed' | string;
+}
+
 export interface ActiveProcessInfo {
+  runEventId?: string;
   commandId: number;
   commandName: string;
   pid?: number;
@@ -67,6 +83,12 @@ export interface SystemSettings {
   shutdownTimeoutSec: number;  // 5..10 seconds
   fontSize: number;
   fontFamily: string;
+  historyEnabled: boolean;
+  historyMaxEntries: number;
+  historyBlockPatterns: string;
+  terminalShell: string;
+  ghostTextEnabled: boolean;
+  terminalLoadProfile: boolean;
 }
 
 export interface BackupIntegrityResult {
@@ -85,4 +107,53 @@ export interface ShutdownProgressPayload {
   timeoutSeconds: number;
   elapsedSeconds: number;
   status: 'graceful' | 'force_killing' | 'done';
+}
+
+// Command Template & Parameter Models (SCR-06, MOD-10, MOD-11)
+export type TemplateParamKind = 'string' | 'number' | 'enum' | 'path' | 'bool';
+
+export interface TemplateParam {
+  template_id?: number;
+  name: string;
+  label: string;
+  kind: TemplateParamKind;
+  default_value?: string;
+  required: boolean;
+  options?: string[]; // Choice options for enum
+  is_secret: boolean;
+  param_order: number;
+}
+
+export interface CommandTemplate {
+  id: number;
+  name: string;
+  template_string: string;
+  is_shell: boolean;
+  description?: string;
+  params: TemplateParam[];
+  last_run_at?: string;
+  preset_count?: number;
+  presets?: TemplatePreset[];
+}
+
+export interface TemplatePreset {
+  id: number;
+  template_id: number;
+  name: string;
+  values: Record<string, string>; // Secret params are strictly omitted
+  last_used_at?: string;
+}
+
+export interface TemplatePreviewPayload {
+  rendered: string;
+  masked_rendered: string;
+  is_shell: boolean;
+  validation_errors?: Record<string, string>;
+  warnings?: string[];
+}
+
+export interface TemplateRunPayload {
+  template_id: number;
+  param_values: Record<string, string>;
+  save_preset_name?: string;
 }

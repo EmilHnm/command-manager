@@ -1,6 +1,4 @@
-import { onMounted, onUnmounted } from 'vue';
 import { ipcClient } from '@/ipc/client';
-import { IPC_EVENTS, type PtyDataEvent } from '@/ipc/events';
 
 type DataListener = (chunk: string) => void;
 
@@ -19,33 +17,27 @@ export function usePtyStream() {
     };
   };
 
-  const sendInput = async (commandId: number, text: string) => {
-    await ipcClient.writePty(commandId, text);
+  const sendInput = async (commandId: number, text: string, runEventId?: string) => {
+    await ipcClient.writePty(commandId, text, runEventId);
   };
 
-  const resize = async (commandId: number, cols: number, rows: number) => {
-    await ipcClient.resizePty(commandId, cols, rows);
+  const resize = async (commandId: number, cols: number, rows: number, runEventId?: string) => {
+    await ipcClient.resizePty(commandId, cols, rows, runEventId);
   };
 
-  const reattachBuffer = async (commandId: number): Promise<string> => {
-    return await ipcClient.reattachPty(commandId);
+  const reattachBuffer = async (commandId: number, runEventId?: string): Promise<string> => {
+    return await ipcClient.reattachPty(commandId, runEventId);
   };
 
   // Khởi tạo listener cho Tauri IPC
   const initIpcListener = async () => {
-    if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        unlistenPty = await listen<PtyDataEvent>(IPC_EVENTS.PTY_DATA, (event) => {
-          const { commandId, data } = event.payload;
-          const set = listeners.get(commandId);
-          if (set) {
-            set.forEach((cb) => cb(data));
-          }
-        });
-      } catch (err) {
-        console.warn('[usePtyStream] Không thể đăng ký Tauri event listener:', err);
-      }
+    try {
+      unlistenPty = await ipcClient.onPtyData((commandId, data) => {
+        const set = listeners.get(commandId);
+        if (set) set.forEach((cb) => cb(data));
+      });
+    } catch (err) {
+      console.warn('[usePtyStream] Không thể đăng ký Tauri event listener:', err);
     }
   };
 

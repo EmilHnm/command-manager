@@ -1,0 +1,23 @@
+/* Fonts are bundled so the app renders the same offline; the CSP only
+   allows same-origin font and style sources. */
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/jetbrains-mono/600.css';
+@import '@fontsource/jetbrains-mono/700.css';
+@import '@fontsource/fira-code/400.css';
+@import '@fontsource/fira-code/700.css';
+
+/* Nerd Font icons (Powerline separators, devicons, ...) used by prompt
+   themes like oh-my-posh. Glyph-only, so it is a fallback after the
+   terminal font. See ../assets/fonts/SymbolsNerdFontMono.LICENSE.md. */
+@font-face {
+  font-family: 'Symbols Nerd Font Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('../assets/fonts/SymbolsNerdFontMono-Regular.woff2') format('woff2');
+}

@@ -23,7 +23,7 @@ Cấu trúc cửa sổ tuân thủ mô hình chuẩn của một Desktop IDE/Wor
 
 ```
 +-----------------------------------------------------------------------------------------------+
-| [Icon] Command Manager v0.1.0        [Search Commands / Groups... Ctrl+K]      [_] [□] [X]    | <- Custom Titlebar
+| [Icon] Command Manager v1.0.0        [Search Commands / Groups... Ctrl+K]      [_] [□] [X]    | <- Custom Titlebar
 +-----------------------------------------------------------------------------------------------+
 | NAV   | SUB-SIDEBAR       | MAIN WORKSPACE (Dockview Tabs & Content)                         |
 | BAR   | (Groups / Tree)   |                                                                  |
@@ -48,6 +48,7 @@ Cấu trúc cửa sổ tuân thủ mô hình chuẩn của một Desktop IDE/Wor
 * **Activity Bar / Nav Rail (60px):** Cố định bên trái với các biểu tượng điều hướng màn hình chính:
   * 🖥️ **Dashboard & Workspace (`/workspace`):** Không gian quản lý phiên chạy và Tabs Terminal.
   * ⚡ **Command Library (`/commands`):** Thư viện lệnh, cấu hình argv/shell.
+  * 🧩 **Command Templates (`/templates`):** Thư viện mẫu lệnh có tham số (`{{param}}`), tạo preset và xem trước lệnh.
   * 📁 **Groups & Workflows (`/groups`):** Quản lý nhóm lệnh và thứ tự thực thi (`execution_order`).
   * 📜 **Session History & Logs (`/history`):** Lịch sử các `run_session` và sự kiện `run_event`.
   * ⚙️ **Settings & Backup (`/settings`):** Cấu hình Autostart, dung lượng Buffer, Sao lưu & Khôi phục SQLite.
@@ -66,6 +67,7 @@ graph TD
 
     MainShell --> SCR01[SCR-01: Terminal Workspace & Execution Dashboard]
     MainShell --> SCR02[SCR-02: Command Library - Danh mục Lệnh]
+    MainShell --> SCR06[SCR-06: Command Templates - Thư viện Mẫu Lệnh]
     MainShell --> SCR03[SCR-03: Command Groups & Workflow Sequencer]
     MainShell --> SCR04[SCR-04: Session History & Run Event Logs]
     MainShell --> SCR05[SCR-05: System Settings, Backup & Restore]
@@ -76,6 +78,9 @@ graph TD
     SCR02 --> MOD02[MOD-02: Command Editor Modal - Create/Edit is_shell]
     SCR02 --> MOD03[MOD-03: Delete Command Confirmation Modal]
 
+    SCR06 --> MOD10[MOD-10: Template Run & Preset Selector Modal]
+    SCR06 --> MOD11[MOD-11: Template Editor & Parameter Spec Modal]
+
     SCR03 --> MOD04[MOD-04: Group Composer & Execution Order Sequencer]
     SCR03 --> MOD05[MOD-05: Autostart Toggle Warning Modal]
 
@@ -85,7 +90,8 @@ graph TD
     SCR05 --> MOD08[MOD-08: Restore Database Wizard & Rollback Protection]
     
     App --> MOD09[MOD-09: Graceful Shutdown Progress Overlay]
-    App --> MOD10[MOD-10: Single-Instance Alert Toast]
+    App --> MOD12[MOD-12: Single-Instance Alert Toast]
+    App --> MOD13[MOD-13: Privileged Action & Confirmation Modal - ConfirmDialog]
 ```
 
 ---
@@ -103,7 +109,7 @@ Màn hình trung tâm hàng ngày của người dùng. Cho phép kích hoạt c
 
 ```
 +----------------------------------------------------------------------------------------------------+
-| [=] Workspace   | Active Session: Web Platform Dev (Started 14:20:05)      [⏹ Stop Group] [▷ Restart]|
+| [=] Workspace   | Active Session: Web Platform Dev (Started 14:20:05)   [⚡ 2 Ngầm] [⏹ Stop Group]  |
 +-----------------+----------------------------------------------------------------------------------+
 | GROUPS TREE     | [xterm] frontend (PID: 2841) [x] | [xterm] backend-api (PID: 2845) [x] | [+] New Tab|
 | Search groups.. |----------------------------------------------------------------------------------+
@@ -112,18 +118,18 @@ Màn hình trung tâm hàng ngày của người dùng. Cho phép kích hoạt c
 |   ● 01. db-init | $ pnpm run dev                                                                   |
 |     (Code: 0)   |                                                                                  |
 |   ● 02. backend |   VITE v5.4.2  ready in 340 ms                                                   |
-|     (PID: 2845) |                                                                                  |
-|   ● 03. frontend|   ➜  Local:   http://localhost:5173/                                             |
-|     (PID: 2841) |   ➜  Network: http://192.168.1.15:5173/                                          |
-|                 |   ➜  press h + enter to show help                                                |
-| > Microservices |                                                                                  |
-|   [▷] [⏹]       |                                                                                  |
-|   ○ 01. redis   |                                                                                  |
-|   ○ 02. worker  |                                                                                  |
-|                 |                                                                                  |
-| > Standalone    |                                                                                  |
-|   ▷ cloudflared |                                                                                  |
-|   ▷ backup-job  |                                                                                  |
+|     (PID: 2845) |   ➜  Local:   http://localhost:5173/                                             |
+|   ● 03. frontend|   +------------------------------------------------------------------------------+ |
+|     (PID: 2841) |   | ⚡ MENU TIẾN TRÌNH CHẠY NGẦM (ACTIVE BACKGROUND DAEMONS)       [⏹ Stop All] [X] | |
+|                 |   +------------------------------------------------------------------------------+ |
+| > Microservices |   | ● NestJS Backend API (ID: #2) | PID: 2845 | RAM: 192MB | Buffer: 210KB/2MB      | |
+|   [▷] [⏹]       |   |   Trạng thái UI: [🙈 Tab đang ẩn (Detached)]                                  | |
+|   ○ 01. redis   |   |   Hành động: [👁️ Mở lại Tab] [📜 Xem Log] [⏹ Dừng] [💀 Force Kill]           | |
+|   ○ 02. worker  |   |------------------------------------------------------------------------------| |
+|                 |   | ● Vite Frontend Dev (ID: #1)  | PID: 2841 | RAM: 192MB | Buffer: 180KB/2MB      | |
+| > Standalone    |   |   Trạng thái UI: [👁️ Tab đang hiển thị]                                     | |
+|   ▷ cloudflared |   |   Hành động: [👁️ Focus Tab]  [📜 Xem Log] [⏹ Dừng] [💀 Force Kill]           | |
+|   ▷ backup-job  |   +------------------------------------------------------------------------------+ |
 +-----------------+----------------------------------------------------------------------------------+
 | Active: 2 cmds  | xterm: 120x34 | Encoding: UTF-8 | PTY Stream: Connected | Memory Buffer: 128KB     |
 +----------------------------------------------------------------------------------------------------+
@@ -142,6 +148,20 @@ Màn hình trung tâm hàng ngày của người dùng. Cho phép kích hoạt c
   * Nút tác vụ nhanh trên đầu nhóm:
     * **Play Button (`▷`):** Kích hoạt `run_session` mới, khởi chạy các lệnh theo `execution_order`. Tự động thêm tab tương ứng (`dockview.api.addPanel()`).
     * **Stop Button (`⏹`):** Gửi tín hiệu dừng cho toàn bộ các lệnh đang chạy thuộc nhóm đó.
+* **Top Status Strip & Background Processes Button:**
+  * Thẻ chỉ báo **`[⚡ 2 Ngầm]` / `[Active Daemons]`**: Cho biết số lượng tiến trình PTY đang chạy ngầm trong kernel backend Rust.
+  * Click vào nút để bật/tắt **Menu Quản lý Tiến trình Chạy ngầm (Background Processes Manager Panel / Popover)**.
+* **Menu Quản lý Tiến trình Chạy Ngầm (Background Processes Panel / Popover):**
+  * **Header Panel:** Tiêu đề *"Tiến trình đang chạy ngầm (Active Daemons)"*, tổng số tiến trình, nút **"Dừng Tất Cả Ngầm"** (Stop All Daemons) và nút đóng menu.
+  * **Danh sách tiến trình ngầm (Daemon List Items):**
+    * Tên lệnh (`command_name`), Mã lệnh (`commandId`), Process ID (`PID`).
+    * Chỉ báo bộ nhớ (`RAM Footprint ~192MB`) & Kích thước Ring Buffer (`Buffer Bytes / Max 2MB`).
+    * Trạng thái UI Tab: **"Tab đang hiển thị"** (Attached) hoặc **"Tab đang ẩn"** (Detached - khi người dùng đã đóng/ẩn tab).
+    * Các nút hành động trực tiếp:
+      * **`[👁️ Mở lại Tab]` (Reattach Tab):** Khôi phục tab UI trên Dockview và chuyển focus đến tab đó để tiếp tục tương tác.
+      * **`[📜 Xem Log Nhanh]` (Peek Log):** Xem nhanh log buffer gần nhất mà không cần mở lại tab terminal full.
+      * **`[⏹ Dừng Lệnh]` (SIGTERM):** Gửi tín hiệu ngắt tiến trình êm dịu.
+      * **`[💀 Buộc Dừng]` (SIGKILL / Force Exit):** Ép buộc diệt tiến trình ngay lập tức khi bị treo.
 * **Main Area: Dockview Tabbed PTY Terminals:**
   * **Header Tab Strip:**
     * Tên tab tương ứng `command_definition.name`.
@@ -328,6 +348,60 @@ Quản lý cấu hình cấp ứng dụng, cơ chế tự khởi động cùng O
 
 ---
 
+### Màn hình 6: SCR-06 — Quản lý Thư viện Mẫu Lệnh (Command Templates)
+
+#### 1. Mục đích & Vai trò
+Quản lý các mẫu lệnh tái sử dụng chứa các tham số linh hoạt theo dạng placeholder (ví dụ: `ffmpeg -i {{input}} -crf {{crf}} {{output}}`). Cho phép xem danh sách template, quản lý các định nghĩa tham số, lưu lại các bộ giá trị thường dùng (Presets), xem trước câu lệnh đã render và kích hoạt thực thi nhanh trong tab PTY Terminal mà không cần nhập lại lệnh thủ công hay tiếp xúc trực tiếp với chuỗi dòng lệnh phức tạp.
+
+#### 2. Wireframe Chi tiết
+
+```
++----------------------------------------------------------------------------------------------------+
+| [=] Command Templates    [🔍 Tìm kiếm template theo tên, placeholder...]  [Filter: All / Shell / Argv]|
+|                          [+ Tạo Template Mới]                                                      |
++----------------------------------------------------------------------------------------------------+
+| TÊN TEMPLATE      | KIỂU | CẤU TRÚC MẪU (TEMPLATE STRING)          | THAM SỐ (PARAMS)| LẦN CHẠY CUỐI | HÀNH ĐỘNG   |
+|-------------------+------+-----------------------------------------+-----------------+---------------+-------------|
+| FFmpeg Video Conv | Shell| ffmpeg -i {{input}} -crf {{crf}} {{out}} | 3 (1 secret)    | 10 phút trước | [▷] [✎] [⧉] [🗑] |
+| Curl API Request  | Argv | curl -X {{method}} {{url}} -H {{auth}}  | 3 (1 secret)    | Hôm qua       | [▷] [✎] [⧉] [🗑] |
+| Docker Run        | Shell| docker run -d -p {{host_port}}:{{port}} | 3 params        | 3 ngày trước  | [▷] [✎] [⧉] [🗑] |
+| Postgres DB Dump  | Argv | pg_dump -h {{host}} -U {{user}} {{db}}  | 3 (1 secret)    | Chưa chạy     | [▷] [✎] [⧉] [🗑] |
++----------------------------------------------------------------------------------------------------+
+| Tổng cộng: 4 templates | 2 Shell templates | 2 Direct Argv templates            | Trang: [<] 1 [>]    |
++----------------------------------------------------------------------------------------------------+
+```
+
+#### 3. Các Thành phần Giao diện & Data Binding
+* **Header & Telemetry Ribbon:**
+  * Huy hiệu `v2.2 Templates Engine`.
+  * Nút `+ Tạo Template Mới`: Mở modal `TemplateEditorModal` (MOD-11) với mẫu trống.
+  * 4 Thẻ Quick Stats Telemetry Ribbon:
+    * `TỔNG TEMPLATE`: Đếm tổng số bản ghi trong `command_template`.
+    * `SHELL TEMPLATES`: Số lượng template dùng môi trường Shell wrapper.
+    * `DIRECT ARGV TEMPLATES`: Số lượng template dùng phân tách mảng `argv` trực tiếp.
+    * `ĐÃ LƯU PRESETS`: Tổng số bộ tham số preset sẵn có từ `template_preset`.
+* **Thanh Tìm Kiếm & Lọc:**
+  * Khung nhập từ khóa tìm kiếm theo tên template hoặc cú pháp placeholder.
+  * Filter Dropdown: `Tất cả` / `Direct Argv` / `Shell Execution`.
+* **Bảng Danh Mục Mẫu Lệnh (Templates Table):**
+  * **Tên Template (`name`):** Tên gợi nhớ và mô tả vắn tắt.
+  * **Kiểu thực thi (`is_shell`):** Badge `Direct Argv` (Xanh lá) hoặc `Shell` (Vàng).
+  * **Cấu trúc Mẫu (`template_string`):** Chuỗi mẫu monospaced highlight các biến dạng `{{param_name}}`.
+  * **Danh sách Tham số (`params`):** Badge hiển thị số lượng tham số khai báo kèm số lượng secret (ví dụ: `3 params (1 secret)`).
+  * **Lần chạy gần nhất:** Thời gian tương đối tính từ `run_session` có `template_id` tương ứng.
+  * **Hành động (Action Buttons):**
+    * `[▷]` **Chạy Template:** Mở modal `TemplateRunModal` (MOD-10) để điền params, chọn preset và thực thi.
+    * `[✎]` **Chỉnh sửa Template:** Mở modal `TemplateEditorModal` (MOD-11) để sửa mẫu lệnh và danh sách `template_param`.
+    * `[⧉]` **Nhân bản (Duplicate):** Tạo bản sao template kèm toàn bộ khai báo tham số.
+    * `[🗑]` **Xóa:** Xóa template (CASCADE xóa các param và preset liên quan sau khi người dùng xác nhận).
+
+#### 4. Các Trạng thái Giao diện (UI States)
+* **Empty State:** Chưa tạo template nào: Hiển thị hình minh họa mẫu lệnh, thông điệp *"Chưa có Template nào. Tạo mẫu lệnh đầu tiên để tự động hóa công việc lặp đi lặp lại với tham số động"*.
+* **Validation Warning State:** Khi template string chứa placeholder chưa được khai báo loại param trong bảng: Hiển thị badge cảnh báo màu vàng `⚠️ 1 placeholder chưa khai báo` cạnh tên template.
+
+
+---
+
 ## 4. Thiết kế Chi tiết Các Hộp Thoại & Hộp Cảnh Báo (Modals & Dialogs)
 
 ---
@@ -467,6 +541,149 @@ Quản lý cấu hình cấp ứng dụng, cơ chế tự khởi động cùng O
 
 ---
 
+### MOD-10: Modal Chạy Mẫu Lệnh & Quản lý Preset (TemplateRunModal)
+
+* **Tiêu đề:** *"Thực Thi Mẫu Lệnh: [Tên Template]"*
+* **Kích thước:** 680px x 620px (Modal trung tâm có backdrop mờ).
+* **Wireframe:**
+
+```
++-----------------------------------------------------------------------------+
+|  🧩 Thực Thi Mẫu Lệnh: FFmpeg Video Converter                          [X]  |
++-----------------------------------------------------------------------------+
+|  Bộ giá trị đã lưu (Preset):                                                |
+|  [ 📌 Chọn Preset... ▼ ]  [💾 Lưu thành Preset mới...]  [🗑 Xóa Preset]     |
+|-----------------------------------------------------------------------------|
+|  ĐIỀN THAM SỐ THỰC THI (PARAMETERS FORM):                                  |
+|                                                                             |
+|  1. File Video Đầu Vào (input) (*) [Path]                                   |
+|     [ /home/user/Videos/input_sample.mp4                           ] [Duyệt]|
+|                                                                             |
+|  2. Mức Nén CRF (crf) [Number: 0 - 51]                                      |
+|     [ 23                                                           ]        |
+|     (Default: 23 | Mức CRF tiêu chuẩn cho H.264: 18 - 28)                      |
+|                                                                             |
+|  3. Mật Khẩu Giải Mã (secret_key) 🔒 [Secret - Không lưu Preset/History]     |
+|     [ ••••••••••••••••••                                           ] [👁️]   |
+|                                                                             |
+|  4. File Đầu Ra (output) (*) [String]                                       |
+|     [ /home/user/Videos/output_compressed.mp4                     ]        |
+|-----------------------------------------------------------------------------|
+|  ⚡ XEM TRƯỚC LỆNH SẼ CHẠY (RENDERED PREVIEW - Rust Generated):               |
+|  +-----------------------------------------------------------------------+  |
+|  | ffmpeg -i "/home/user/Videos/input_sample.mp4" -crf 23 \              |  |
+|  |        -key "******" "/home/user/Videos/output_compressed.mp4"        |  |
+|  +-----------------------------------------------------------------------+  |
+|  [✔] An toàn chống Shell Injection (Values are shell-quoted / argv isolated)|
++-----------------------------------------------------------------------------+
+|  [Hủy Bỏ]                                  [▷ Thực Thi Lệnh (Enter)]        |
++-----------------------------------------------------------------------------+
+```
+
+* **Quy tắc Nghiệp vụ & Ràng buộc UI:**
+  * **Form Sinh Động:** Đơn giản hóa từ `template_param` (kiểu `string`, `number`, `enum`, `path`, `bool`). Ô kiểu `path` có nút `[Duyệt]` mở Native File Dialog.
+  * **Trường Mật Khẩu (Secret Param):** Nhập qua ô password (ẩn ký tự, có toggle `[👁️]`). **Tuyệt đối không lưu vào `template_preset`** và không lưu vào DB lịch sử `run_session`/`run_event`. Khi xem trước lệnh (`template_preview`), hiển thị dạng che mờ `******`.
+  * **Live Preview:** Mọi thay đổi giá trị kích hoạt IPC `template_preview` xuống Rust backend để nhận câu lệnh đã render an toàn (`shell_words::quote` cho Shell hoặc tách mảng token cho Direct Argv).
+  * **Quản lý Preset:** Cho phép chọn bộ giá trị đã lưu, hoặc nhập tên để lưu preset mới qua IPC `template_presets_create`.
+  * **Kích Hoạch Chạy:** Bấm `[▷ Thực Thi Lệnh]` hoặc nhấn `Enter` gọi IPC `template_run`. Backend Rust validate, tạo `run_session` + `run_event`, spawn tiến trình PTY và trả về `run_event_id` để frontend mở tab terminal tại SCR-01 Workspace.
+
+---
+
+### MOD-11: Modal Soạn Mẫu Lệnh & Định Nghĩa Tham Số (TemplateEditorModal)
+
+* **Tiêu đề:** *"Tạo Mẫu Lệnh Mới"* hoặc *"Chỉnh Sửa Mẫu Lệnh: [Tên]"*
+* **Kích thước:** 720px x 650px (Modal trung tâm có backdrop mờ).
+* **Wireframe:**
+
+```
++-----------------------------------------------------------------------------+
+|  📝 Soạn Mẫu Lệnh & Định Nghĩa Tham Số                                 [X]  |
++-----------------------------------------------------------------------------+
+|  Tên Mẫu Lệnh (*)                                                           |
+|  [ FFmpeg Video Converter                                              ]    |
+|                                                                             |
+|  Mô Tả Vắn Tắt                                                              |
+|  [ Mẫu chuyển đổi mã hóa video với các tham số chất lượng và đường dẫn ]    |
+|                                                                             |
+|  Phương Thức Thực Thi (*)                                                   |
+|  ( ) Direct Argv (Tách token trước)   (o) Shell Execution (Quoting an toàn)|
+|                                                                             |
+|  Chuỗi Cấu Trúc Mẫu (Template String) (*) - Dùng {{name}} cho tham số        |
+|  +-----------------------------------------------------------------------+  |
+|  | ffmpeg -i {{input}} -crf {{crf}} -key {{secret_key}} {{output}}       |  |
+|  +-----------------------------------------------------------------------+  |
+|  [⚡ Tự Động Trích Xuất Placeholders từ Chuỗi Lệnh]                           |
+|                                                                             |
+|  DANH SÁCH THAM SỐ KHAI BÁO (TEMPLATE PARAMETERS):                          |
+|  +-----------------------------------------------------------------------+  |
+|  | THAM SỐ    | NHÃN (LABEL) | KIỂU DỮ LIỆU | MẶC ĐỊNH | REQ | SECRET | XÓA |  |
+|  |------------+--------------+--------------+----------+-----+--------+-----|  |
+|  | input      | File Đầu Vào | [Path   ▼]   |          | [x] | [ ]    | [X] |  |
+|  | crf        | Mức Nén CRF  | [Number ▼]   | 23       | [ ] | [ ]    | [X] |  |
+|  | secret_key | Mã Giải Mã   | [String ▼]   |          | [x] | [x]    | [X] |  |
+|  | output     | File Đầu Ra  | [String ▼]   |          | [x] | [ ]    | [X] |  |
+|  +-----------------------------------------------------------------------+  |
+|  [+ Thêm Tham Số Khai Báo Mới]                                              |
++-----------------------------------------------------------------------------+
+|  [Hủy Bỏ]                                          [💾 Lưu Mẫu Lệnh]        |
++-----------------------------------------------------------------------------+
+```
+
+* **Quy tắc Nghiệp vụ:**
+  * **Auto Extract Placeholders:** Nút `[⚡ Tự Động Trích Xuất Placeholders]` tự động phân tích `template_string` tìm các biểu thức `{{name}}` và thêm vào danh sách tham số khai báo nếu chưa có.
+  * **Quản lý Param:** Cấu hình Nhãn (Label), Kiểu dữ liệu (`String`, `Number`, `Enum`, `Path`, `Bool`), Giá trị mặc định, Cờ bắt buộc (`Required`), Cờ ẩn bí mật (`Secret`), và thứ tự `param_order`.
+
+
+---
+
+### MOD-13: Hộp Thoại Xác Nhận Thao Tác Đặc Quyền & Xóa Dữ Liệu (ConfirmDialog / Privileged Confirm Modal)
+
+* **Tiêu đề:** *"Xác Nhận Thao Tác Đặc Quyền"* hoặc *"Xác Nhận Xóa Dữ Liệu"*
+* **Kích thước:** 520px x 280px (Modal trung tâm compact có backdrop mờ).
+* **Wireframe (Biến thể Hazard / Destructive):**
+
+```
++-----------------------------------------------------------------------------+
+|  ⚠️ CẢNH BÁO: XÁC NHẬN THAO TÁC NGUY HIỂM                              [X]  |
++-----------------------------------------------------------------------------+
+|  [ 🛑 Icon Warning ]  Xác nhận xóa Mẫu Lệnh "FFmpeg Video Converter"?       |
+|                                                                             |
+|  Hành động này sẽ xóa vĩnh viễn Mẫu Lệnh cùng 2 bộ Presets tương ứng        |
+|  khỏi cơ sở dữ liệu SQLite cục bộ. Thao tác này KHÔNG THỂ HỒI PHỤC.         |
+|                                                                             |
+|  [x] Tôi đã đọc kỹ cảnh báo và xác nhận thực hiện thao tác này.             |
++-----------------------------------------------------------------------------+
+|  [ Hủy Bỏ (Esc) ]                         [ 🗑 XÁC NHẬN XÓA VĨNH VIỄN ]     |
++-----------------------------------------------------------------------------+
+```
+
+* **Wireframe (Biến thể Privileged Warning / System Action):**
+
+```
++-----------------------------------------------------------------------------+
+|  ⚡ XÁC NHẬN TÁC VỤ ĐẶC QUYỀN HỆ THỐNG                                 [X]  |
++-----------------------------------------------------------------------------+
+|  [ ⚠️ Icon Alert ]  Kích hoạt Tự Khởi Động Nhóm: "Web Platform Dev"?       |
+|                                                                             |
+|  Nhóm lệnh sẽ tự động khởi chạy ngay khi ứng dụng mở cùng hệ điều hành.     |
+|  Đảm bảo chuỗi lệnh trong nhóm an toàn và không gây xung đột tài nguyên.    |
+|                                                                             |
+|  [x] Xác nhận tin cậy chuỗi lệnh này (Trusted Zone).                        |
++-----------------------------------------------------------------------------+
+|  [ Hủy Bỏ ]                               [ ⚡ KÍCH HOẠT AUTOSTART ]         |
++-----------------------------------------------------------------------------+
+```
+
+* **Quy tắc Nghiệp vụ & Thiết kế UI:**
+  * **Hai biến thể trực quan:**
+    1. **Biến thể Destructive (Đỏ / Hazard):** Áp dụng cho xóa Lệnh, xóa Template, xóa Nhóm, xóa Preset. Nút bấm màu đỏ hazard (`--status-failed: #ef4444`).
+    2. **Biến thể Privileged Warning (Vàng / System):** Áp dụng cho Autostart, Import đè DB, Chạy lệnh Shell không sandbox. Nút bấm màu cam/vàng (`--status-warning: #f59e0b` hoặc `--primary: #744791`).
+  * **Cờ Xác Nhận Bắt Buộc (`confirmed: true`):** Truyền cờ xác nhận an toàn xuống Backend Rust qua IPC để bảo vệ ranh giới vùng tin cậy (Trusted Zone).
+
+
+
+---
+
 ## 5. Quy cách Vòng đời Tab Terminal Dockview & PTY Reattach
 
 Bảng ma trận hành vi giữa tương tác giao diện và tiến trình thực thi tại Rust Backend:
@@ -601,8 +818,8 @@ Hệ màu tối ưu cho Dark Theme với phong cách kỹ thuật cao cấp:
 
 | Phím tắt | Tác vụ (Action) | Phạm vi áp dụng |
 | :--- | :--- | :--- |
-| `Ctrl + K` / `Cmd + K` | Mở Command Palette tìm kiếm nhanh lệnh / nhóm | Toàn bộ ứng dụng |
-| `Ctrl + 1` .. `Ctrl + 5` | Chuyển nhanh giữa 5 màn hình chính | Toàn bộ ứng dụng |
+| `Ctrl + K` / `Cmd + K` | Mở Command Palette tìm kiếm nhanh lệnh / nhóm / template | Toàn bộ ứng dụng |
+| `Ctrl + 1` .. `Ctrl + 6` | Chuyển nhanh giữa 6 màn hình chính (`/workspace`, `/commands`, `/templates`, `/groups`, `/history`, `/settings`) | Toàn bộ ứng dụng |
 | `Ctrl + W` | Ẩn tab Terminal hiện tại (không dừng process) | Màn hình Workspace |
 | `Ctrl + Shift + W` | Dừng tiến trình hiện tại và đóng tab | Màn hình Workspace |
 | `Ctrl + Shift + C` | Sao chép vùng chọn trong xterm.js | Tab Terminal |
@@ -615,10 +832,12 @@ Hệ màu tối ưu cho Dark Theme với phong cách kỹ thuật cao cấp:
 
 ## 8. Đối chiếu Tiêu chí Nghiệm thu (UI Definition of Done)
 
-- [x] Đầy đủ 5 màn hình chức năng chính khớp 100% với kiến trúc `plan.md` và tiêu chí `checklist.md`.
+- [x] Đầy đủ 6 màn hình chức năng chính khớp 100% với kiến trúc `plan.md` và tiêu chí `checklist.md` (bao gồm SCR-06 Command Templates).
 - [x] Thể hiện trực quan nguyên tắc cốt lõi: Đóng tab ≠ Dừng tiến trình; chỉ dừng khi bấm nút Stop hoặc thoát app.
 - [x] Có giao diện chi tiết phân biệt `is_shell` (Direct Argv vs Shell).
 - [x] Thể hiện quản lý `execution_order` bằng danh sách có thể sắp xếp trực quan.
+- [x] Đặc tả giao diện SOẠN và CHẠY Command Template (SCR-06, MOD-10, MOD-11) với Form động, xem trước live preview, preset và bảo vệ tham số Secret.
 - [x] Mô hình hóa quy trình Sao lưu (VACUUM INTO) và Khôi phục 7 bước kèm Rollback an toàn.
 - [x] Thiết kế cảnh báo an toàn cho vùng tin cậy (Trusted Zone) và kiểm soát quyền đặc quyền.
 - [x] Tích hợp chuẩn thiết kế xterm.js và Dockview cho trải nghiệm PTY chân thực.
+

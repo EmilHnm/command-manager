@@ -1,4 +1,5 @@
 @import './tokens.css';
+@import './fonts.css';
 @import 'dockview-vue/dist/styles/dockview.css';
 @import '@xterm/xterm/css/xterm.css';
 

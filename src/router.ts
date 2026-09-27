@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import WorkspaceView from '@/views/workspace/WorkspaceView.vue';
 import CommandLibraryView from '@/views/commands/CommandLibraryView.vue';
+import TemplatesView from '@/views/templates/TemplatesView.vue';
 import GroupsView from '@/views/groups/GroupsView.vue';
 import HistoryView from '@/views/history/HistoryView.vue';
 import SettingsView from '@/views/settings/SettingsView.vue';
@@ -23,6 +24,12 @@ const router = createRouter({
       name: 'commands',
       component: CommandLibraryView,
       meta: { title: 'Thư Viện Lệnh - Command Manager' },
+    },
+    {
+      path: '/templates',
+      name: 'templates',
+      component: TemplatesView,
+      meta: { title: 'Thư Viện Mẫu Lệnh - Command Manager' },
     },
     {
       path: '/groups',

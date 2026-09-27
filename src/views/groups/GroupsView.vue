@@ -1,12 +1,20 @@
 <template>
   <div class="groups-view">
+    <!-- Header -->
     <header class="view-header">
       <div class="header-left">
-        <h2 class="view-title">Nhóm Lệnh & Điều Phối Thứ Tự (SCR-03)</h2>
-        <span class="view-subtitle">Gom cụm câu lệnh, thiết lập cờ Autostart và thứ tự tuần tự execution_order</span>
+        <div class="title-row">
+          <h2 class="view-title">Nhóm Lệnh & Sequencer (SCR-03)</h2>
+          <span class="engine-badge">v2.1 Orchestrator</span>
+        </div>
+        <span class="view-subtitle">Điều phối chuỗi thực thi tuần tự hoặc song song (Orchestration Pipeline)</span>
       </div>
 
       <div class="header-right">
+        <button class="btn btn-secondary btn-sm" :disabled="groups.length === 0" @click="handleRunAllGroups">
+          <Play :size="13" />
+          <span>Chạy Tất Cả Nhóm</span>
+        </button>
         <button class="btn btn-primary" @click="openCreateGroupModal">
           <Plus :size="14" />
           <span>Tạo Nhóm Mới</span>
@@ -14,24 +22,73 @@
       </div>
     </header>
 
+    <!-- Telemetry Ribbon Cards (from Stitch SCR-03) -->
+    <section class="stats-ribbon">
+      <div class="stat-card">
+        <div class="stat-header">
+          <span class="stat-title">TỔNG SỐ NHÓM</span>
+          <Folder :size="16" class="stat-icon" />
+        </div>
+        <div class="stat-value font-mono">{{ groups.length }}</div>
+        <div class="stat-sub">Pipeline điều phối hoạt động</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-header">
+          <span class="stat-title">AUTOSTART KÍCH HOẠT</span>
+          <Zap :size="16" class="stat-icon text-warning" />
+        </div>
+        <div class="stat-value font-mono">{{ autostartCount }}</div>
+        <div class="stat-sub">Khởi động cùng ứng dụng</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-header">
+          <span class="stat-title">DỪNG KHI LỖI</span>
+          <ShieldAlert :size="16" class="stat-icon text-accent" />
+        </div>
+        <div class="stat-value font-mono">{{ groups.length }}</div>
+        <div class="stat-sub">Stop-on-Error mặc định bật</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-header">
+          <span class="stat-title">TỔNG LỆNH TRONG CHUỖI</span>
+          <Layers :size="16" class="stat-icon text-success" />
+        </div>
+        <div class="stat-value font-mono">{{ totalCommandsInGroups }}</div>
+        <div class="stat-sub">Các bước thực thi tuần tự</div>
+      </div>
+    </section>
+
+    <!-- Groups Grid / Sequencer -->
     <main class="groups-content">
-      <div class="groups-grid">
+      <div v-if="groups.length === 0" class="empty-groups">
+        <Layers :size="36" class="empty-icon" />
+        <h3>Chưa có nhóm lệnh nào</h3>
+        <p>Bấm "+ Tạo Nhóm Mới" để gom cụm các câu lệnh thành chuỗi điều phối tự động.</p>
+      </div>
+
+      <div v-else class="groups-grid">
         <div v-for="group in groups" :key="group.id" class="group-card">
           <!-- Card Header -->
           <div class="card-header">
             <div class="header-main">
               <div class="group-title-row">
+                <GripVertical :size="14" class="drag-handle" title="Kéo để đổi vị trí nhóm" />
                 <Folder class="folder-icon" :size="16" />
                 <h3 class="group-title">{{ group.group_name }}</h3>
+                <span class="mode-pill">Tuần tự</span>
               </div>
-              <span class="commands-count">{{ group.commands.length }} lệnh tuần tự</span>
+              <span class="commands-count">{{ group.commands.length }} tác vụ</span>
             </div>
 
             <div class="autostart-toggle-row">
-              <span class="autostart-label">Tự khởi động:</span>
+              <span class="autostart-label">Autostart:</span>
               <button
                 class="toggle-switch"
                 :class="{ active: group.autostart }"
+                title="Bật/tắt tự khởi động cùng app"
                 @click="toggleAutostart(group.id, group.autostart)"
               >
                 <span class="toggle-slider" />
@@ -50,7 +107,10 @@
               >
                 <div class="item-left">
                   <span class="order-badge">0{{ idx + 1 }}.</span>
-                  <span class="cmd-text">{{ cmd.name }}</span>
+                  <div class="cmd-info">
+                    <span class="cmd-text">{{ cmd.name }}</span>
+                    <code class="cmd-snippet">{{ cmd.execution_string }}</code>
+                  </div>
                   <span v-if="cmd.is_shell" class="shell-tag">shell</span>
                   <span v-else class="argv-tag">argv</span>
                 </div>
@@ -122,13 +182,26 @@
         </div>
 
         <div class="modal-body">
+          <!-- Validation Error Banner -->
+          <div v-if="wasSubmittedGroup && groupErrors.group_name" class="validation-banner" role="alert">
+            <AlertCircle :size="14" />
+            <span>{{ groupErrors.group_name }}</span>
+          </div>
+
           <div class="form-group">
             <label class="form-label">Tên nhóm lệnh (*)</label>
             <input
               v-model="groupForm.group_name"
               class="input"
+              :class="{ 'has-error': (wasSubmittedGroup || touchedGroup.group_name) && groupErrors.group_name }"
               placeholder="Ví dụ: Web Platform Development..."
+              @blur="touchedGroup.group_name = true"
+              @input="touchedGroup.group_name = true"
             />
+            <span v-if="(wasSubmittedGroup || touchedGroup.group_name) && groupErrors.group_name" class="field-error-msg">
+              <AlertCircle :size="12" />
+              <span>{{ groupErrors.group_name }}</span>
+            </span>
           </div>
 
           <label class="checkbox-row">
@@ -164,7 +237,7 @@
           <button class="btn btn-secondary" @click="showGroupModal = false">
             Hủy bỏ
           </button>
-          <button class="btn btn-primary" :disabled="!groupForm.group_name?.trim()" @click="saveGroupForm">
+          <button class="btn btn-primary" @click="saveGroupForm">
             <Save :size="14" />
             <span>Lưu Cấu Hình Nhóm</span>
           </button>
@@ -186,9 +259,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { Plus, Folder, Play, Square, Edit3, Trash2, X, Save } from 'lucide-vue-next';
+import {
+  Plus, Folder, Play, Square, Edit3, Trash2, X, Save,
+  Zap, ShieldAlert, Layers, GripVertical, AlertCircle
+} from 'lucide-vue-next';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import { useGroups } from '@/composables/useGroups';
 import { useCommands } from '@/composables/useCommands';
@@ -211,16 +287,53 @@ const selectedCommandIds = ref<number[]>([]);
 const showDeleteDialog = ref(false);
 const deletingGroup = ref<CommandGroupWithCommands | null>(null);
 
+const autostartCount = computed(() => groups.value.filter(g => g.autostart).length);
+
+const totalCommandsInGroups = computed(() => {
+  return groups.value.reduce((acc, g) => acc + g.commands.length, 0);
+});
+
+const handleRunAllGroups = async () => {
+  if (groups.value.length === 0) return;
+  // Kích hoạt nhóm đầu tiên và chuyển sang workspace
+  const firstGroup = groups.value[0];
+  await startGroupSession(firstGroup.id, firstGroup.group_name, firstGroup.commands);
+  router.push('/workspace');
+};
+
 onMounted(async () => {
   await Promise.all([fetchGroups(), fetchCommands()]);
+});
+
+const touchedGroup = ref<{ group_name?: boolean }>({});
+const wasSubmittedGroup = ref(false);
+
+const groupErrors = computed(() => {
+  const errs: { group_name?: string } = {};
+  if (!groupForm.value.group_name?.trim()) {
+    errs.group_name = 'Tên nhóm lệnh không được để trống.';
+  }
+  return errs;
 });
 
 const openCreateGroupModal = () => {
   editingGroupId.value = null;
   groupForm.value = { group_name: '', autostart: false };
   selectedCommandIds.value = [];
+  wasSubmittedGroup.value = false;
+  touchedGroup.value = {};
   showGroupModal.value = true;
 };
+
+watch(showGroupModal, (val) => {
+  if (!val) {
+    editingGroupId.value = null;
+    groupForm.value = { group_name: '', autostart: false };
+    selectedCommandIds.value = [];
+    wasSubmittedGroup.value = false;
+    touchedGroup.value = {};
+  }
+});
 
 const openEditGroupModal = (group: CommandGroupWithCommands) => {
   editingGroupId.value = group.id;
@@ -229,6 +342,8 @@ const openEditGroupModal = (group: CommandGroupWithCommands) => {
     autostart: group.autostart,
   };
   selectedCommandIds.value = group.commands.map(c => c.id);
+  wasSubmittedGroup.value = false;
+  touchedGroup.value = {};
   showGroupModal.value = true;
 };
 
@@ -242,7 +357,8 @@ const toggleCommandInPicker = (commandId: number) => {
 };
 
 const saveGroupForm = async () => {
-  if (!groupForm.value.group_name.trim()) return;
+  wasSubmittedGroup.value = true;
+  if (groupErrors.value.group_name) return;
   await saveGroup({
     id: editingGroupId.value ?? undefined,
     group_name: groupForm.value.group_name,
@@ -312,10 +428,26 @@ const confirmDeleteGroup = async () => {
   flex-shrink: 0;
 }
 
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .view-title {
   font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.engine-badge {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background-color: var(--primary-subtle);
+  color: var(--primary-accent);
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid rgba(116, 71, 145, 0.35);
 }
 
 .view-subtitle {
@@ -323,15 +455,102 @@ const confirmDeleteGroup = async () => {
   color: var(--text-secondary);
 }
 
+/* 4 Quick Stats Cards (from Stitch SCR-03) */
+.stats-ribbon {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  padding: 14px 20px 0;
+  flex-shrink: 0;
+}
+
+.stat-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s ease;
+}
+
+.stat-card:hover {
+  border-color: var(--border-medium);
+}
+
+.stat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stat-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+}
+
+.stat-icon {
+  color: var(--text-muted);
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-top: 2px;
+}
+
+.stat-sub {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+
+.text-warning {
+  color: var(--status-starting);
+}
+
+.text-success {
+  color: var(--status-running);
+}
+
+.text-accent {
+  color: #38bdf8;
+}
+
 .groups-content {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 16px 20px;
+}
+
+.empty-groups {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  gap: 12px;
+}
+
+.empty-icon {
+  color: var(--border-medium);
+}
+
+.empty-groups h3 {
+  font-size: 15px;
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .groups-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
   gap: 16px;
 }
 
@@ -351,7 +570,7 @@ const confirmDeleteGroup = async () => {
 }
 
 .card-header {
-  padding: 14px 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
@@ -365,8 +584,22 @@ const confirmDeleteGroup = async () => {
   gap: 8px;
 }
 
+.drag-handle {
+  color: var(--text-muted);
+  cursor: grab;
+}
+
+.mode-pill {
+  font-size: 9.5px;
+  background-color: var(--bg-app-base);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
 .folder-icon {
-  color: #cda8ee;
+  color: var(--primary-accent);
 }
 
 .group-title {
@@ -465,9 +698,29 @@ const confirmDeleteGroup = async () => {
   color: #cda8ee;
 }
 
+.cmd-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+  max-width: 260px;
+}
+
 .cmd-text {
   font-weight: 500;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-snippet {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .shell-tag, .argv-tag {
@@ -636,5 +889,33 @@ const confirmDeleteGroup = async () => {
 
 .text-danger {
   color: var(--status-failed);
+}
+
+.input.has-error {
+  border-color: var(--status-failed, #ef4444) !important;
+  background-color: rgba(239, 68, 68, 0.05) !important;
+}
+
+.field-error-msg {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--status-failed, #ef4444);
+  margin-top: 4px;
+}
+
+.validation-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-md);
+  color: var(--status-failed, #ef4444);
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 12px;
 }
 </style>

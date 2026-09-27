@@ -2,22 +2,24 @@
   <div v-if="visible" class="shutdown-overlay">
     <div class="shutdown-card">
       <div class="brand-header">
-        <div class="brand-badge">CM</div>
+        <img src="/logo.svg" class="brand-logo" alt="Command Manager Logo" />
         <h2 class="app-title">Command Manager</h2>
       </div>
 
       <div class="status-headline">
         <RotateCw class="spin-icon" :size="20" />
-        <span>Đang dừng an toàn các tiến trình (Graceful Shutdown)...</span>
+        <span>{{ phase === 'forcing' ? 'Đang cưỡng chế dừng tiến trình và thoát...' : 'Đang dừng an toàn các tiến trình...' }}</span>
       </div>
 
-      <p class="description">
-        Đang gửi tín hiệu <code>SIGTERM</code> tới toàn bộ tiến trình con đang chạy.
-        Nếu tiến trình không dừng trong <strong>{{ countdown }} giây</strong>, hệ thống sẽ gửi <code>SIGKILL</code>.
+      <p v-if="phase === 'stopping'" class="description">
+        Đang yêu cầu các tiến trình con dừng lại.
+        Nếu chưa dừng sau <strong>{{ countdown }} giây</strong>, ứng dụng sẽ cưỡng chế dừng.
       </p>
+      <p v-else class="description">Đang dừng các tiến trình còn lại và đóng ứng dụng.</p>
+      <p v-if="error" role="alert" class="shutdown-error">{{ error }}</p>
 
       <!-- Active Stopping List -->
-      <div class="stopping-list">
+      <div v-if="processesList.length" class="stopping-list">
         <div
           v-for="proc in processesList"
           :key="proc.commandId"
@@ -52,6 +54,9 @@ import type { ActiveProcessInfo } from '@/types/models';
 const props = defineProps<{
   visible: boolean;
   countdown: number;
+  timeout: number;
+  phase: 'stopping' | 'forcing';
+  error: string;
   activeProcesses: Map<number, ActiveProcessInfo>;
 }>();
 
@@ -60,7 +65,7 @@ defineEmits<{
 }>();
 
 const progressPercent = computed(() => {
-  const total = 8;
+  const total = Math.max(1, props.timeout);
   const current = props.countdown;
   return Math.min(100, Math.max(0, ((total - current) / total) * 100));
 });
@@ -104,12 +109,10 @@ const processesList = computed(() => {
   gap: 8px;
 }
 
-.brand-badge {
-  background: var(--primary);
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 3px 6px;
+.brand-logo {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
   border-radius: var(--radius-sm);
 }
 
@@ -142,6 +145,11 @@ const processesList = computed(() => {
   font-size: 12px;
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+.shutdown-error {
+  color: var(--status-error, #f87171);
+  font-size: 12px;
 }
 
 .description code {

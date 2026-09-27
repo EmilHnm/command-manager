@@ -1,10 +1,23 @@
 <template>
   <header class="titlebar" data-tauri-drag-region>
-    <!-- Brand Title -->
+    <!-- Brand Title & Engine Status -->
     <div class="titlebar-brand" data-tauri-drag-region>
-      <div class="brand-badge">CM</div>
+      <img src="/logo.svg" class="brand-logo" alt="Command Manager Logo" />
       <span class="brand-text">Command Manager</span>
-      <span class="version-tag">v0.1.0</span>
+      <span class="version-tag">v2.1</span>
+      
+      <!-- Daemon Running Status Indicator Pill (from Stitch) -->
+      <div
+        class="daemon-pill"
+        :class="{ active: runningCount > 0 }"
+        title="Bấm để chuyển tới Terminal Workspace"
+        @click="goToWorkspace"
+      >
+        <span class="daemon-dot" :class="{ pulse: runningCount > 0 }" />
+        <span class="daemon-text">
+          {{ runningCount > 0 ? `${runningCount} Daemon Active` : '0 Active' }}
+        </span>
+      </div>
     </div>
 
     <!-- Quick Search / Command Palette Trigger -->
@@ -21,6 +34,9 @@
       <button class="ctrl-btn" title="Thu nhỏ" @click="minimize">
         <Minus :size="14" />
       </button>
+      <button class="ctrl-btn tray-btn" title="Ẩn xuống khay hệ thống" @click="hideToTray">
+        <PanelTopClose :size="14" />
+      </button>
       <button class="ctrl-btn" title="Phóng to" @click="toggleMaximize">
         <Square :size="12" />
       </button>
@@ -32,14 +48,31 @@
 </template>
 
 <script setup lang="ts">
-import { Search, Minus, Square, X } from 'lucide-vue-next';
+import { computed } from 'vue';
+import { useRouter } from 'vue-router';
+import { Search, Minus, PanelTopClose, Square, X } from 'lucide-vue-next';
 import { useAppLifecycle } from '@/composables/useAppLifecycle';
+import { useRunSession } from '@/composables/useRunSession';
 
 defineEmits<{
   (e: 'open-palette'): void;
 }>();
 
-const { triggerGracefulShutdown } = useAppLifecycle();
+const router = useRouter();
+const { requestClose } = useAppLifecycle();
+const { activeProcesses } = useRunSession();
+
+const runningCount = computed(() => {
+  let count = 0;
+  activeProcesses.value.forEach(p => {
+    if (p.status === 'running') count++;
+  });
+  return count;
+});
+
+const goToWorkspace = () => {
+  router.push('/workspace');
+};
 
 const minimize = async () => {
   if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
@@ -55,9 +88,14 @@ const toggleMaximize = async () => {
   }
 };
 
+const hideToTray = () => {
+  if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+    void import('@tauri-apps/api/core').then(({ invoke }) => invoke('app_hide'));
+  }
+};
+
 const close = () => {
-  // Thay vì đóng đột ngột, gọi quy trình dừng duyên dáng Graceful Shutdown
-  triggerGracefulShutdown();
+  requestClose();
 };
 </script>
 
@@ -81,14 +119,11 @@ const close = () => {
   cursor: default;
 }
 
-.brand-badge {
-  background: linear-gradient(135deg, var(--primary), #9a66bf);
-  color: #ffffff;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 5px;
+.brand-logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
   border-radius: var(--radius-sm);
-  letter-spacing: 0.5px;
 }
 
 .brand-text {
@@ -105,6 +140,49 @@ const close = () => {
   padding: 1px 4px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+}
+
+.daemon-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  background-color: rgba(100, 116, 139, 0.12);
+  border: 1px solid rgba(100, 116, 139, 0.25);
+  border-radius: 9999px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-left: 4px;
+}
+
+.daemon-pill.active {
+  background-color: var(--status-running-bg);
+  border-color: rgba(16, 185, 129, 0.35);
+  color: #34d399;
+}
+
+.daemon-pill:hover {
+  filter: brightness(1.15);
+}
+
+.daemon-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--text-muted);
+}
+
+.daemon-pill.active .daemon-dot {
+  background-color: var(--status-running);
+  box-shadow: 0 0 6px var(--status-running);
+}
+
+.daemon-dot.pulse {
+  animation: pulseDot 2s infinite ease-in-out;
 }
 
 .titlebar-center {

@@ -1,24 +1,40 @@
 :root {
-  /* Màu Thương hiệu & Điểm nhấn Chính (Primary Brand & Accents) */
-  --primary: #744791;                          /* Màu chủ đạo chính (Royal Purple/Violet) */
+  /* Stitch Brand & Accents (Primary Plum / Royal Purple) */
+  --primary: #744791;                          /* Màu chủ đạo chính */
   --primary-hover: #8956aa;                    /* Hover sáng hơn cho button/link */
   --primary-active: #5f3977;                   /* Trạng thái pressed / active */
-  --primary-subtle: rgba(116, 71, 145, 0.15); /* Nền mờ cho item được chọn, active tab */
+  --primary-accent: #e4b5ff;                   /* Accent highlight tím sáng */
+  --primary-subtle: rgba(116, 71, 145, 0.16); /* Nền mờ cho item được chọn, active tab */
   --primary-glow: rgba(116, 71, 145, 0.35);   /* Hiệu ứng focus ring / glow */
 
-  /* Nền và Bề mặt (Dark Theme Canvas) */
-  --bg-app-base: #0f1117;                      /* Nền ngoài cùng của app shell */
-  --bg-sidebar: #141721;                       /* Nền thanh điều hướng phụ */
-  --bg-surface: #1a1e2b;                       /* Nền card, dockview tab container */
-  --bg-surface-hover: #23283a;                 /* Trạng thái hover của item */
-  --bg-surface-active: #2b3248;                /* Trạng thái active/selected của card */
-  --bg-input: #12151f;                         /* Nền ô nhập liệu input / textarea */
-  --bg-terminal: #0b0d13;                      /* Nền đen sâu chuẩn cho xterm viewport */
+  /* Stitch Secondary & Tertiary Accents */
+  --secondary: #4edea3;                        /* Xanh ngọc Emerald sáng */
+  --secondary-container: rgba(78, 222, 163, 0.15);
+  --tertiary: #4cd7f6;                         /* Xanh Cyan sáng */
+  --tertiary-container: rgba(76, 215, 246, 0.15);
+
+  /* Stitch Surface Container Scale (Dark Precision Theme) */
+  --surface-container-lowest: #0c0e14;         /* Nền đen sâu chuẩn cho terminal viewport & base */
+  --surface-container-low: #141721;            /* Nền sidebar điều hướng phụ & toolbars */
+  --surface-container: #1a1e2b;                /* Nền card, dockview tab container, modal */
+  --surface-container-high: #23283a;           /* Trạng thái hover của item, input box */
+  --surface-container-highest: #2c3248;        /* Trạng thái active/selected của card */
+
+  /* Nền và Bề mặt cũ để tương thích ngược */
+  --bg-app-base: var(--surface-container-lowest);
+  --bg-sidebar: var(--surface-container-low);
+  --bg-surface: var(--surface-container);
+  --bg-surface-hover: var(--surface-container-high);
+  --bg-surface-active: var(--surface-container-highest);
+  --bg-input: #12151f;
+  --bg-terminal: #0b0d13;
 
   /* Đường viền & Phân tách (Borders & Dividers) */
-  --border-subtle: #242a3e;                    /* Đường viền nhẹ ngăn cách panel */
-  --border-medium: #333b54;                    /* Đường viền card, separator */
-  --border-focus: #744791;                     /* Viền khi focus / active tab (đồng bộ theo Primary) */
+  --outline: #2d344d;                          /* Viền sắc nét cho card và khung */
+  --outline-variant: #1e2436;                  /* Viền nhẹ ngăn cách nội dung */
+  --border-subtle: var(--outline-variant);
+  --border-medium: var(--outline);
+  --border-focus: var(--primary);
 
   /* Chữ & Biểu tượng (Typography) */
   --text-primary: #f1f5f9;                     /* Chữ sáng chính (Slate 100) */
@@ -42,20 +58,21 @@
 
   /* Phông chữ Kỹ thuật */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace;
+  --font-mono: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, 'Symbols Nerd Font Mono', monospace;
 
   /* Kích thước App Shell */
   --titlebar-height: 40px;
   --activity-bar-width: 60px;
-  --side-panel-width: 260px;
+  --side-panel-width: 270px;
   --statusbar-height: 28px;
 
   /* Hiệu ứng bóng & Bo góc */
+  --radius-xs: 3px;
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-xl: 12px;
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.45), 0 2px 4px -1px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.55), 0 4px 6px -2px rgba(0, 0, 0, 0.45);
 }
