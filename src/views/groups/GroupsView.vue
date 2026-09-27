@@ -934,4 +934,10 @@ const confirmDeleteGroup = async () => {
   font-weight: 500;
   margin-bottom: 12px;
 }
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 </style>
