@@ -23,7 +23,7 @@ Cấu trúc cửa sổ tuân thủ mô hình chuẩn của một Desktop IDE/Wor
 
 ```
 +-----------------------------------------------------------------------------------------------+
-| [Icon] Command Manager v1.0.0        [Search Commands / Groups... Ctrl+K]      [_] [□] [X]    | <- Custom Titlebar
+| [Icon] Command Manager v1.1.0        [Search Commands / Groups... Ctrl+K]      [_] [□] [X]    | <- Custom Titlebar
 +-----------------------------------------------------------------------------------------------+
 | NAV   | SUB-SIDEBAR       | MAIN WORKSPACE (Dockview Tabs & Content)                         |
 | BAR   | (Groups / Tree)   |                                                                  |

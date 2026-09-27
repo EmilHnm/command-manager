@@ -5,7 +5,7 @@
       <div class="header-left">
         <div class="title-row">
           <h2 class="view-title">Thư Viện Lệnh (SCR-02)</h2>
-          <span class="engine-badge">v1.0.0 Engine</span>
+          <span class="engine-badge">{{ APP_ENGINE_TAG }}</span>
         </div>
         <span class="view-subtitle">Định nghĩa các câu lệnh, phân định argv vs shell tường minh, kiểm soát môi trường thực thi</span>
       </div>
@@ -242,6 +242,7 @@ import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import { useCommands } from '@/composables/useCommands';
 import { useGroups } from '@/composables/useGroups';
 import { useRunSession } from '@/composables/useRunSession';
+import { APP_ENGINE_TAG } from '@/config/version';
 import type { CommandDefinition } from '@/types/models';
 
 const router = useRouter();

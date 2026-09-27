@@ -4,7 +4,7 @@
       <div class="header-left">
         <div class="title-row">
           <h2 class="view-title">Cài Đặt Hệ Thống & Quản Lý Dữ Liệu (SCR-05)</h2>
-          <span class="engine-badge">v1.0.0 Engine</span>
+          <span class="engine-badge">{{ APP_ENGINE_TAG }}</span>
         </div>
         <span class="view-subtitle">Cấu hình PTY, biến môi trường toàn cục, khởi động cùng OS và cơ chế sao lưu SQLite an toàn</span>
       </div>
@@ -347,6 +347,7 @@ import { ref, onMounted, onBeforeUnmount } from 'vue';
 import { Save, Cpu, Terminal, Database, Download, Upload } from 'lucide-vue-next';
 import RestoreWizard from '@/components/dialogs/RestoreWizard.vue';
 import { ipcClient } from '@/ipc/client';
+import { APP_ENGINE_TAG } from '@/config/version';
 import type { BackupIntegrityResult, SystemSettings } from '@/types/models';
 
 const currentTab = ref<'system' | 'terminal' | 'backup'>('system');

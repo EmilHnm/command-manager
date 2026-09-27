@@ -104,7 +104,7 @@
   - [x] Bảng sao lưu dữ liệu toàn diện với `VACUUM INTO`, thống kê DB thực tế và các nhãn kiểm tra đúng hành động (`VACUUM INTO`, checkpoint WAL, integrity check).
   - [x] Bảng phục hồi hiển thị đúng 5 bước backend: inspect/migrate file, tạo snapshot, dừng/checkpoint/đóng pool, replace/reopen và rollback khi lỗi; verify trước khi mở wizard, không còn badge SHA-256 giả.
 - [x] **Thanh Tiêu Đề (Titlebar) & ActivityBar:** *— Soát 26/09: xem các dòng con.*
-  - [x] Titlebar tích hợp biểu tượng CM gradient, nhãn phiên bản `v1.0.0`, viên con nhộng hiển thị số lượng daemon đang chạy kèm hiệu ứng pulse phát sáng, thanh tìm kiếm kích hoạt Command Palette `Ctrl+K`, nút điều khiển cửa sổ ([Titlebar.vue](../src/components/titlebar/Titlebar.vue)).
+  - [x] Titlebar tích hợp biểu tượng CM gradient, nhãn phiên bản `v1.1.0`, viên con nhộng hiển thị số lượng daemon đang chạy kèm hiệu ứng pulse phát sáng, thanh tìm kiếm kích hoạt Command Palette `Ctrl+K`, nút điều khiển cửa sổ ([Titlebar.vue](../src/components/titlebar/Titlebar.vue)).
   - [x] ActivityBar với các nhãn định vị `Terminal`, `Lệnh`, `Template`, `Nhóm`, `Lịch sử`, `Cài đặt` với viền sáng màu primary active ([ActivityBar.vue](../src/components/nav/ActivityBar.vue)).
 - [x] **Thanh Trạng Thái (StatusBar):** số process, tổng buffer, giới hạn buffer và autostart lấy từ runtime/settings; nhãn WAL/Single-Instance phản ánh capability/runtime hiện tại.
 

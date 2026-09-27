@@ -5,7 +5,7 @@
       <div class="header-left">
         <div class="title-row">
           <h2 class="view-title">Nhóm Lệnh & Sequencer (SCR-03)</h2>
-          <span class="engine-badge">v1.0.0 Orchestrator</span>
+          <span class="engine-badge">{{ APP_ORCHESTRATOR_TAG }}</span>
         </div>
         <span class="view-subtitle">Điều phối khởi động theo thứ tự hoặc tuần tự chờ xong (Orchestration Pipeline)</span>
       </div>
@@ -276,6 +276,7 @@ import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import { useGroups } from '@/composables/useGroups';
 import { useCommands } from '@/composables/useCommands';
 import { useRunSession } from '@/composables/useRunSession';
+import { APP_ORCHESTRATOR_TAG } from '@/config/version';
 import type { CommandGroupWithCommands } from '@/types/models';
 
 const router = useRouter();

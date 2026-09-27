@@ -88,6 +88,8 @@ src/
 │   ├── useRunSession.ts
 │   ├── usePtyStream.ts           # IPC events → xterm; backpressure phía Rust
 │   └── useAppLifecycle.ts        # close window, single-instance toast
+├── config/
+│   └── version.ts                # Single Source of Truth cho version UI (đồng bộ từ package.json)
 ├── ipc/
 │   ├── client.ts                 # invoke wrappers, một chỗ duy nhất
 │   └── events.ts                 # listen: pty-data, process-status, …
