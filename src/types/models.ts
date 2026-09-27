@@ -79,6 +79,7 @@ export interface ActiveProcessInfo {
   sessionId?: number;
   groupId?: number;
   bufferBytes?: number;
+  shellKind?: string;
 }
 
 export interface SystemSettings {

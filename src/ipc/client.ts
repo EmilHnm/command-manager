@@ -70,6 +70,7 @@ type BackendProcess = {
   group_id: string;
   pid: number;
   buffer_bytes: number;
+  shell_kind?: string;
 };
 
 type BackendProcessStatus = {
@@ -133,7 +134,36 @@ const runEventBackendToUi = new Map<string, number>();
 const runEventToCommand = new Map<string, number>();
 const runEventToSession = new Map<string, number>();
 const terminalBackendToUi = new Map<string, number>();
-const terminalNames = new Map<number, string>();
+
+const TERMINAL_NAMES_STORAGE_KEY = 'cm_terminal_names_v1';
+
+function loadStoredTerminalNames(): Map<number, string> {
+  const map = new Map<number, string>();
+  if (typeof window === 'undefined') return map;
+  try {
+    const raw = localStorage.getItem(TERMINAL_NAMES_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === 'string') map.set(Number(k), v);
+      }
+    }
+  } catch {}
+  return map;
+}
+
+function persistStoredTerminalNames(map: Map<number, string>) {
+  if (typeof window === 'undefined') return;
+  try {
+    const obj: Record<string, string> = {};
+    map.forEach((v, k) => {
+      obj[String(k)] = v;
+    });
+    localStorage.setItem(TERMINAL_NAMES_STORAGE_KEY, JSON.stringify(obj));
+  } catch {}
+}
+
+const terminalNames = loadStoredTerminalNames();
 const templateNames = new Map<string, string>();
 const templateUiToBackend = new Map<number, string>();
 const templateBackendToUi = new Map<string, number>();
@@ -173,7 +203,9 @@ function terminalUiIdFor(backendId: string) {
   if (existing !== undefined) return existing;
   const id = nextTerminalUiId--;
   terminalBackendToUi.set(backendId, id);
-  terminalNames.set(id, 'Terminal');
+  if (!terminalNames.has(id)) {
+    terminalNames.set(id, 'Terminal');
+  }
   return id;
 }
 
@@ -994,6 +1026,15 @@ export const ipcClient = {
     };
   },
 
+  setTerminalName: (commandId: number, name: string) => {
+    terminalNames.set(commandId, name);
+    persistStoredTerminalNames(terminalNames);
+  },
+
+  getTerminalName: (commandId: number): string | undefined => {
+    return terminalNames.get(commandId);
+  },
+
   stopSession: async (sessionId: number) => {
     if (!usingNativeIpc()) return invokeTauri<boolean>('session_stop', { sessionId });
     await invokeTauri<void>('session_stop', {
@@ -1144,6 +1185,7 @@ export const ipcClient = {
         sessionId,
         groupId,
         bufferBytes: row.buffer_bytes,
+        shellKind: row.shell_kind,
       };
     });
   },

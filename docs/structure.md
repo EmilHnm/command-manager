@@ -77,6 +77,7 @@ src/
 │       ├── CommandEditorModal.vue
 │       ├── TemplateEditorModal.vue # soạn template + khai báo param (kiểu, mặc định, bắt buộc, secret)
 │       ├── TemplateRunModal.vue  # MOD-10: form params → preview → chạy
+│       ├── RenameTerminalModal.vue # MOD-14: đổi tên tab terminal thủ công khi nháy đúp
 │       ├── RestoreWizard.vue     # MOD-08
 │       └── ShutdownOverlay.vue   # MOD-09
 ├── composables/

@@ -74,6 +74,7 @@ graph TD
 
     SCR01 --> MOD01[MOD-01: Quick Process Stop / Terminate Modal]
     SCR01 --> DOCK01[Dockview Tab Controller & Reattach Buffer View]
+    DOCK01 --> MOD14[MOD-14: Rename Manual Terminal Modal - Hộp thoại Đổi tên Terminal Thủ công]
 
     SCR02 --> MOD02[MOD-02: Command Editor Modal - Create/Edit is_shell]
     SCR02 --> MOD03[MOD-03: Delete Command Confirmation Modal]
@@ -151,24 +152,25 @@ Màn hình trung tâm hàng ngày của người dùng. Cho phép kích hoạt c
 * **Top Status Strip & Background Processes Button:**
   * Thẻ chỉ báo **`[⚡ 2 Ngầm]` / `[Active Daemons]`**: Cho biết số lượng tiến trình PTY đang chạy ngầm trong kernel backend Rust.
   * Click vào nút để bật/tắt **Menu Quản lý Tiến trình Chạy ngầm (Background Processes Manager Panel / Popover)**.
-* **Menu Quản lý Tiến trình Chạy Ngầm (Background Processes Panel / Popover):**
-  * **Header Panel:** Tiêu đề *"Tiến trình đang chạy ngầm (Active Daemons)"*, tổng số tiến trình, nút **"Dừng Tất Cả Ngầm"** (Stop All Daemons) và nút đóng menu.
-  * **Danh sách tiến trình ngầm (Daemon List Items):**
-    * Tên lệnh (`command_name`), Mã lệnh (`commandId`), Process ID (`PID`).
-    * Chỉ báo bộ nhớ (`RAM Footprint ~192MB`) & Kích thước Ring Buffer (`Buffer Bytes / Max 2MB`).
-    * Trạng thái UI Tab: **"Tab đang hiển thị"** (Attached) hoặc **"Tab đang ẩn"** (Detached - khi người dùng đã đóng/ẩn tab).
-    * Các nút hành động trực tiếp:
-      * **`[👁️ Mở lại Tab]` (Reattach Tab):** Khôi phục tab UI trên Dockview và chuyển focus đến tab đó để tiếp tục tương tác.
-      * **`[📜 Xem Log Nhanh]` (Peek Log):** Xem nhanh log buffer gần nhất mà không cần mở lại tab terminal full.
-      * **`[⏹ Dừng Lệnh]` (SIGTERM):** Gửi tín hiệu ngắt tiến trình êm dịu.
-      * **`[💀 Buộc Dừng]` (SIGKILL / Force Exit):** Ép buộc diệt tiến trình ngay lập tức khi bị treo.
+* **Menu Quản lý Tiến trình Chạy Ngầm (Background Processes Panel / Modal):**
+  * **Header Panel:** Tiêu đề *"Tiến trình đang chạy ngầm (Active Daemons)"*, tổng số tiến trình active, nút **"Dừng Tất Cả Ngầm"** (Stop All Daemons) và nút đóng menu (Esc).
+  * **Thanh Tiêu Đề Cột (List Column Headers):** Hiển thị 3 cột phân định thẳng hàng: `TIẾN TRÌNH / TÊN`, `TRẠNG THÁI TAB & BỘ NHỚ`, `THAO TÁC`.
+  * **Danh sách tiến trình ngầm (Daemon List Items) - Bố cục 3 cột cố định, không rớt dòng:**
+    * **Cột 1 - Định danh & Tên:** Dot trạng thái hoạt động (active running pulse); Huy hiệu phân loại (`[Terminal]` màu tím PTY vs `[Lệnh]` màu xanh command); Tên hiển thị đầy đủ (hiển thị tên tùy biến đã đổi, ví dụ `Dev Server`, hoặc `Terminal (POWERSHELL)` nếu là mặc định, với cơ chế chống rớt dòng `text-overflow: ellipsis`); Dòng meta hiển thị `#commandId`, `PID` và loại shell.
+    * **Cột 2 - Trạng thái Tab & Bộ nhớ Ring Buffer:** Căn lề thẳng hàng tuyệt đối trên toàn bộ danh sách; Huy hiệu trạng thái UI Tab (**`[👁️ Tab đang hiển thị]`** màu xanh blue Attached hoặc **`[👁️‍🗨️ Tab đang ẩn (Detached)]`** màu vàng cam khi đóng ẩn tab); Dòng telemetry hiển thị dung lượng bộ đệm Ring Buffer (ví dụ `Buffer: 118 B · Running`).
+    * **Cột 3 - Thao tác Hành động trực tiếp:** Nút **`[👁️ Mở lại Tab / Focus Tab]`** (khôi phục tab trên Dockview kèm tên tùy biến); nút **`[📜 Xem Log]`** (mở drawer Ring Buffer); nút **`[⏹ Dừng]`** (SIGTERM); nút **`[💀 Force Kill]`** (SIGKILL).
 * **Main Area: Dockview Tabbed PTY Terminals:**
   * **Header Tab Strip:**
-    * Tên tab tương ứng `command_definition.name`.
+    * Tên tab tương ứng `command_definition.name` hoặc tên tùy chỉnh (đối với terminal thủ công).
     * Dot màu trạng thái (Xanh = Running, Xám = Stopped, Đỏ = Crashed).
     * Badge hiển thị PID (ví dụ: `PID: 2841`).
+    * **Tương tác Đổi Tên Tab Thủ Công (Double-Click to Rename):**
+      * **Thao tác:** Người dùng nháy đúp chuột trái (`dblclick`) trực tiếp vào nhãn tên của tab (`tab-title`).
+      * **Điều kiện kích hoạt:** Chỉ áp dụng đối với **Terminal mở thủ công** (`isManual: true` / shell terminal độc lập mở từ nút `[+ Terminal mới]`).
+      * **Ràng buộc an toàn:** Đối với các tab terminal thuộc lệnh định nghĩa sẵn (`command_definition`) hoặc nhóm chạy theo phiên (`run_session`), thao tác nháy đúp sẽ bị bỏ qua (hoặc hiển thị tooltip giải thích: *"Tên tab được đồng bộ tự động theo tên lệnh trong danh mục"*).
+      * **Hành vi:** Mở ngay hộp thoại modal **MOD-14: Rename Manual Terminal Modal** để chỉnh sửa tên hiển thị của tab trong bộ nhớ UI.
     * Nút đóng tab `[x]`: Click vào đây sẽ **chỉ ẩn tab khỏi dockview**, KHÔNG hủy tiến trình backend (hiển thị tooltip nhắc nhở: *"Ẩn tab terminal. Lệnh vẫn tiếp tục chạy ngầm"*).
-    * Nút `[+]`: Mở menu chọn lệnh độc lập để khởi chạy trong tab mới.
+    * Nút `[+]`: Mở menu chọn lệnh độc lập hoặc mở terminal shell mới.
   * **Terminal Toolbar (Thanh công cụ trên đầu mỗi viewport):**
     * Nút **Stop Process (`⏹`):** Dừng tiến trình hiện hành của tab (gửi SIGTERM / TerminateProcess).
     * Nút **Restart Process (`🔄`):** Khởi động lại lệnh hiện tại.
@@ -680,7 +682,66 @@ Quản lý các mẫu lệnh tái sử dụng chứa các tham số linh hoạt 
     2. **Biến thể Privileged Warning (Vàng / System):** Áp dụng cho Autostart, Import đè DB, Chạy lệnh Shell không sandbox. Nút bấm màu cam/vàng (`--status-warning: #f59e0b` hoặc `--primary: #744791`).
   * **Cờ Xác Nhận Bắt Buộc (`confirmed: true`):** Truyền cờ xác nhận an toàn xuống Backend Rust qua IPC để bảo vệ ranh giới vùng tin cậy (Trusted Zone).
 
+---
 
+### MOD-14: Hộp Thoại Đổi Tên Terminal Thủ Công (Rename Manual Terminal Modal)
+
+#### 1. Mục đích & Vai trò
+Cho phép người dùng tùy biến nhãn tên hiển thị của các tab terminal được mở thủ công (empty shell terminal PTY) trực tiếp từ giao diện Tab Strip thông qua thao tác **nháy đúp chuột (`double-click`) vào tên tab**. Tính năng này giúp người dùng dễ dàng phân biệt giữa các phiên làm việc terminal độc lập (ví dụ: `Worker Debug`, `DB Migration`, `Scratchpad`, `Vite Test`) mà không làm gián đoạn tiến trình PTY đang chạy ngầm hoặc Ring Buffer.
+
+#### 2. Kích thước & Vị trí
+* **Kích thước:** Compact modal 480px x 260px.
+* **Vị trí:** Canh giữa màn hình (Center-aligned), phủ lên trên backdrop mờ (`background: rgba(11, 13, 19, 0.75); backdrop-filter: blur(8px)`).
+* **Độ ưu tiên z-index:** Thuộc tầng modal (`z-index: 1050`), cao hơn Tab Strip và xterm viewport.
+* **Stitch Screen Reference:** Screen ID `beabcffb357343e08f5c528b095cf2ac` tại Project `14914224436748087443`.
+
+#### 3. Wireframe Chi tiết
+
+```
++-----------------------------------------------------------------------------+
+|  ✏️ Đổi Tên Terminal (Rename Terminal)                                 [X]  |
+|  Shell PTY • PID: 3418 • PowerShell                                         |
++-----------------------------------------------------------------------------+
+|  💡 Nháy đúp vào tab thủ công để đổi tên hiển thị. Tên tùy chỉnh giúp       |
+|  phân biệt nhanh các phiên PTY độc lập trong không gian làm việc.            |
+|                                                                             |
+|  Tên Terminal Mới (*)                                               19 / 32 |
+|  +-----------------------------------------------------------------------+  |
+|  | Worker Debug & Test                                               (x) |  |
+|  +-----------------------------------------------------------------------+  |
+|                                                                             |
+|  Gợi Ý Nhanh (Presets):                                                     |
+|  [Terminal] [Dev Server] [Worker Debug] [Build & Watch] [Logs] [Scratchpad] |
++-----------------------------------------------------------------------------+
+|  ⌨️ Nhấn Esc để hủy, Enter để lưu                  [ Hủy Bỏ ]  [💾 Lưu Tên] |
++-----------------------------------------------------------------------------+
+```
+
+#### 4. Các Thành phần Dữ liệu & Quy tắc Kiểm Thực (Validation Rules)
+1. **Thông tin Ngữ cảnh (Header Context):**
+   * Tiêu đề modal kèm icon chỉnh sửa/terminal (`✏️`).
+   * Meta badge hiển thị loại shell (`PowerShell / Cmd / Bash`) và `PID` hiện hành của tiến trình terminal con.
+   * Nút đóng nhanh `[X]` góc trên bên phải.
+2. **Trường Nhập Tên (Terminal Name Input):**
+   * **Giá trị khởi tạo:** Tự động điền (pre-filled) tên hiện tại của tab. Khi modal mở ra, hệ thống tự động `autofocus` và bôi đen toàn bộ chuỗi text (`select()`) để người dùng có thể gõ đè tên mới ngay lập tức.
+   * **Giới hạn ký tự:** Độ dài từ 1 đến 32 ký tự, hiển thị bộ đếm ký tự thời gian thực (`counter: current / 32`).
+   * **Quy tắc Kiểm thực (Validation):**
+     * Không được để trống (sau khi `trim()`).
+     * Không chứa ký tự xuống dòng (`\n`, `\r`) hoặc chuỗi điều khiển ANSI.
+     * Nếu chuỗi rỗng: vô hiệu hóa nút "Lưu Tên" và hiển thị cảnh báo đỏ *"Tên terminal không được để trống"*.
+   * Nút xóa nhanh nội dung `(x)` (Clear icon) bên trong ô input khi có văn bản.
+3. **Thẻ Gợi Ý Nhanh (Preset Chips / Quick Tags):**
+   * Cung cấp các nhãn thường dùng: `[Terminal]`, `[Dev Server]`, `[Worker Debug]`, `[Build & Watch]`, `[API Test]`, `[Logs]`, `[Scratchpad]`.
+   * Click vào một chip sẽ điền ngay tên đó vào ô input và focus lại để người dùng điều chỉnh thêm nếu muốn.
+4. **Hành động & Phím Tắt (Actions & Shortcuts):**
+   * **Nút "Lưu Tên" (`Enter`):** Lưu tên mới vào thuộc tính `tab.name` của tab hiện hành trong bộ nhớ Vue State (`openTabs`). Đóng modal và hiển thị Toast nhẹ: *"Đã đổi tên tab thành: [Tên mới]"*.
+   * **Nút "Hủy Bỏ" (`Esc`):** Hủy thao tác, giữ nguyên tên cũ và đóng modal.
+   * Click ra ngoài vùng backdrop mờ tương đương với lệnh Hủy (`Esc`).
+
+#### 5. Phạm vi Hiệu lực & Lưu trữ Trạng thái (Lifecycle & State Scope)
+* **In-Memory Tab Scope:** Tên tùy chỉnh được lưu trữ trực tiếp trong mảng trạng thái `openTabs: OpenTabItem[]` ở component [DockHost.vue](../src/components/terminal/DockHost.vue).
+* **Không làm gián đoạn PTY:** Thao tác đổi tên chỉ tác động đến lớp hiển thị của Tab Strip (DOM label và title attribute), hoàn toàn **không khởi động lại tiến trình, không gián đoạn stream dữ liệu PTY hay can thiệp vào Ring Buffer**.
+* **Phân định rõ ràng:** Tab của `command_definition` lấy tên theo DB SQLite; chỉ tab mở thủ công từ nút `[+ Terminal mới]` mới có cờ `isManual: true` để cho phép đổi tên.
 
 ---
 
@@ -692,6 +753,7 @@ Bảng ma trận hành vi giữa tương tác giao diện và tiến trình th�
 | :--- | :--- | :--- | :--- | :--- |
 | **Bấm nút [Play] Nhóm** | Tạo mới panel tab qua `dockview.api.addPanel()` | Fork process, gắn PTY, khởi tạo Ring Buffer | Bắt đầu nhận byte stream | Tự động focus vào tab đầu tiên của nhóm. |
 | **Chuyển qua lại giữa các tab** | Tab cũ ẩn (hidden), tab mới active | Các tiến trình vẫn chạy độc lập bình thường | Buffer vẫn tiếp tục thu thập dữ liệu ngầm | Kích hoạt `fitAddon.fit()` để căn lại cols/rows của tab đang active. |
+| **Nháy đúp vào tên tab thủ công** | Giữ nguyên viewport tab, mở Modal MOD-14 đổi tên | Tiến trình PTY vẫn chạy bình thường | Ring buffer tiếp tục nhận dữ liệu ngầm | Sau khi Lưu, tên tab đổi ngay trên Tab Strip; không ảnh hưởng PID hay lifecycle. |
 | **Bấm [x] Đóng thẻ Tab** | Panel tab bị destroy / unmount khỏi DOM | **TIẾN TRÌNH VẪN TIẾP TỤC CHẠY** | **BUFFER VẪN TIẾP TỤC LƯU** | Hiển thị thông báo Toast nhẹ: *"Đã ẩn tab. Lệnh vẫn chạy ngầm"*. |
 | **Mở lại lệnh từ Sidebar** | Tạo lại panel tab dockview mới | Tiến trình đang chạy được gắn lại (Reattach) | **Xả ngược (flush) 1-2MB gần nhất** lên xterm | Người dùng xem lại được toàn bộ ngữ cảnh output gần nhất. |
 | **Bấm nút [Stop Process] đỏ** | Tab giữ nguyên, hiển thị badge "Stopped" | Gửi SIGTERM / CTRL_C_EVENT; sau 5s gửi SIGKILL | Ngừng nhận stream; giữ nguyên log đã xả | Cập nhật `run_event.ended_at` và `exit_code` vào SQLite. |
@@ -827,6 +889,7 @@ Hệ màu tối ưu cho Dark Theme với phong cách kỹ thuật cao cấp:
 | `Ctrl + R` | Khởi động lại (Restart) lệnh của tab hiện hành | Tab Terminal |
 | `Ctrl + Shift + S` | Mở màn hình Cài đặt & Sao lưu | Toàn bộ ứng dụng |
 | `Esc` | Đóng bất kỳ Modal hoặc Drawer đang mở | Modal / Overlay |
+| `Nháy đúp tab (Double Click)` | Mở modal MOD-14 đổi tên terminal (chỉ áp dụng cho tab mở thủ công) | Header Tab Strip |
 
 ---
 
@@ -837,6 +900,7 @@ Hệ màu tối ưu cho Dark Theme với phong cách kỹ thuật cao cấp:
 - [x] Có giao diện chi tiết phân biệt `is_shell` (Direct Argv vs Shell).
 - [x] Thể hiện quản lý `execution_order` bằng danh sách có thể sắp xếp trực quan.
 - [x] Đặc tả giao diện SOẠN và CHẠY Command Template (SCR-06, MOD-10, MOD-11) với Form động, xem trước live preview, preset và bảo vệ tham số Secret.
+- [x] Thiết kế tương tác nháy đúp đổi tên tab terminal thủ công (MOD-14: Rename Manual Terminal Modal) cho phép tùy biến nhãn tab trong phiên làm việc mà không ảnh hưởng tiến trình PTY ngầm.
 - [x] Mô hình hóa quy trình Sao lưu (VACUUM INTO) và Khôi phục 7 bước kèm Rollback an toàn.
 - [x] Thiết kế cảnh báo an toàn cho vùng tin cậy (Trusted Zone) và kiểm soát quyền đặc quyền.
 - [x] Tích hợp chuẩn thiết kế xterm.js và Dockview cho trải nghiệm PTY chân thực.

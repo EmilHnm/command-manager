@@ -144,6 +144,16 @@ export function useRunSession() {
     return activeProcesses.value.get(commandId);
   };
 
+  const updateProcessName = (commandId: number, name: string) => {
+    const existing = activeProcesses.value.get(commandId);
+    if (existing) {
+      const next = new Map(activeProcesses.value);
+      next.set(commandId, { ...existing, commandName: name });
+      activeProcesses.value = next;
+    }
+    ipcClient.setTerminalName?.(commandId, name);
+  };
+
   return {
     activeSession,
     activeProcesses,
@@ -156,5 +166,6 @@ export function useRunSession() {
     refreshProcesses,
     getProcessStatus,
     getProcessInfo,
+    updateProcessName,
   };
 }

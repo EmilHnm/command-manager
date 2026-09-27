@@ -126,6 +126,7 @@
     <BackgroundProcessesModal
       :visible="showBgModal"
       :open-tab-command-ids="dockHostRef?.openTabCommandIds"
+      :open-tabs="dockHostRef?.openTabs"
       @close="showBgModal = false"
       @open-tab="handleOpenBgTab"
     />
@@ -271,8 +272,8 @@ const handleSelectCommand = (commandId: number, commandName: string) => {
   dockHostRef.value?.openCommandTab(commandId, commandName, getProcessInfo(commandId)?.runEventId);
 };
 
-const handleOpenBgTab = (proc: { commandId: number; commandName: string; runEventId?: string }) => {
-  dockHostRef.value?.openCommandTab(proc.commandId, proc.commandName, proc.runEventId);
+const handleOpenBgTab = (proc: { commandId: number; commandName: string; runEventId?: string; shellKind?: string }) => {
+  dockHostRef.value?.openCommandTab(proc.commandId, proc.commandName, proc.runEventId, proc.shellKind);
 };
 
 const handleRunGroup = async (group: CommandGroupWithCommands) => {

@@ -70,6 +70,7 @@
 - [x] **Đồng bộ kích thước (Resize):** [XtermPane.vue](../src/components/terminal/XtermPane.vue) dùng `ResizeObserver` + `FitAddon` gửi invoke `pty_resize(cols, rows)` cập nhật trực tiếp đến kernel PTY.
 - [x] **Gắn lại Terminal (Reattach Buffer):** Khi mở lại tab đã ẩn, gọi invoke `pty_reattach` để lấy toàn bộ dữ liệu gần đây từ [RingBuffer](../src-tauri/src/pty/buffer.rs) và xả vào màn hình xterm.js.
 - [x] **Terminal shell trống:** Nút `Terminal mới` mở shell tương tác độc lập qua `terminal_open`, không cần tạo command/group và không ghi lịch sử SQLite; vẫn hỗ trợ input, resize, reattach và stop như terminal của command ([DockHost.vue](../src/components/terminal/DockHost.vue), [commands.rs](../src-tauri/src/ipc/commands.rs)).
+- [x] **Đổi tên Tab Terminal thủ công (MOD-14):** Hỗ trợ nháy đúp (`dblclick`) vào tên tab trên Tab Strip để mở modal đổi tên đối với terminal mở thủ công (`isManual: true`); không áp dụng cho terminal của command/group định sẵn. Cập nhật tên tab in-memory mà không làm gián đoạn PTY stream hay Ring Buffer ([DockHost.vue](../src/components/terminal/DockHost.vue), [screens.md](./screens.md#mod-14-hộp-thoại-đổi-tên-terminal-thủ-công-rename-manual-terminal-modal)).
 - [x] **Giới hạn phạm vi Reattach:** Ghi rõ tài liệu: cơ chế Ring Buffer thô hỗ trợ xem lại recent log, không khôi phục trạng thái toàn màn hình chuyên biệt (vim/htop).
 - [x] **Bảo mật bí mật trong PTY:** Tuyệt đối không ghi luồng stream PTY ra đĩa cứng để tránh lộ mật khẩu người dùng nhập vào terminal.
 

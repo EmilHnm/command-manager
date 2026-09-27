@@ -75,6 +75,13 @@
 
             <!-- Process Items List -->
             <div v-else class="process-list">
+              <!-- Header cột để căn lề thẳng hàng, đều tăm tắp -->
+              <div class="list-column-headers">
+                <span class="col-hdr ident">Tiến trình / Tên</span>
+                <span class="col-hdr status">Trạng thái Tab &amp; Bộ nhớ</span>
+                <span class="col-hdr actions">Thao tác</span>
+              </div>
+
               <div
                 v-for="proc in runningProcesses"
                 :key="proc.commandId"
@@ -82,39 +89,59 @@
                 :class="{ 'is-detached': !isTabOpen(proc.commandId) }"
               >
                 <div class="card-main">
-                  <div class="proc-info-group">
-                    <div class="proc-title-row">
-                      <span class="status-dot active" />
-                      <span class="proc-name">{{ proc.commandName }}</span>
-                      <span class="cmd-id-tag font-mono">#{{ proc.commandId }}</span>
-                      <span v-if="proc.pid" class="pid-tag font-mono">PID: {{ proc.pid }}</span>
-
-                      <!-- UI Tab Status Badge -->
+                  <!-- CỘT 1: ĐỊNH DANH TIẾN TRÌNH & TÊN (Căn lề chuẩn, không rớt dòng) -->
+                  <div class="proc-col-ident">
+                    <div class="proc-title-line">
+                      <span class="status-dot active" title="Đang chạy ngầm" />
                       <span
-                        class="tab-status-badge"
-                        :class="isTabOpen(proc.commandId) ? 'attached' : 'detached'"
+                        class="proc-type-badge font-mono"
+                        :class="isManualTerminal(proc) ? 'badge-terminal' : 'badge-command'"
                       >
-                        <Eye v-if="isTabOpen(proc.commandId)" :size="11" />
-                        <EyeOff v-else :size="11" />
-                        <span>{{ isTabOpen(proc.commandId) ? 'Tab đang hiển thị' : 'Tab đang ẩn (Detached)' }}</span>
+                        <Terminal v-if="isManualTerminal(proc)" :size="10" />
+                        <Code2 v-else :size="10" />
+                        <span>{{ isManualTerminal(proc) ? 'Terminal' : 'Lệnh' }}</span>
+                      </span>
+                      <span
+                        class="proc-name"
+                        :title="getProcessDisplayName(proc)"
+                      >
+                        {{ getProcessDisplayName(proc) }}
                       </span>
                     </div>
 
-                    <!-- Telemetry Stats -->
-                    <div class="proc-telemetry">
-                      <span class="telemetry-item">
-                        <span class="label">Buffer:</span>
-                        <span class="val font-mono">{{ formatBuffer(proc.bufferBytes) }}</span>
-                      </span>
-                      <span class="divider">•</span>
-                      <span class="telemetry-item">
-                        <span class="label">Trạng thái:</span>
-                        <span class="val status-running-text font-mono">Running</span>
-                      </span>
+                    <div class="proc-meta-line font-mono">
+                      <span class="cmd-id-tag">#{{ proc.commandId }}</span>
+                      <span class="meta-dot">·</span>
+                      <span v-if="proc.pid" class="pid-tag">PID: {{ proc.pid }}</span>
+                      <template v-if="proc.shellKind">
+                        <span class="meta-dot">·</span>
+                        <span class="shell-tag">{{ proc.shellKind }}</span>
+                      </template>
                     </div>
                   </div>
 
-                  <!-- Actions -->
+                  <!-- CỘT 2: TRẠNG THÁI TAB UI & PTY BUFFER (Cố định width, căn lề thẳng hàng) -->
+                  <div class="proc-col-status">
+                    <span
+                      class="tab-status-badge"
+                      :class="isTabOpen(proc.commandId) ? 'attached' : 'detached'"
+                    >
+                      <Eye v-if="isTabOpen(proc.commandId)" :size="11" />
+                      <EyeOff v-else :size="11" />
+                      <span>{{ isTabOpen(proc.commandId) ? 'Tab đang hiển thị' : 'Tab đang ẩn (Detached)' }}</span>
+                    </span>
+
+                    <div class="proc-telemetry">
+                      <span class="telemetry-item font-mono">
+                        <span class="label">Buffer:</span>
+                        <span class="val">{{ formatBuffer(proc.bufferBytes) }}</span>
+                      </span>
+                      <span class="meta-dot">·</span>
+                      <span class="val status-running-text font-mono">Running</span>
+                    </div>
+                  </div>
+
+                  <!-- CỘT 3: THAO TÁC HÀNH ĐỘNG -->
                   <div class="proc-actions">
                     <button
                       class="btn btn-sm"
@@ -219,6 +246,7 @@ import {
   Skull,
   LoaderCircle,
   Terminal,
+  Code2,
   RefreshCw,
   Copy,
   Info,
@@ -230,14 +258,15 @@ import type { ActiveProcessInfo } from '@/types/models';
 const props = defineProps<{
   visible: boolean;
   openTabCommandIds?: number[];
+  openTabs?: { id: string; commandId: number; name: string; shellKind?: string; isManual?: boolean }[];
 }>();
 
 const emit = defineEmits<{
   (e: 'close'): void;
-  (e: 'open-tab', proc: { commandId: number; commandName: string; runEventId?: string }): void;
+  (e: 'open-tab', proc: { commandId: number; commandName: string; runEventId?: string; shellKind?: string }): void;
 }>();
 
-const { activeProcesses, stopCommandProcess, stopGroupSession } = useRunSession();
+const { activeProcesses, stopCommandProcess, stopGroupSession, refreshProcesses } = useRunSession();
 
 const peekingCommandId = ref<number | null>(null);
 const peekLogText = ref('');
@@ -247,6 +276,16 @@ const stopFeedback = ref<{ type: 'success' | 'error'; message: string } | null>(
 const stopInProgress = ref<number | null>(null);
 const stoppingAll = ref(false);
 let stopFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+// Tự động làm mới danh sách khi mở modal
+watch(
+  () => props.visible,
+  (val) => {
+    if (val) {
+      void refreshProcesses();
+    }
+  },
+);
 
 const runningProcesses = computed(() => {
   const list: ActiveProcessInfo[] = [];
@@ -258,6 +297,37 @@ const runningProcesses = computed(() => {
 
 const isTabOpen = (commandId: number): boolean => {
   return props.openTabCommandIds?.includes(commandId) ?? false;
+};
+
+const isManualTerminal = (proc: ActiveProcessInfo): boolean => {
+  const openTab = props.openTabs?.find(t => t.commandId === proc.commandId);
+  if (openTab?.isManual) return true;
+  return proc.commandId <= 0 ||
+    Boolean(proc.runEventId?.startsWith('terminal:')) ||
+    (Boolean(proc.shellKind) && proc.shellKind !== 'command');
+};
+
+const getProcessDisplayName = (proc: ActiveProcessInfo): string => {
+  // 1. Kiểm tra openTabs nếu tab đang hiển thị
+  const openTab = props.openTabs?.find(t => t.commandId === proc.commandId);
+  if (openTab && openTab.name && openTab.name.trim() !== '') {
+    return openTab.name;
+  }
+  // 2. Kiểm tra từ ipcClient lưu trong cache / localStorage
+  const storedName = ipcClient.getTerminalName?.(proc.commandId);
+  if (storedName && storedName.trim() !== '') {
+    return storedName;
+  }
+  // 3. Nếu là terminal thủ công
+  if (isManualTerminal(proc)) {
+    if (proc.commandName && proc.commandName !== 'Terminal' && proc.commandName.trim() !== '') {
+      return proc.commandName;
+    }
+    const shell = proc.shellKind ? proc.shellKind.toUpperCase() : 'POWERSHELL';
+    return `Terminal (${shell})`;
+  }
+  // 4. Lệnh thông thường
+  return proc.commandName || `Lệnh #${proc.commandId}`;
 };
 
 const handleClose = () => {
@@ -281,10 +351,12 @@ const showStopFeedback = (feedback: { type: 'success' | 'error'; message: string
 };
 
 const handleOpenTab = (proc: ActiveProcessInfo) => {
+  const displayName = getProcessDisplayName(proc);
   emit('open-tab', {
     commandId: proc.commandId,
-    commandName: proc.commandName,
+    commandName: displayName,
     runEventId: proc.runEventId,
+    shellKind: proc.shellKind,
   });
   handleClose();
 };
@@ -399,7 +471,7 @@ onBeforeUnmount(() => {
 
 .bg-processes-modal {
   width: 100%;
-  max-width: 680px;
+  max-width: 860px;
   max-height: 85vh;
   background-color: var(--bg-surface);
   border: 1px solid var(--border-subtle);
@@ -532,17 +604,45 @@ onBeforeUnmount(() => {
 .process-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+}
+
+.list-column-headers {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 14px 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.col-hdr.ident {
+  flex: 1 1 270px;
+  min-width: 0;
+}
+
+.col-hdr.status {
+  flex: 0 0 185px;
+}
+
+.col-hdr.actions {
+  flex: 0 0 auto;
+  width: 320px;
+  text-align: right;
 }
 
 .process-card {
   background-color: var(--bg-app-base);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  padding: 12px 14px;
+  padding: 10px 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   transition: all 0.15s ease;
 }
 
@@ -555,19 +655,23 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
+  min-height: 42px;
 }
 
-.proc-info-group {
+.proc-col-ident {
+  flex: 1 1 270px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.proc-title-row {
+.proc-title-line {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .status-dot {
@@ -575,6 +679,7 @@ onBeforeUnmount(() => {
   height: 7px;
   border-radius: 50%;
   background-color: var(--status-idle);
+  flex-shrink: 0;
 }
 
 .status-dot.active {
@@ -582,14 +687,49 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 6px var(--status-running);
 }
 
+.proc-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1.5px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.proc-type-badge.badge-terminal {
+  background: rgba(168, 85, 247, 0.16);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.35);
+}
+
+.proc-type-badge.badge-command {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+}
+
 .proc-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proc-meta-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--text-muted);
 }
 
 .cmd-id-tag {
-  font-size: 10px;
   color: var(--text-muted);
 }
 
@@ -597,18 +737,38 @@ onBeforeUnmount(() => {
   font-size: 10px;
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
-  padding: 1px 5px;
+  padding: 0 5px;
   border-radius: 2px;
   color: var(--text-secondary);
 }
 
-.tab-status-badge {
+.shell-tag {
+  font-size: 10px;
+  color: var(--primary-accent, #e4b5ff);
+  text-transform: uppercase;
+}
+
+.meta-dot {
+  color: var(--border-subtle);
+}
+
+.proc-col-status {
+  flex: 0 0 185px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 4px;
+  flex-shrink: 0;
+}
+
+.tab-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 10.5px;
-  padding: 1px 6px;
+  padding: 2px 7px;
   border-radius: 3px;
+  width: fit-content;
+  white-space: nowrap;
 }
 
 .tab-status-badge.attached {
@@ -626,13 +786,9 @@ onBeforeUnmount(() => {
 .proc-telemetry {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: 11px;
   color: var(--text-secondary);
-}
-
-.divider {
-  color: var(--border-subtle);
 }
 
 .status-running-text {
@@ -641,9 +797,11 @@ onBeforeUnmount(() => {
 }
 
 .proc-actions {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .btn-danger-subtle {
