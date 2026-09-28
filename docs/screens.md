@@ -104,20 +104,22 @@ graph TD
 ### Màn hình 1: SCR-01 — Terminal Workspace & Execution Dashboard
 
 #### 1. Mục đích & Vai trò
-Màn hình trung tâm hàng ngày của người dùng. Cho phép kích hoạt chạy theo nhóm hoặc từng lệnh riêng lẻ, giám sát trực quan các terminal PTY qua các thẻ tab dockview, xem log đầu ra gần đây từ ring buffer và kiểm soát vòng đời tiến trình.
+Màn hình trung tâm hàng ngày của người dùng. Cho phép kích hoạt chạy theo nhóm hoặc từng lệnh riêng lẻ, giám sát trực quan các terminal PTY qua các thẻ tab dockview, xem log đầu ra gần đây từ ring buffer và kiểm soát vòng đời tiến trình. Đồng thời, cung cấp **Chế độ Split View Terminal Mode (Chia đôi màn hình n tab PTY)**, cho phép quan sát và tương tác đồng thời với 2 khung terminal cạnh nhau (trái/phải hoặc trên/dưới), mỗi khung chứa danh sách n tab PTY độc lập, có thể kéo thả chuyển tab và điều chỉnh kích thước thanh chia linh hoạt.
 
 #### 2. Wireframe Chi tiết
+
+##### 2.1. Wireframe Chế độ Tab Đơn (Single View Mode - Mặc định)
 
 ```
 +----------------------------------------------------------------------------------------------------+
 | [=] Workspace   | Active Session: Web Platform Dev (Started 14:20:05)   [⚡ 2 Ngầm] [⏹ Stop Group]  |
 +-----------------+----------------------------------------------------------------------------------+
 | GROUPS TREE     | [xterm] frontend (PID: 2841) [x] | [xterm] backend-api (PID: 2845) [x] | [+] New Tab|
-| Search groups.. |----------------------------------------------------------------------------------+
-| v Web Platform  | [Actions: 🔄 Reattach Buffer | ⎚ Clear | 🗖 Maximize | ⏹ Stop Process (SIGTERM) ]  |
-|   [▷] [⏹] [Aut] |----------------------------------------------------------------------------------+
-|   ● 01. db-init | $ pnpm run dev                                                                   |
-|     (Code: 0)   |                                                                                  |
+| Search groups.. |   [View: [◻ Single] [◫ Split Dọc] [⬒ Split Ngang] ]                              |
+| v Web Platform  |----------------------------------------------------------------------------------+
+|   [▷] [⏹] [Aut] | [Actions: 🔄 Reattach Buffer | ⎚ Clear | 🗖 Maximize | ⏹ Stop Process (SIGTERM) ]  |
+|   ● 01. db-init |----------------------------------------------------------------------------------+
+|     (Code: 0)   | $ pnpm run dev                                                                   |
 |   ● 02. backend |   VITE v5.4.2  ready in 340 ms                                                   |
 |     (PID: 2845) |   ➜  Local:   http://localhost:5173/                                             |
 |   ● 03. frontend|   +------------------------------------------------------------------------------+ |
@@ -133,6 +135,55 @@ Màn hình trung tâm hàng ngày của người dùng. Cho phép kích hoạt c
 |   ▷ backup-job  |   +------------------------------------------------------------------------------+ |
 +-----------------+----------------------------------------------------------------------------------+
 | Active: 2 cmds  | xterm: 120x34 | Encoding: UTF-8 | PTY Stream: Connected | Memory Buffer: 128KB     |
++----------------------------------------------------------------------------------------------------+
+```
+
+##### 2.2. Wireframe Chế độ Chia Đôi Cột Dọc (Split View Mode — Horizontal Split: Trái | Phải)
+
+```
++----------------------------------------------------------------------------------------------------+
+| [=] Workspace   | Active Session: Fullstack Stack (Started 14:20:05)     [⚡ 3 Ngầm] [⏹ Stop Group] |
++-----------------+----------------------------------------------------------------------------------+
+| GROUPS TREE     | KHUNG TRÁI (PANE A - Active Focus)             | KHUNG PHẢI (PANE B)             |
+| Search groups.. | [● api-server (PID: 2845)] [● redis] [x]  [+]  | [● frontend (PID: 2841)] [x] [+] |
+| v Web Platform  | [View: [◻ Single] [*◫ Dọc*] [⬒ Ngang] [⇄ Hoán Đổi] | Tỉ lệ chia: 50% | 50%]      |
+|   ● 01. db      |-----------------------------------------------+----------------------------------|
+|     (Code: 0)   | [Actions: 🔄 | ⎚ | ⏹ Stop | ◫ Chuyển Phải]  | [Actions: 🔄 | ⎚ | ⏹ Stop]       |
+|   ● 02. api     |-----------------------------------------------+----------------------------------|
+|     (PID: 2845) | [Nest] 2845 - LOG [NestFactory] Starting...   |  VITE v5.4.2 ready in 280 ms     |
+|   ● 03. frontend| [Nest] 2845 - LOG [RoutesResolver] AppController|  ➜ Local: http://localhost:5173/ |
+|     (PID: 2841) | [Nest] 2845 - LOG Nest app started on :4000   |  ➜ Network: use --host to expose |
+|                 | $                                             |  ➜ press h + enter to show help  |
+| > Background    |                                               |                                  |
+|   ▷ worker      |                                               |                                  |
+|                 | <==== Viền Active Focus tím #744791 ====>     | <==== Thanh Sash kéo chuột || == |
++-----------------+-----------------------------------------------+----------------------------------+
+| Active: 2 panes | Pane A: 68x34 (PID: 2845)                     | Pane B: 68x34 (PID: 2841)        |
++----------------------------------------------------------------------------------------------------+
+```
+
+##### 2.3. Wireframe Chế độ Chia Đôi Hàng Ngang (Split View Mode — Vertical Split: Trên / Dưới)
+
+```
++----------------------------------------------------------------------------------------------------+
+| [=] Workspace   | Active Session: Microservices Log Monitor              [⚡ 3 Ngầm] [⏹ Stop Group] |
++-----------------+----------------------------------------------------------------------------------+
+| GROUPS TREE     | KHUNG TRÊN (PANE A - Active Focus)                                               |
+| Search groups.. | [● docker-compose-logs (PID: 3012)] [● worker-daemon] [x]  [+]                    |
+| v Microservices | [View: [◻ Single] [◫ Dọc] [*⬒ Ngang*] [⇄ Hoán Đổi] | Tỉ lệ: 55% Trên / 45% Dưới]   |
+|   ● 01. compose |----------------------------------------------------------------------------------+
+|   ● 02. worker  | postgres-1  | database system is ready to accept connections                     |
+|   ● 03. redis   | redis-1     | 1:M 28 Sep 10:15:01.022 * Ready to accept connections tcp          |
+|                 | worker-1    | [JobQueue] Processed 142 events in batch #481                      |
+|                 |====================== THANH PHÂN CÁCH SASH NGANG (KÉO CHUỘT / RESIZABLE) ========|
+|                 | KHUNG DƯỚI (PANE B)                                                              |
+|                 | [● bash-interactive-test] [x]  [+]                          [Actions: ⎚ | ⏹]     |
+|                 |----------------------------------------------------------------------------------+
+|                 | $ curl -X POST http://localhost:4000/api/v1/test-event                           |
+|                 | {"success":true,"queued":1,"timestamp":"2026-09-28T10:15:05Z"}                   |
+|                 | $ _                                                                              |
++-----------------+----------------------------------------------------------------------------------+
+| Active: 2 panes | Pane A: 136x18 (Top)                          | Pane B: 136x14 (Bottom)          |
 +----------------------------------------------------------------------------------------------------+
 ```
 
@@ -158,30 +209,72 @@ Màn hình trung tâm hàng ngày của người dùng. Cho phép kích hoạt c
   * **Danh sách tiến trình ngầm (Daemon List Items) - Bố cục 3 cột cố định, không rớt dòng:**
     * **Cột 1 - Định danh & Tên:** Dot trạng thái hoạt động (active running pulse); Huy hiệu phân loại (`[Terminal]` màu tím PTY vs `[Lệnh]` màu xanh command); Tên hiển thị đầy đủ (hiển thị tên tùy biến đã đổi, ví dụ `Dev Server`, hoặc `Terminal (POWERSHELL)` nếu là mặc định, với cơ chế chống rớt dòng `text-overflow: ellipsis`); Dòng meta hiển thị `#commandId`, `PID` và loại shell.
     * **Cột 2 - Trạng thái Tab & Bộ nhớ Ring Buffer:** Căn lề thẳng hàng tuyệt đối trên toàn bộ danh sách; Huy hiệu trạng thái UI Tab (**`[👁️ Tab đang hiển thị]`** màu xanh blue Attached hoặc **`[👁️‍🗨️ Tab đang ẩn (Detached)]`** màu vàng cam khi đóng ẩn tab); Dòng telemetry hiển thị dung lượng bộ đệm Ring Buffer (ví dụ `Buffer: 118 B · Running`).
-    * **Cột 3 - Thao tác Hành động trực tiếp:** Nút **`[👁️ Mở lại Tab / Focus Tab]`** (khôi phục tab trên Dockview kèm tên tùy biến); nút **`[📜 Xem Log]`** (mở drawer Ring Buffer); nút **`[⏹ Dừng]`** (SIGTERM); nút **`[💀 Force Kill]`** (SIGKILL).
-* **Main Area: Dockview Tabbed PTY Terminals:**
-  * **Header Tab Strip:**
-    * Tên tab tương ứng `command_definition.name` hoặc tên tùy chỉnh (đối với terminal thủ công).
-    * Dot màu trạng thái (Xanh = Running, Xám = Stopped, Đỏ = Crashed).
-    * Badge hiển thị PID (ví dụ: `PID: 2841`).
-    * **Tương tác Đổi Tên Tab Thủ Công (Double-Click to Rename):**
-      * **Thao tác:** Người dùng nháy đúp chuột trái (`dblclick`) trực tiếp vào nhãn tên của tab (`tab-title`).
-      * **Điều kiện kích hoạt:** Chỉ áp dụng đối với **Terminal mở thủ công** (`isManual: true` / shell terminal độc lập mở từ nút `[+ Terminal mới]`).
-      * **Ràng buộc an toàn:** Đối với các tab terminal thuộc lệnh định nghĩa sẵn (`command_definition`) hoặc nhóm chạy theo phiên (`run_session`), thao tác nháy đúp sẽ bị bỏ qua (hoặc hiển thị tooltip giải thích: *"Tên tab được đồng bộ tự động theo tên lệnh trong danh mục"*).
-      * **Hành vi:** Mở ngay hộp thoại modal **MOD-14: Rename Manual Terminal Modal** để chỉnh sửa tên hiển thị của tab trong bộ nhớ UI.
-    * Nút đóng tab `[x]`: Click vào đây sẽ **chỉ ẩn tab khỏi dockview**, KHÔNG hủy tiến trình backend (hiển thị tooltip nhắc nhở: *"Ẩn tab terminal. Lệnh vẫn tiếp tục chạy ngầm"*).
-    * Nút `[+]`: Mở menu chọn lệnh độc lập hoặc mở terminal shell mới.
-  * **Terminal Toolbar (Thanh công cụ trên đầu mỗi viewport):**
-    * Nút **Stop Process (`⏹`):** Dừng tiến trình hiện hành của tab (gửi SIGTERM / TerminateProcess).
-    * Nút **Restart Process (`🔄`):** Khởi động lại lệnh hiện tại.
-    * Nút **Reattach / Flush Buffer:** Xả lại 1MB/2MB byte gần nhất từ Ring Buffer trong bộ nhớ lên xterm.js nếu màn hình bị mất sync.
-    * Nút **Clear Screen (`⎚`):** Xóa màn hình xterm.js cục bộ (không ảnh hưởng ring buffer).
-    * Nút **Copy All Output:** Sao chép nội dung log đang hiển thị.
-  * **xterm.js Canvas Container:**
-    * Tự động resize listener (`FitAddon`): Bắt sự kiện resize của tab và gửi thông số `cols` và `rows` xuống kernel PTY qua Tauri IPC để đồng bộ kích thước dòng lệnh chuẩn xác.
-    * Hỗ trợ đầy đủ mã màu ANSI 256 / Truecolor, font ligature, chuột click link URL.
+    * **Cột 3 - Thao tác Hành động trực tiếp:** Nút **`[👁️ Mở lại Tab / Focus Tab]`** (khôi phục tab trên Dockview kèm tên tùy biến; khi ở chế độ Split Mode có tùy chọn mở vào Pane A hoặc Pane B); nút **`[📜 Xem Log]`** (mở drawer Ring Buffer); nút **`[⏹ Dừng]`** (SIGTERM); nút **`[💀 Force Kill]`** (SIGKILL).
+* **Main Area: Chế độ Split View Terminal Mode (Dual-Pane Multi-Tab PTY):**
+  * **Kiến trúc Khung Đôi & Quản Lý State (Dual-Pane Architecture):**
+    * Trạng thái bố cục: `splitMode: boolean` (mặc định `false` = Single View; `true` = Split View).
+    * Hướng chia đôi: `splitDirection: 'horizontal' | 'vertical'` (`horizontal` = Cột Dọc Trái - Phải; `vertical` = Hàng Ngang Trên - Dưới).
+    * Tỉ lệ chia đôi: `splitRatio: number` (tính theo phần trăm %, giá trị từ 20 đến 80, mặc định 50 ứng với 50:50).
+    * Quản lý Tab độc lập theo 2 Pane:
+      * **Khung A (Pane 1 / Primary):** `paneA.tabs: OpenTabItem[]`, `paneA.activeTabId: string`.
+      * **Khung B (Pane 2 / Secondary):** `paneB.tabs: OpenTabItem[]`, `paneB.activeTabId: string`.
+    * Nhận diện Khung đang Focus: `focusedPaneId: 'paneA' | 'paneB'`. Bất kỳ thao tác gõ phím hoặc phím tắt ngữ cảnh sẽ hướng tới tab active của khung đang focus.
+  * **Thanh Công Cụ Điều Khiển Split (Split View Control Toolbar):**
+    * Bố trí trên thanh công cụ góc trên bên phải của Workspace:
+      * **Nút `[◻ Single View]`:** Thu gọn giao diện về 1 khung duy nhất. Toàn bộ các tab đang mở tại Pane B được tự động gộp nối tiếp vào cuối danh sách tab của Pane A mà không gián đoạn bất kỳ tiến trình nào.
+      * **Nút `[◫ Split Dọc / Split Right]`:** Kích hoạt chế độ chia đôi theo cột dọc (Side-by-side: Khung Trái | Khung Phải). Nếu Pane B chưa có tab, tab hiện tại hoặc tab kế tiếp sẽ được chuyển sang Pane B.
+      * **Nút `[⬒ Split Ngang / Split Down]`:** Kích hoạt chế độ chia đôi theo hàng ngang (Stacked: Khung Trên / Khung Dưới).
+      * **Nút `[⇄ Hoán Đổi / Swap Panes]`:** Hoán đổi toàn bộ danh sách tab và vị trí hiển thị giữa Pane A và Pane B trong 1 click.
+  * **Thanh Phân Cách Điều Chỉnh Kích Thước (Interactive Resizable Sash / Splitter):**
+    * Vị trí nằm chính giữa 2 Pane.
+    * Kích thước: Độ rộng 5px (chia dọc) hoặc độ cao 5px (chia ngang).
+    * Màu sắc: Mặc định `--border-subtle` (#242a3e); khi hover chuột hoặc đang kéo rê (dragging) chuyển sang màu chủ đạo **`--primary: #744791`** kèm hiệu ứng bóng đổ phát sáng nhẹ (`--primary-glow`).
+    * Con trỏ chuột: Tự động chuyển thành `col-resize` (khi chia dọc) hoặc `row-resize` (khi chia ngang).
+    * Cơ chế Kéo thả (Drag to Resize): Người dùng nhấn giữ chuột trái và kéo thanh Sash để thay đổi `splitRatio` realtime.
+    * Ràng buộc kích thước an toàn: Giới hạn tối thiểu **min-width: 220px** và **min-height: 150px** cho mỗi Pane, ngăn chặn xterm.js bị co rúm gây lỗi hiển thị ký tự dòng lệnh.
+    * **Tương tác Nháy đúp (Double-Click to Reset):** Nháy đúp chuột vào thanh Splitter Sash sẽ ngay lập tức khôi phục tỉ lệ chia về trạng thái cân bằng chuẩn **50:50**.
+  * **Chỉ Báo Khung Đang Focus (Active Pane Focus Indicator):**
+    * Pane đang nhận focus (đang gõ lệnh hoặc vừa click vào) được viền nhẹ bằng màu `--border-focus: #744791` (opacity 0.6) hoặc Tab Active Bar sáng rõ.
+    * Click chuột vào bất kỳ khu vực nào trong viewport hoặc thanh tab của một Pane sẽ chuyển `focusedPaneId` về Pane đó.
+  * **Dual Tab Strip Headers (Thanh Thẻ Tab Độc Lập Mỗi Khung):**
+    * Mỗi Pane sở hữu một thanh Tab Strip riêng biệt nằm phía trên terminal viewport của nó.
+    * Danh sách tab hiển thị độc lập: Pane A chỉ hiển thị tab của Pane A, Pane B chỉ hiển thị tab của Pane B.
+    * Mỗi Tab Strip có đầy đủ:
+      * Dot màu trạng thái tiến trình (Xanh = Running, Xám = Stopped, Đỏ = Crashed).
+      * Tên tab (hỗ trợ nháy đúp đổi tên đối với terminal thủ công MOD-14).
+      * Badge PID chẩn đoán.
+      * Nút đóng tab `[x]`: Chỉ ẩn tab khỏi Pane hiện tại, không ngắt tiến trình ngầm.
+      * Nút `[+]`: Mở terminal mới trực tiếp vào Pane đó.
+      * Hỗ trợ lăn chuột ngang (`wheel scroll`) và animation trượt tab.
+  * **Cơ Chế Kéo Thả Tab Giữa 2 Khung (Cross-Pane Tab Drag & Drop):**
+    * Người dùng có thể nhấn giữ chuột trái và kéo bất kỳ tab nào từ Tab Strip của Pane A thả sang Tab Strip của Pane B (hoặc ngược lại).
+    * Khi con trỏ chuột di chuyển vào vùng Tab Strip hoặc khung terminal của Pane đối diện, giao diện hiển thị vạch chèn (drop indicator / placeholder) rõ ràng.
+    * Thả chuột sẽ di chuyển đối tượng `OpenTabItem` từ mảng của Pane nguồn sang mảng của Pane đích, tự động focus vào tab vừa chuyển.
+  * **Menu Ngữ Cảnh Trên Tab (Tab Context Menu for Splitting):**
+    * Nhấp chuột phải (`contextmenu`) vào bất kỳ tab nào trên Tab Strip sẽ mở menu thao tác nhanh:
+      * **`◫ Chia sang bên phải (Split to Right)`:** Đưa tab hiện tại sang Pane B và bật chế độ chia dọc.
+      * **`⬒ Chia xuống dưới (Split Down)`:** Đưa tab hiện tại sang Pane B và bật chế độ chia ngang.
+      * **`⇄ Chuyển sang khung bên (Move to Other Pane)`:** Chuyển tab sang Pane đối diện (chỉ khả dụng khi đang ở Split View).
+      * **`🗖 Phóng to toàn màn hình (Maximize Pane)`:** Tạm thời ẩn Pane còn lại để tập trung vào Pane hiện tại.
+      * **`[x] Ẩn tab này (Hide Tab)`:** Ẩn tab (tiến trình vẫn chạy ngầm).
+      * **`⏹ Dừng tiến trình (Stop Process)`:** Gửi SIGTERM tới tiến trình của tab.
+  * **Quy Tắc Tự Động Thu Gọn (Auto-Collapse on Empty Pane):**
+    * Khi người dùng đóng/ẩn tất cả các tab trong Pane B: Hệ thống tự động thu gọn về Single View Mode, Pane A tự động mở rộng 100% diện tích mà không để lại khoảng trống thừa.
+    * Nếu Pane A bị đóng hết tab trong khi Pane B vẫn còn tab: Pane B tự động chuyển đổi thành Primary Pane (Pane A mới) và mở rộng 100% diện tích.
+  * **Cơ Chế Đồng Bộ Kernel PTY & FitAddon Độc Lập:**
+    * Mỗi `XtermPane` trong từng Pane sở hữu một instance `ResizeObserver` độc lập gắn với container DOM của nó.
+    * Khi người dùng kéo thanh Splitter Sash, chuyển đổi chế độ chia đôi, hoặc thay đổi kích thước cửa sổ app:
+      * Cả hai instance xterm.js gọi `fitAddon.fit()` độc lập dựa trên kích thước pixel thực tế (width & height) của từng Pane.
+      * Tính toán lại chính xác số lượng cột (`cols`) và số dòng (`rows`) của từng terminal.
+      * Kích hoạt debounce (50ms) và gọi lệnh IPC `pty_resize({ commandId, cols, rows })` tới backend Rust để cập nhật kernel PTY tương ứng.
+      * Đảm bảo các chương trình tương tác CLI (như `htop`, `vim`, `nano`, các bảng log kẻ khung) tự động vẽ lại vừa khít với kích thước của từng Pane mà không bị vỡ chữ hay lệch hàng.
 
 #### 4. Các Trạng thái Giao diện (UI States)
+* **Single View State:** Chế độ 1 khung mặc định. Toàn bộ các tab nằm chung trên một Tab Strip duy nhất chiếm 100% chiều rộng.
+* **Split Horizontal State (Left | Right):** Chia đôi theo chiều dọc. Hai khung Pane A và Pane B hiển thị song song trái-phải, ngăn cách bởi thanh Sash dọc.
+* **Split Vertical State (Top / Bottom):** Chia đôi theo chiều ngang. Hai khung hiển thị trên-dưới, ngăn cách bởi thanh Sash ngang.
+* **Sash Dragging State:** Trạng thái người dùng đang nhấn giữ chuột kéo thanh phân cách. Cả 2 viewport terminal hiển thị lớp phủ trong suốt (transparent pointer-events guard) để việc kéo chuột không bị chặn bởi iframe hoặc canvas xterm, con trỏ giữ nguyên dạng `col-resize` hoặc `row-resize`.
+* **Cross-Pane Dragging State:** Trạng thái đang kéo một tab bay qua ranh giới giữa 2 khung. Tab Strip của khung đích hiển thị vạch placeholder đánh dấu vị trí sẽ chèn vào.
 * **Empty State:** Chưa có nhóm hoặc lệnh nào chạy: Hiển thị minh họa đồ họa, thông điệp *"Không có phiên chạy nào đang mở. Chọn một nhóm lệnh từ danh sách bên trái hoặc nhấn Play để bắt đầu"*.
 * **Reattaching State:** Khi người dùng mở lại một tab đã bị đóng trước đó: Hiển thị spinner nhẹ *"Đang kết nối lại PTY & xả dữ liệu từ bộ nhớ đệm..."* trước khi xterm render lại nội dung.
 * **Process Exit State:** Khi tiến trình kết thúc (dù thành công hay thất bại), xterm vẫn giữ nguyên nội dung kèm một thông báo thanh mảnh ở góc trên terminal: `[Process exited with code 0 - Press Enter or Click Restart to rerun]`.
@@ -754,6 +847,11 @@ Bảng ma trận hành vi giữa tương tác giao diện và tiến trình th�
 | **Bấm nút [Play] Nhóm** | Tạo mới panel tab qua `dockview.api.addPanel()` | Fork process, gắn PTY, khởi tạo Ring Buffer | Bắt đầu nhận byte stream | Tự động focus vào tab đầu tiên của nhóm. |
 | **Chuyển qua lại giữa các tab** | Tab cũ ẩn (hidden), tab mới active | Các tiến trình vẫn chạy độc lập bình thường | Buffer vẫn tiếp tục thu thập dữ liệu ngầm | Kích hoạt `fitAddon.fit()` để căn lại cols/rows của tab đang active. |
 | **Nháy đúp vào tên tab thủ công** | Giữ nguyên viewport tab, mở Modal MOD-14 đổi tên | Tiến trình PTY vẫn chạy bình thường | Ring buffer tiếp tục nhận dữ liệu ngầm | Sau khi Lưu, tên tab đổi ngay trên Tab Strip; không ảnh hưởng PID hay lifecycle. |
+| **Bấm [◫ Split Dọc] / [⬒ Split Ngang]** | Chuyển layout sang Dual-Pane; chia mảng tabs thành Pane A và Pane B | Giữ nguyên tiến trình; FitAddon trên cả 2 pane tự tính lại cols/rows | Không xáo trộn buffer; tiếp tục nhận stream bình thường | Gửi debounce IPC `pty_resize` cho cả 2 terminal đang active ở 2 pane. |
+| **Kéo thanh Resizable Sash** | Cập nhật `splitRatio` realtime (20%–80%); hiển thị pointer overlay | Không can thiệp tiến trình backend | Buffer in-memory tiếp tục lưu bình thường | Khi nhả chuột: FitAddon resize lại cols/rows và gửi IPC `pty_resize`. |
+| **Kéo thả Tab sang Pane đối diện** | Di chuyển đối tượng `OpenTabItem` sang mảng tab của Pane đích | Tiến trình PTY vẫn tiếp tục chạy không ngắt quãng | Không mất mát buffer log | Pane nguồn focus tab kế tiếp; Pane đích focus tab vừa nhận. |
+| **Đóng tab cuối cùng của Pane B** | Tự động thu gọn (auto-collapse) về Single View; Pane A mở rộng 100% | Tiến trình của tab vừa đóng chuyển sang ngầm | Buffer vẫn tiếp tục lưu in-memory | Không để lại pane rỗng; FitAddon của Pane A tự bung đầy màn hình. |
+| **Bấm nút [◻ Single View]** | Toàn bộ tab của Pane B gộp nối tiếp vào cuối Tab Strip của Pane A | Mọi tiến trình PTY vẫn tiếp tục chạy bình thường | Không làm mất dữ liệu log | Giao diện thu về 1 pane đơn giản; tab active của Pane A được focus. |
 | **Bấm [x] Đóng thẻ Tab** | Panel tab bị destroy / unmount khỏi DOM | **TIẾN TRÌNH VẪN TIẾP TỤC CHẠY** | **BUFFER VẪN TIẾP TỤC LƯU** | Hiển thị thông báo Toast nhẹ: *"Đã ẩn tab. Lệnh vẫn chạy ngầm"*. |
 | **Mở lại lệnh từ Sidebar** | Tạo lại panel tab dockview mới | Tiến trình đang chạy được gắn lại (Reattach) | **Xả ngược (flush) 1-2MB gần nhất** lên xterm | Người dùng xem lại được toàn bộ ngữ cảnh output gần nhất. |
 | **Bấm nút [Stop Process] đỏ** | Tab giữ nguyên, hiển thị badge "Stopped" | Gửi SIGTERM / CTRL_C_EVENT; sau 5s gửi SIGKILL | Ngừng nhận stream; giữ nguyên log đã xả | Cập nhật `run_event.ended_at` và `exit_code` vào SQLite. |
@@ -882,6 +980,12 @@ Hệ màu tối ưu cho Dark Theme với phong cách kỹ thuật cao cấp:
 | :--- | :--- | :--- |
 | `Ctrl + K` / `Cmd + K` | Mở Command Palette tìm kiếm nhanh lệnh / nhóm / template | Toàn bộ ứng dụng |
 | `Ctrl + 1` .. `Ctrl + 6` | Chuyển nhanh giữa 6 màn hình chính (`/workspace`, `/commands`, `/templates`, `/groups`, `/history`, `/settings`) | Toàn bộ ứng dụng |
+| `Ctrl + \` / `Cmd + \` | Bật / Tắt nhanh Split View (Split Right) | Màn hình Workspace (SCR-01) |
+| `Ctrl + Shift + \` | Đổi hướng chia đôi Dọc ⇄ Ngang (Toggle Horizontal / Vertical Split) | Màn hình Workspace (SCR-01) |
+| `Ctrl + Alt + Left / Right` | Chuyển focus giữa Khung Trái (Pane A) và Khung Phải (Pane B) | Màn hình Workspace (SCR-01) |
+| `Ctrl + Alt + Up / Down` | Chuyển focus giữa Khung Trên (Pane A) và Khung Dưới (Pane B) | Màn hình Workspace (SCR-01) |
+| `Ctrl + Alt + M` | Chuyển tab đang active sang Pane đối diện (Move to Opposite Pane) | Màn hình Workspace (SCR-01) |
+| `Ctrl + Alt + R` | Đặt lại tỉ lệ chia đôi về trạng thái cân bằng chuẩn 50:50 | Màn hình Workspace (SCR-01) |
 | `Ctrl + W` | Ẩn tab Terminal hiện tại (không dừng process) | Màn hình Workspace |
 | `Ctrl + Shift + W` | Dừng tiến trình hiện tại và đóng tab | Màn hình Workspace |
 | `Ctrl + Shift + C` | Sao chép vùng chọn trong xterm.js | Tab Terminal |
@@ -901,6 +1005,7 @@ Hệ màu tối ưu cho Dark Theme với phong cách kỹ thuật cao cấp:
 - [x] Thể hiện quản lý `execution_order` bằng danh sách có thể sắp xếp trực quan.
 - [x] Đặc tả giao diện SOẠN và CHẠY Command Template (SCR-06, MOD-10, MOD-11) với Form động, xem trước live preview, preset và bảo vệ tham số Secret.
 - [x] Thiết kế tương tác nháy đúp đổi tên tab terminal thủ công (MOD-14: Rename Manual Terminal Modal) cho phép tùy biến nhãn tab trong phiên làm việc mà không ảnh hưởng tiến trình PTY ngầm.
+- [x] Đặc tả hoàn chỉnh **Chế độ Split View Terminal Mode trong SCR-01 (chia đôi màn hình n tab PTY)**: hỗ trợ chia dọc (Left-Right) và chia ngang (Top-Bottom), thanh phân cách điều chỉnh kích thước Resizable Sash với giới hạn an toàn min-width/height, Dual Tab Strips độc lập, kéo thả tab liên khung (Cross-Pane Drag & Drop), tự động thu gọn (Auto-Collapse on Empty) và cơ chế ResizeObserver + debounce IPC `pty_resize` độc lập cho từng terminal.
 - [x] Mô hình hóa quy trình Sao lưu (VACUUM INTO) và Khôi phục 7 bước kèm Rollback an toàn.
 - [x] Thiết kế cảnh báo an toàn cho vùng tin cậy (Trusted Zone) và kiểm soát quyền đặc quyền.
 - [x] Tích hợp chuẩn thiết kế xterm.js và Dockview cho trải nghiệm PTY chân thực.
