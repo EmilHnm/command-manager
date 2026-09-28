@@ -17,7 +17,7 @@
             <div class="modal-subtitle">{{ subtitle }}</div>
           </div>
         </div>
-        <button class="close-btn" title="Hủy bỏ (Esc)" @click="handleCancel">
+        <button class="close-btn" :disabled="loading" title="Hủy bỏ (Esc)" @click="handleCancel">
           <X :size="16" />
         </button>
       </div>
@@ -134,17 +134,18 @@
         </div>
 
         <div class="action-buttons">
-          <button type="button" class="btn-ghost" @click="handleCancel">
+          <button type="button" class="btn-ghost" :disabled="loading" @click="handleCancel">
             {{ cancelText }}
           </button>
           <button
             type="button"
             class="btn-primary"
-            :disabled="!isValid"
+            :disabled="!isValid || loading"
             @click="handleConfirm"
           >
-            <Save :size="14" />
-            <span>{{ confirmText }}</span>
+            <LoaderCircle v-if="loading" :size="14" class="spin" />
+            <Save v-else :size="14" />
+            <span>{{ loading ? loadingText : confirmText }}</span>
           </button>
         </div>
       </div>
@@ -166,6 +167,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Save,
+  LoaderCircle,
 } from 'lucide-vue-next';
 
 const props = withDefaults(
@@ -180,10 +182,12 @@ const props = withDefaults(
     commandPreview?: string;
     commandBadge?: string;
     confirmText?: string;
+    loadingText?: string;
     cancelText?: string;
     maxLength?: number;
     presets?: string[];
     icon?: 'edit' | 'bookmark' | 'terminal';
+    loading?: boolean;
   }>(),
   {
     title: 'Lưu Dữ Liệu',
@@ -195,10 +199,12 @@ const props = withDefaults(
     commandPreview: '',
     commandBadge: '',
     confirmText: 'Lưu Lại',
+    loadingText: 'Đang lưu...',
     cancelText: 'Hủy Bỏ',
     maxLength: 64,
     presets: () => [],
     icon: 'edit',
+    loading: false,
   }
 );
 
@@ -239,7 +245,7 @@ watch(
 );
 
 const handleGlobalKeydown = (event: KeyboardEvent) => {
-  if (!props.visible) return;
+  if (!props.visible || props.loading) return;
   if (event.key === 'Escape') {
     handleCancel();
   }
@@ -283,12 +289,14 @@ const handleCopyPreview = async () => {
 };
 
 const handleConfirm = () => {
+  if (props.loading) return;
   touched.value = true;
   if (!isValid.value) return;
   emit('confirm', inputValue.value.trim());
 };
 
 const handleCancel = () => {
+  if (props.loading) return;
   emit('cancel');
 };
 </script>
@@ -715,9 +723,21 @@ const handleCancel = () => {
   background-color: var(--primary-active);
 }
 
-.btn-primary:disabled {
+.btn-ghost:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  box-shadow: none;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

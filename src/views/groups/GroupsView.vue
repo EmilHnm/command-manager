@@ -258,7 +258,9 @@
       title="Xóa Nhóm Lệnh"
       :message="`Bạn có chắc chắn muốn xóa nhóm '${deletingGroup?.group_name}'? Các câu lệnh đơn lẻ vẫn được giữ lại trong Thư Viện.`"
       confirm-text="Xóa Nhóm"
+      loading-text="Đang Xóa..."
       :danger="true"
+      :loading="isDeletingGroup"
       @confirm="confirmDeleteGroup"
       @cancel="showDeleteDialog = false"
     />
@@ -416,11 +418,18 @@ const requestDelete = (group: CommandGroupWithCommands) => {
   showDeleteDialog.value = true;
 };
 
+const isDeletingGroup = ref(false);
+
 const confirmDeleteGroup = async () => {
   if (deletingGroup.value) {
-    await deleteGroup(deletingGroup.value.id);
-    showDeleteDialog.value = false;
-    deletingGroup.value = null;
+    isDeletingGroup.value = true;
+    try {
+      await deleteGroup(deletingGroup.value.id);
+      showDeleteDialog.value = false;
+      deletingGroup.value = null;
+    } finally {
+      isDeletingGroup.value = false;
+    }
   }
 };
 </script>

@@ -64,18 +64,19 @@
           <span>Enter: Xác nhận</span>
         </div>
         <div class="footer-actions">
-          <button class="btn-ghost" @click="$emit('cancel')">
+          <button class="btn-ghost" :disabled="loading" @click="!loading && $emit('cancel')">
             Hủy Bỏ (Esc)
           </button>
           <button
             class="btn-action"
             :class="danger ? 'btn-danger' : 'btn-primary'"
-            :disabled="requireCheckbox && !confirmedCommitment"
+            :disabled="(requireCheckbox && !confirmedCommitment) || loading"
             @click="handleConfirm"
           >
-            <Trash2 v-if="danger" :size="15" />
+            <LoaderCircle v-if="loading" :size="15" class="spin" />
+            <Trash2 v-else-if="danger" :size="15" />
             <Check v-else :size="15" />
-            <span>{{ confirmText }}</span>
+            <span>{{ loading ? loadingText : confirmText }}</span>
           </button>
         </div>
       </div>
@@ -85,7 +86,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue';
-import { ShieldAlert, AlertTriangle, AlertOctagon, Lock, X, Trash2, Check } from 'lucide-vue-next';
+import { ShieldAlert, AlertTriangle, AlertOctagon, Lock, X, Trash2, Check, LoaderCircle } from 'lucide-vue-next';
 
 const props = withDefaults(
   defineProps<{
@@ -94,7 +95,9 @@ const props = withDefaults(
     subtitle?: string;
     message: string;
     confirmText?: string;
+    loadingText?: string;
     danger?: boolean;
+    loading?: boolean;
     privilegedNotice?: boolean;
     requireCheckbox?: boolean;
   }>(),
@@ -102,7 +105,9 @@ const props = withDefaults(
     title: 'Xác Nhận Thao Tác',
     subtitle: 'MOD-13 • Security Authorization Gate',
     confirmText: 'Xác Nhận',
+    loadingText: 'Đang xử lý...',
     danger: false,
+    loading: false,
     privilegedNotice: false,
     requireCheckbox: false,
   }
@@ -125,12 +130,13 @@ watch(
 );
 
 const handleConfirm = () => {
+  if (props.loading) return;
   if (props.requireCheckbox && !confirmedCommitment.value) return;
   emit('confirm');
 };
 
 const handleGlobalKeydown = (event: KeyboardEvent) => {
-  if (!props.visible) return;
+  if (!props.visible || props.loading) return;
   if (event.key === 'Escape') {
     emit('cancel');
   } else if (event.key === 'Enter') {
@@ -402,7 +408,31 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.btn-ghost:hover {
+.btn-ghost:hover:not(:disabled) {
   color: var(--text-primary);
+}
+
+.btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

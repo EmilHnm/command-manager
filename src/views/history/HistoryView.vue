@@ -290,7 +290,9 @@
       subtitle="MOD-13 • Execution History Purge"
       message="Bạn có chắc chắn muốn xóa toàn bộ lịch sử lệnh đã chạy? Toàn bộ danh mục lệnh đã lưu trong nhật ký sẽ bị xóa sạch khỏi cơ sở dữ liệu SQLite."
       confirm-text="Xóa Toàn Bộ Lịch Sử"
+      loading-text="Đang Xóa Toàn Bộ..."
       :danger="true"
+      :loading="isClearingHistory"
       @confirm="confirmClearHistory"
       @cancel="showClearHistoryConfirm = false"
     />
@@ -302,7 +304,9 @@
       subtitle="MOD-13 • Record Removal Gate"
       message="Bạn có chắc chắn muốn xóa dòng lịch sử lệnh này?"
       confirm-text="Xóa Dòng"
+      loading-text="Đang Xóa..."
       :danger="true"
+      :loading="isDeletingHistory"
       @confirm="confirmDeleteSingleHistory"
       @cancel="showSingleDeleteConfirm = false"
     />
@@ -319,6 +323,7 @@
       :default-value="promptConfig.defaultValue"
       :presets="promptConfig.presets"
       :icon="promptConfig.icon"
+      :loading="isSavingPrompt"
       @confirm="handlePromptConfirm"
       @cancel="showPromptModal = false"
     />
@@ -441,17 +446,21 @@ const promptDeleteHistory = (id: string) => {
   showSingleDeleteConfirm.value = true;
 };
 
+const isDeletingHistory = ref(false);
+
 const confirmDeleteSingleHistory = async () => {
   if (!deletingHistoryId.value) return;
+  isDeletingHistory.value = true;
   try {
     await ipcClient.deleteCommandHistory(deletingHistoryId.value);
     await loadCommandHistory();
     showToast('Đã xóa dòng lịch sử lệnh.', 'success');
+    showSingleDeleteConfirm.value = false;
+    deletingHistoryId.value = null;
   } catch (error) {
     showToast(error instanceof Error ? error.message : String(error), 'error');
   } finally {
-    showSingleDeleteConfirm.value = false;
-    deletingHistoryId.value = null;
+    isDeletingHistory.value = false;
   }
 };
 
@@ -489,10 +498,12 @@ const saveAsTemplate = (item: CommandHistory) => {
   showPromptModal.value = true;
 };
 
+const isSavingPrompt = ref(false);
+
 const handlePromptConfirm = async (name: string) => {
   const item = promptConfig.value.item;
   if (!item || !name.trim()) return;
-  showPromptModal.value = false;
+  isSavingPrompt.value = true;
 
   try {
     if (promptConfig.value.type === 'command') {
@@ -513,8 +524,11 @@ const handlePromptConfirm = async (name: string) => {
       });
       showToast(`Đã lưu Mẫu Lệnh "${name.trim()}" thành công.`, 'success');
     }
+    showPromptModal.value = false;
   } catch (error) {
     showToast(error instanceof Error ? error.message : String(error), 'error');
+  } finally {
+    isSavingPrompt.value = false;
   }
 };
 
@@ -522,14 +536,19 @@ const clearCommandHistory = () => {
   showClearHistoryConfirm.value = true;
 };
 
+const isClearingHistory = ref(false);
+
 const confirmClearHistory = async () => {
-  showClearHistoryConfirm.value = false;
+  isClearingHistory.value = true;
   try {
     await ipcClient.clearCommandHistory();
     commandHistories.value = [];
+    showClearHistoryConfirm.value = false;
     showToast('Đã xóa toàn bộ lịch sử lệnh.', 'success');
   } catch (error) {
     showToast(error instanceof Error ? error.message : String(error), 'error');
+  } finally {
+    isClearingHistory.value = false;
   }
 };
 

@@ -34,6 +34,7 @@
     <CloseConfirmModal
       :visible="showCloseConfirm"
       :active-processes="activeProcesses"
+      :loading="isShuttingDown"
       @confirm="confirmClose"
       @cancel="cancelClose"
       @hide-tray="handleHideToTray"

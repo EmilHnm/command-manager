@@ -34,11 +34,15 @@ pub fn stop_and_wait(pid: u32, force: bool) -> crate::error::Result<()> {
     }
 
     let graceful_deadline = Instant::now() + Duration::from_secs(if force { 2 } else { 3 });
+    let mut check_interval = Duration::from_millis(10);
     while Instant::now() < graceful_deadline {
         if !platform::is_process_alive(pid) {
             return Ok(());
         }
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(check_interval);
+        if check_interval < Duration::from_millis(50) {
+            check_interval += Duration::from_millis(10);
+        }
     }
 
     if !force {
@@ -49,11 +53,15 @@ pub fn stop_and_wait(pid: u32, force: bool) -> crate::error::Result<()> {
             return Err(error);
         }
         let force_deadline = Instant::now() + Duration::from_secs(2);
+        let mut force_check_interval = Duration::from_millis(10);
         while Instant::now() < force_deadline {
             if !platform::is_process_alive(pid) {
                 return Ok(());
             }
-            std::thread::sleep(Duration::from_millis(50));
+            std::thread::sleep(force_check_interval);
+            if force_check_interval < Duration::from_millis(50) {
+                force_check_interval += Duration::from_millis(10);
+            }
         }
     }
 

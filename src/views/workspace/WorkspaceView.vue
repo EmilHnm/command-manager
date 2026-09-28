@@ -16,6 +16,8 @@
         <GroupTree
           :groups="groups"
           :selected-group-id="selectedGroupId"
+          :stopping-group-id="stoppingGroupId"
+          :running-group-id="runningGroup ? selectedGroupId : null"
           @select-command="handleSelectCommand"
           @select-group="selectedGroupId = $event"
           @run-group="handleRunGroup"
@@ -64,20 +66,23 @@
           <button
             class="btn btn-success btn-sm"
             title="Chạy toàn bộ nhóm đang chọn"
-            :disabled="!selectedGroup"
+            :disabled="!selectedGroup || runningGroup"
             @click="selectedGroup && handleRunGroup(selectedGroup)"
           >
-            <Play :size="12" />
-            <span>Chạy Nhóm</span>
+            <LoaderCircle v-if="runningGroup" :size="12" class="spin" />
+            <Play v-else :size="12" />
+            <span>{{ runningGroup ? 'Đang Khởi Chạy...' : 'Chạy Nhóm' }}</span>
           </button>
           <button
             v-if="runningProcessesCount > 1"
             class="btn btn-danger btn-sm"
             title="Dừng toàn bộ tiến trình đang chạy"
+            :disabled="stoppingAll"
             @click="handleStopAll"
           >
-            <Square :size="11" />
-            <span>Dừng Tất Cả</span>
+            <LoaderCircle v-if="stoppingAll" :size="11" class="spin" />
+            <Square v-else :size="11" />
+            <span>{{ stoppingAll ? 'Đang Dừng...' : 'Dừng Tất Cả' }}</span>
           </button>
         </div>
       </div>
@@ -136,7 +141,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { RefreshCw, Play, Square, Layers, Zap, X } from 'lucide-vue-next';
+import { RefreshCw, Play, Square, Layers, Zap, X, LoaderCircle } from 'lucide-vue-next';
 import GroupTree from '@/components/explorer/GroupTree.vue';
 import DockHost from '@/components/terminal/DockHost.vue';
 import StopProcessModal from '@/components/dialogs/StopProcessModal.vue';
@@ -276,21 +281,47 @@ const handleOpenBgTab = (proc: { commandId: number; commandName: string; runEven
   dockHostRef.value?.openCommandTab(proc.commandId, proc.commandName, proc.runEventId, proc.shellKind);
 };
 
+const runningGroup = ref(false);
+const stoppingAll = ref(false);
+const stoppingGroupId = ref<number | null>(null);
+
 const handleRunGroup = async (group: CommandGroupWithCommands) => {
-  selectedGroupId.value = group.id;
-  await startGroupSession(group.id, group.group_name, group.commands);
-  // Tự động mở tab cho từng lệnh trong nhóm
-  group.commands.forEach(cmd => {
-    dockHostRef.value?.openCommandTab(cmd.id, cmd.name, getProcessInfo(cmd.id)?.runEventId);
-  });
+  if (runningGroup.value) return;
+  runningGroup.value = true;
+  try {
+    selectedGroupId.value = group.id;
+    await startGroupSession(group.id, group.group_name, group.commands);
+    // Tự động mở tab cho từng lệnh trong nhóm
+    group.commands.forEach(cmd => {
+      dockHostRef.value?.openCommandTab(cmd.id, cmd.name, getProcessInfo(cmd.id)?.runEventId);
+    });
+  } finally {
+    runningGroup.value = false;
+  }
 };
 
 const handleStopGroup = async (groupId: number) => {
-  await stopGroupById(groupId);
+  if (stoppingGroupId.value !== null) return;
+  stoppingGroupId.value = groupId;
+  await nextTick();
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  try {
+    await stopGroupById(groupId);
+  } finally {
+    stoppingGroupId.value = null;
+  }
 };
 
 const handleStopAll = async () => {
-  await stopAllProcesses();
+  if (stoppingAll.value) return;
+  stoppingAll.value = true;
+  await nextTick();
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  try {
+    await stopAllProcesses();
+  } finally {
+    stoppingAll.value = false;
+  }
 };
 
 const handleRequestStop = (commandId: number) => {
@@ -319,6 +350,8 @@ const showStopFeedback = (feedback: { type: 'success' | 'error'; message: string
 const confirmStopProcess = async (commandId: number, force: boolean) => {
   dismissStopFeedback();
   stopInProgress.value = true;
+  await nextTick();
+  await new Promise((resolve) => requestAnimationFrame(resolve));
   try {
     await stopCommandProcess(commandId, force);
     showStopFeedback({
@@ -571,5 +604,18 @@ onBeforeUnmount(() => {
 
 .zap-icon {
   color: #f59e0b;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

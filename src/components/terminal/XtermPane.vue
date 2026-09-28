@@ -34,10 +34,12 @@
           v-else
           class="btn btn-primary btn-sm"
           title="Khởi động lại lệnh"
+          :disabled="restarting"
           @click="$emit('restart-process', commandId)"
         >
-          <RotateCw :size="12" />
-          <span>Khởi Động Lại</span>
+          <LoaderCircle v-if="restarting" :size="12" class="spin" />
+          <RotateCw v-else :size="12" />
+          <span>{{ restarting ? 'Đang Khởi Động...' : 'Khởi Động Lại' }}</span>
         </button>
       </div>
     </div>
@@ -74,7 +76,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { RefreshCw, Trash2, Square, RotateCw } from 'lucide-vue-next';
+import { RefreshCw, Trash2, Square, RotateCw, LoaderCircle } from 'lucide-vue-next';
 import { usePtyStream } from '@/composables/usePtyStream';
 import type { ProcessLifecycleStatus } from '@/types/models';
 import type { CommandHistory } from '@/types/models';
@@ -93,11 +95,13 @@ const props = withDefaults(
     ghostTextEnabled?: boolean;
     fontFamily?: string;
     fontSize?: number;
+    restarting?: boolean;
   }>(),
   {
     processStatus: 'idle',
     fontFamily: 'JetBrains Mono',
     fontSize: 13,
+    restarting: false,
   }
 );
 
@@ -907,4 +911,16 @@ const handleReattach = async () => {
 .suggestion-item small { color: var(--text-muted); white-space: nowrap; }
 .suggestion-empty { display: block; padding: 8px; color: var(--text-muted); font-size: 12px; }
 
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
 </style>

@@ -193,10 +193,12 @@
               v-if="paneATabs.length > 0"
               class="pane-strip-btn kill-btn"
               :title="`Dừng toàn bộ ${paneATabs.length} terminal trong ${splitMode === 'single' ? 'Workspace' : 'Khung A'}`"
+              :disabled="killInProgress"
               @click="promptKillPanel('paneA')"
             >
-              <OctagonX :size="12" />
-              <span class="kill-btn-label">Kill Hết</span>
+              <LoaderCircle v-if="killInProgress && killingPaneTarget === 'paneA'" :size="12" class="spin" />
+              <OctagonX v-else :size="12" />
+              <span class="kill-btn-label">{{ killInProgress && killingPaneTarget === 'paneA' ? 'Đang Kill...' : 'Kill Hết' }}</span>
             </button>
           </div>
         </div>
@@ -216,6 +218,7 @@
                 :ghost-text-enabled="ghostTextEnabled"
                 :font-family="terminalFontFamily"
                 :font-size="terminalFontSize"
+                :restarting="restartingCmdId === tab.commandId"
                 @stop-process="handleStopProcess"
                 @restart-process="handleRestartProcess"
               />
@@ -356,10 +359,12 @@
               v-if="paneBTabs.length > 0"
               class="pane-strip-btn kill-btn"
               :title="`Dừng toàn bộ ${paneBTabs.length} terminal trong Khung B`"
+              :disabled="killInProgress"
               @click="promptKillPanel('paneB')"
             >
-              <OctagonX :size="12" />
-              <span class="kill-btn-label">Kill Hết</span>
+              <LoaderCircle v-if="killInProgress && killingPaneTarget === 'paneB'" :size="12" class="spin" />
+              <OctagonX v-else :size="12" />
+              <span class="kill-btn-label">{{ killInProgress && killingPaneTarget === 'paneB' ? 'Đang Kill...' : 'Kill Hết' }}</span>
             </button>
           </div>
         </div>
@@ -379,6 +384,7 @@
                 :ghost-text-enabled="ghostTextEnabled"
                 :font-family="terminalFontFamily"
                 :font-size="terminalFontSize"
+                :restarting="restartingCmdId === tab.commandId"
                 @stop-process="handleStopProcess"
                 @restart-process="handleRestartProcess"
               />
@@ -535,7 +541,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import {
   Square,
   Columns2,
@@ -546,6 +552,7 @@ import {
   X,
   Terminal,
   OctagonX,
+  LoaderCircle,
 } from 'lucide-vue-next';
 import XtermPane from './XtermPane.vue';
 import RenameTerminalModal from '@/components/dialogs/RenameTerminalModal.vue';
@@ -862,6 +869,8 @@ const handleConfirmKillPanel = async (force: boolean) => {
   const tabsToKill = targetPane === 'paneB' ? [...paneBTabs.value] : [...paneATabs.value];
 
   killInProgress.value = true;
+  await nextTick();
+  await new Promise((resolve) => requestAnimationFrame(resolve));
   try {
     // 1. Dừng các tiến trình PTY tương ứng
     await Promise.allSettled(
@@ -1317,11 +1326,16 @@ const handleStopProcess = (commandId: number) => {
   emit('request-stop-process', commandId);
 };
 
+const restartingCmdId = ref<number | null>(null);
+
 const handleRestartProcess = (commandId: number) => {
   void restartProcess(commandId);
 };
 
 const restartProcess = async (commandId: number) => {
+  restartingCmdId.value = commandId;
+  await nextTick();
+  await new Promise((resolve) => requestAnimationFrame(resolve));
   try {
     if (commandId <= 0) {
       await openEmptyTerminal(activePane.value);
@@ -1339,6 +1353,8 @@ const restartProcess = async (commandId: number) => {
     await refreshProcesses();
   } catch (error) {
     console.error('[DockHost] Không thể khởi động lại lệnh:', error);
+  } finally {
+    restartingCmdId.value = null;
   }
 };
 
@@ -2181,5 +2197,18 @@ defineExpose({
   height: 1px;
   background-color: var(--border-subtle);
   margin: 2px 0;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

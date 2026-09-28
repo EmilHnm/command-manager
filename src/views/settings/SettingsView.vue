@@ -10,9 +10,10 @@
       </div>
 
       <div class="header-right">
-        <button class="btn btn-primary btn-sm" @click="handleSaveSettings">
-          <Save :size="13" />
-          <span>Lưu Cài Đặt</span>
+        <button class="btn btn-primary btn-sm" :disabled="isSaving" @click="handleSaveSettings">
+          <LoaderCircle v-if="isSaving" :size="13" class="spin" />
+          <Save v-else :size="13" />
+          <span>{{ isSaving ? 'Đang Lưu...' : 'Lưu Cài Đặt' }}</span>
         </button>
       </div>
     </header>
@@ -98,7 +99,8 @@
 
           <div class="action-row">
             <button class="btn btn-primary" :disabled="isExporting" @click="handleExportBackup">
-              <Download :size="14" />
+              <LoaderCircle v-if="isExporting" :size="14" class="spin" />
+              <Download v-else :size="14" />
               <span>{{ isExporting ? 'Đang tạo snapshot...' : 'Tạo Bản Sao Lưu Ngay (Export SQLite)' }}</span>
             </button>
             <span v-if="exportSuccessPath" class="export-success">
@@ -331,6 +333,7 @@
       :visible="showRestoreModal"
       :file-path="selectedBackupPath"
       :backup-info="restoreInfo || backupInfo"
+      :loading="isRestoringDb"
       @confirm-restore="confirmRestoreDatabase"
       @close="showRestoreModal = false"
     />
@@ -344,7 +347,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue';
-import { Save, Cpu, Terminal, Database, Download, Upload } from 'lucide-vue-next';
+import { Save, Cpu, Terminal, Database, Download, Upload, LoaderCircle } from 'lucide-vue-next';
 import RestoreWizard from '@/components/dialogs/RestoreWizard.vue';
 import { ipcClient } from '@/ipc/client';
 import { APP_ENGINE_TAG } from '@/config/version';
@@ -410,12 +413,19 @@ onMounted(async () => {
   }
 });
 
+const isSaving = ref(false);
+const isRestoringDb = ref(false);
+
 const handleSaveSettings = async () => {
+  if (isSaving.value) return;
+  isSaving.value = true;
   try {
     await ipcClient.saveSettings(settings.value);
     showToast('Đã lưu thành công cài đặt hệ thống.', 'success');
   } catch (error) {
     showToast(error instanceof Error ? error.message : String(error), 'error');
+  } finally {
+    isSaving.value = false;
   }
 };
 
@@ -467,6 +477,7 @@ const confirmRestoreDatabase = async () => {
     showToast('Chưa chọn file backup.', 'error');
     return;
   }
+  isRestoringDb.value = true;
   try {
     const bytes = new Uint8Array(await selectedBackupFile.value.arrayBuffer());
     let binary = '';
@@ -477,6 +488,8 @@ const confirmRestoreDatabase = async () => {
     showToast('Đã khôi phục cơ sở dữ liệu thành công.', 'success');
   } catch (error) {
     showToast(error instanceof Error ? error.message : String(error), 'error');
+  } finally {
+    isRestoringDb.value = false;
   }
 };
 </script>
@@ -902,5 +915,18 @@ const confirmRestoreDatabase = async () => {
 
 .text-danger {
   color: var(--status-failed);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

@@ -1305,36 +1305,56 @@ fn terminal_open_sync(app: AppHandle) -> Result<TerminalInfo> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn session_stop(state: State<AppState>, session_id: String) -> Result<()> {
-    state
-        .db
-        .write(|c| runs::set_session_status(c, &session_id, "stopped"))?;
-    let mut first_error = None;
-    for id in state.processes.ids_for_session(&session_id) {
-        if let Some(live) = state.processes.get(&id) {
-            if let Err(error) = shutdown::stop_and_wait(live.pid, false) {
+pub async fn session_stop(app: AppHandle, session_id: String) -> Result<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        state
+            .db
+            .write(|c| runs::set_session_status(c, &session_id, "stopped"))?;
+        let session_pids: Vec<u32> = state
+            .processes
+            .ids_for_session(&session_id)
+            .into_iter()
+            .filter_map(|id| state.processes.get(&id).map(|live| live.pid))
+            .collect();
+
+        // Signal all processes in the session up front so shutdown happens concurrently
+        for pid in &session_pids {
+            shutdown::stop_pid(*pid);
+        }
+
+        let mut first_error = None;
+        for pid in session_pids {
+            if let Err(error) = shutdown::stop_and_wait(pid, false) {
                 first_error.get_or_insert(error);
             }
         }
-    }
-    if let Some(error) = first_error {
-        return Err(error);
-    }
-    Ok(())
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| Error::msg(format!("session_stop worker failed: {error}")))?
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn process_stop(
-    state: State<AppState>,
+pub async fn process_stop(
+    app: AppHandle,
     run_event_id: String,
     force: Option<bool>,
 ) -> Result<()> {
-    let live = state
-        .processes
-        .get(&run_event_id)
-        .ok_or_else(|| Error::msg("process not running"))?;
-    shutdown::stop_and_wait(live.pid, force.unwrap_or(false))?;
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let live = state
+            .processes
+            .get(&run_event_id)
+            .ok_or_else(|| Error::msg("process not running"))?;
+        shutdown::stop_and_wait(live.pid, force.unwrap_or(false))?;
+        Ok(())
+    })
+    .await
+    .map_err(|error| Error::msg(format!("process_stop worker failed: {error}")))?
 }
 
 #[tauri::command(rename_all = "snake_case")]

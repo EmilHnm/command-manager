@@ -213,6 +213,7 @@
     <CommandEditorModal
       :visible="showEditorModal"
       :command="editingCommand"
+      :loading="isSavingCommand"
       @save="handleSaveCommand"
       @close="showEditorModal = false"
     />
@@ -223,7 +224,9 @@
       title="Xóa Câu Lệnh"
       :message="`Bạn có chắc chắn muốn xóa lệnh '${deletingCommand?.name}'? Các nhóm chứa lệnh này cũng sẽ tự động loại bỏ liên kết.`"
       confirm-text="Xóa Lệnh"
+      loading-text="Đang Xóa..."
       :danger="true"
+      :loading="isDeletingCommand"
       @confirm="confirmDelete"
       @cancel="showDeleteDialog = false"
     />
@@ -338,10 +341,18 @@ const duplicateCommand = async (cmd: CommandDefinition) => {
   if (saved) showToast('Đã nhân bản câu lệnh.', 'success');
 };
 
+const isSavingCommand = ref(false);
+const isDeletingCommand = ref(false);
+
 const handleSaveCommand = async (cmd: Partial<CommandDefinition>) => {
-  if (await saveCommand(cmd)) {
-    showEditorModal.value = false;
-    showToast(cmd.id ? 'Đã cập nhật câu lệnh.' : 'Đã tạo câu lệnh mới.', 'success');
+  isSavingCommand.value = true;
+  try {
+    if (await saveCommand(cmd)) {
+      showEditorModal.value = false;
+      showToast(cmd.id ? 'Đã cập nhật câu lệnh.' : 'Đã tạo câu lệnh mới.', 'success');
+    }
+  } finally {
+    isSavingCommand.value = false;
   }
 };
 
@@ -352,10 +363,15 @@ const requestDelete = (cmd: CommandDefinition) => {
 
 const confirmDelete = async () => {
   if (deletingCommand.value) {
-    if (await deleteCommand(deletingCommand.value.id)) {
-      showDeleteDialog.value = false;
-      deletingCommand.value = null;
-      showToast('Đã xóa câu lệnh.', 'success');
+    isDeletingCommand.value = true;
+    try {
+      if (await deleteCommand(deletingCommand.value.id)) {
+        showDeleteDialog.value = false;
+        deletingCommand.value = null;
+        showToast('Đã xóa câu lệnh.', 'success');
+      }
+    } finally {
+      isDeletingCommand.value = false;
     }
   }
 };

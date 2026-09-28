@@ -33,18 +33,22 @@
         <button
           class="btn btn-success btn-sm target-btn"
           title="Chạy toàn bộ nhóm"
+          :disabled="runningGroupId === targetGroup.id || stoppingGroupId === targetGroup.id"
           @click="handleRunGroup(targetGroup)"
         >
-          <Play :size="11" />
-          <span>Chạy</span>
+          <LoaderCircle v-if="runningGroupId === targetGroup.id" :size="11" class="spin" />
+          <Play v-else :size="11" />
+          <span>{{ runningGroupId === targetGroup.id ? 'Đang chạy...' : 'Chạy' }}</span>
         </button>
         <button
           class="btn btn-danger btn-sm target-btn"
           title="Dừng toàn bộ nhóm"
+          :disabled="stoppingGroupId === targetGroup.id || runningGroupId === targetGroup.id"
           @click="handleStopGroup(targetGroup.id)"
         >
-          <Square :size="10" />
-          <span>Dừng</span>
+          <LoaderCircle v-if="stoppingGroupId === targetGroup.id" :size="10" class="spin" />
+          <Square v-else :size="10" />
+          <span>{{ stoppingGroupId === targetGroup.id ? 'Đang dừng...' : 'Dừng' }}</span>
         </button>
       </div>
     </div>
@@ -78,16 +82,20 @@
             <button
               class="action-btn play-btn"
               title="Khởi chạy toàn bộ nhóm"
+              :disabled="runningGroupId === group.id || stoppingGroupId === group.id"
               @click="handleRunGroup(group)"
             >
-              <Play :size="12" />
+              <LoaderCircle v-if="runningGroupId === group.id" :size="12" class="spin" />
+              <Play v-else :size="12" />
             </button>
             <button
               class="action-btn stop-btn"
               title="Dừng toàn bộ nhóm"
+              :disabled="stoppingGroupId === group.id || runningGroupId === group.id"
               @click="handleStopGroup(group.id)"
             >
-              <Square :size="11" />
+              <LoaderCircle v-if="stoppingGroupId === group.id" :size="11" class="spin" />
+              <Square v-else :size="11" />
             </button>
           </div>
         </div>
@@ -133,13 +141,15 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
-import { Search, ChevronDown, ChevronRight, Play, Square, Folder } from 'lucide-vue-next';
+import { Search, ChevronDown, ChevronRight, Play, Square, Folder, LoaderCircle } from 'lucide-vue-next';
 import type { CommandGroupWithCommands } from '@/types/models';
 import { useRunSession } from '@/composables/useRunSession';
 
 const props = defineProps<{
   groups: CommandGroupWithCommands[];
   selectedGroupId?: number;
+  stoppingGroupId?: number | null;
+  runningGroupId?: number | null;
 }>();
 
 const emit = defineEmits<{
@@ -535,5 +545,18 @@ const handleStopGroup = (groupId: number) => {
   text-align: center;
   font-size: 11.5px;
   color: var(--text-muted);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

@@ -197,15 +197,16 @@
 
       <!-- Modal Footer -->
       <div class="modal-footer">
-        <button class="btn-ghost" @click="$emit('close')">
+        <button class="btn-ghost" :disabled="loading" @click="!loading && $emit('close')">
           Hủy Bỏ (Esc)
         </button>
         <div class="footer-target-hint">
           Đích đến: Mở tab Terminal PTY mới tại Workspace
         </div>
-        <button class="btn-primary" @click="handleRun">
-          <Play :size="15" />
-          <span>Thực Thi Lệnh (Enter)</span>
+        <button class="btn-primary" :disabled="loading" @click="handleRun">
+          <LoaderCircle v-if="loading" :size="15" class="spin" />
+          <Play v-else :size="15" />
+          <span>{{ loading ? loadingText : 'Thực Thi Lệnh (Enter)' }}</span>
         </button>
       </div>
     </div>
@@ -256,6 +257,7 @@ import {
   Check,
   Copy,
   Play,
+  LoaderCircle,
 } from 'lucide-vue-next';
 import { useTemplates } from '@/composables/useTemplates';
 import { ipcClient, isTauriRuntime } from '@/ipc/client';
@@ -263,10 +265,18 @@ import PromptDialog from '@/components/dialogs/PromptDialog.vue';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import type { CommandTemplate, TemplatePreviewPayload } from '@/types/models';
 
-const props = defineProps<{
-  visible: boolean;
-  templateId: number | null;
-}>();
+const props = withDefaults(
+  defineProps<{
+    visible: boolean;
+    templateId: number | null;
+    loading?: boolean;
+    loadingText?: string;
+  }>(),
+  {
+    loading: false,
+    loadingText: 'Đang Khởi Chạy...',
+  }
+);
 
 const emit = defineEmits<{
   (e: 'close'): void;
@@ -1016,5 +1026,23 @@ const handleRun = () => {
 
 .btn-ghost:hover {
   color: var(--text-primary);
+}
+
+.btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

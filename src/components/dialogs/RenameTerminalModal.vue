@@ -106,17 +106,18 @@
           <span>Esc</span> để hủy • <span>Enter</span> để lưu
         </div>
         <div class="footer-actions">
-          <button type="button" class="btn btn-secondary" @click="$emit('cancel')">
+          <button type="button" class="btn btn-secondary" :disabled="loading" @click="!loading && $emit('cancel')">
             Hủy Bỏ
           </button>
           <button
             type="button"
             class="btn btn-primary"
-            :disabled="!isValid"
+            :disabled="!isValid || loading"
             @click="handleSave"
           >
-            <Check :size="14" />
-            <span>Lưu Tên Mới</span>
+            <LoaderCircle v-if="loading" :size="14" class="spin" />
+            <Check v-else :size="14" />
+            <span>{{ loading ? loadingText : 'Lưu Tên Mới' }}</span>
           </button>
         </div>
       </div>
@@ -126,7 +127,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue';
-import { Terminal, Pencil, X, Check, Sparkles } from 'lucide-vue-next';
+import { Terminal, Pencil, X, Check, Sparkles, LoaderCircle } from 'lucide-vue-next';
 
 const PRESET_NAMES = [
   'Terminal',
@@ -138,13 +139,21 @@ const PRESET_NAMES = [
   'Scratchpad',
 ];
 
-const props = defineProps<{
-  visible: boolean;
-  tabId: string;
-  currentName: string;
-  pid?: number;
-  shellKind?: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    visible: boolean;
+    tabId: string;
+    currentName: string;
+    pid?: number;
+    shellKind?: string;
+    loading?: boolean;
+    loadingText?: string;
+  }>(),
+  {
+    loading: false,
+    loadingText: 'Đang Lưu...',
+  }
+);
 
 const emit = defineEmits<{
   (e: 'save', tabId: string, newName: string): void;
@@ -613,5 +622,18 @@ const handleSave = () => {
 .btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

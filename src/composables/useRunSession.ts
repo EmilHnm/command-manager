@@ -67,13 +67,13 @@ export function useRunSession() {
       const runningList = Array.from(activeProcesses.value.entries()).filter(
         ([, proc]) => proc.status === 'running' && (!sessionId || proc.sessionId === sessionId)
       );
-      for (const [cmdId] of runningList) {
+      await Promise.all(runningList.map(async ([cmdId]) => {
         try {
           await ipcClient.stopProcess(cmdId, false);
         } catch (e) {
           console.warn(`[useRunSession] Failed to stop process #${cmdId}:`, e);
         }
-      }
+      }));
       const next = new Map(activeProcesses.value);
       next.forEach((proc, commandId) => {
         if (!sessionId || proc.sessionId === sessionId) {

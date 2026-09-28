@@ -233,7 +233,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue';
 import {
   Zap,
   Square,
@@ -266,7 +266,7 @@ const emit = defineEmits<{
   (e: 'open-tab', proc: { commandId: number; commandName: string; runEventId?: string; shellKind?: string }): void;
 }>();
 
-const { activeProcesses, stopCommandProcess, stopGroupSession, refreshProcesses } = useRunSession();
+const { activeProcesses, stopCommandProcess, stopAllProcesses, refreshProcesses } = useRunSession();
 
 const peekingCommandId = ref<number | null>(null);
 const peekLogText = ref('');
@@ -364,6 +364,8 @@ const handleOpenTab = (proc: ActiveProcessInfo) => {
 const handleStopProcess = async (commandId: number, force: boolean) => {
   dismissStopFeedback();
   stopInProgress.value = commandId;
+  await nextTick();
+  await new Promise((resolve) => requestAnimationFrame(resolve));
   try {
     await stopCommandProcess(commandId, force);
     showStopFeedback({
@@ -385,8 +387,10 @@ const handleStopProcess = async (commandId: number, force: boolean) => {
 const handleStopAll = async () => {
   dismissStopFeedback();
   stoppingAll.value = true;
+  await nextTick();
+  await new Promise((resolve) => requestAnimationFrame(resolve));
   try {
-    await stopGroupSession();
+    await stopAllProcesses();
     showStopFeedback({
       type: 'success',
       message: 'Đã xác nhận các process đã dừng hoàn toàn.',
