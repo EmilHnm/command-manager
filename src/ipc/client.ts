@@ -10,6 +10,8 @@ import type {
   RunSession,
   RunEvent,
   CommandHistory,
+  OsHistorySource,
+  OsHistoryImportResult,
   RunSessionStatus,
   SystemSettings,
   BackupIntegrityResult,
@@ -388,6 +390,7 @@ const mockTerminalInput = new Map<number, string>();
 const mockPtyDataListeners = new Set<(commandId: number, data: string) => void>();
 const mockHistoryAddedListeners = new Set<() => void>();
 let mockCommandHistories: CommandHistory[] = [];
+const mockOsHistory = ['git status', 'git log --oneline -10', 'pnpm run build', 'cargo test --lib'];
 mockLogBuffers.set(1, '\x1b[35m[vite]\x1b[0m connecting...\n\x1b[32m  ➜  Local:   http://localhost:3000/\x1b[0m\n\x1b[32m  ➜  Network: http://192.168.1.15:3000/\x1b[0m\n\x1b[90m  ➜  press h + enter to show help\x1b[0m\n');
 mockLogBuffers.set(2, '\x1b[32m[Nest]\x1b[0m 2845  - 09/25/2026, 2:20:10 PM     LOG [NestFactory] Starting Nest application...\n\x1b[32m[Nest]\x1b[0m 2845  - 09/25/2026, 2:20:11 PM     LOG [RoutesResolver] AppController {/api}: +4ms\n\x1b[32m[Nest]\x1b[0m 2845  - 09/25/2026, 2:20:11 PM     LOG [NestApplication] Nest application successfully started on port 4000\n');
 mockLogBuffers.set(3, 'Starting postgresql container...\npostgres: Container postgresql running.\nExited with code 0\n');
@@ -623,6 +626,40 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
     case 'history_clear':
       mockCommandHistories = [];
       return true as unknown as T;
+
+    case 'history_os_sources':
+      return [
+        { shell_kinds: ['mock'], path: '~/.zsh_history (mock)', entries: mockOsHistory.length, error: null },
+      ] as unknown as T;
+
+    case 'history_import_os': {
+      if (!mockSettings.historyEnabled) {
+        throw new Error('Ghi lịch sử lệnh đang tắt; bật lại trong Cài đặt trước khi nhập.');
+      }
+      const now = new Date().toISOString();
+      let imported = 0;
+      for (const commandLine of mockOsHistory) {
+        if (mockCommandHistories.some(row => row.command_line === commandLine && row.shell_kind === 'mock')) {
+          imported += 1;
+          continue;
+        }
+        mockCommandHistories.push({
+          id: `mock-os-history:${commandLine}`,
+          command_line: commandLine,
+          shell_kind: 'mock',
+          last_exit_code: null,
+          run_count: 1,
+          first_used_at: now,
+          last_used_at: now,
+          source: 'shell',
+        });
+        imported += 1;
+      }
+      mockHistoryAddedListeners.forEach(listener => listener());
+      return [
+        { shell_kind: 'mock', path: '~/.zsh_history (mock)', imported, skipped: 0 },
+      ] as unknown as T;
+    }
 
     // Backup & Restore
     case 'backup_export': {
@@ -1131,6 +1168,36 @@ export const ipcClient = {
 
   clearCommandHistory: async (): Promise<void> => {
     await invokeTauri<void>('history_clear', { confirmed: true });
+  },
+
+  listOsHistorySources: async (): Promise<OsHistorySource[]> => {
+    const rows = await invokeTauri<Array<{
+      shell_kinds: string[];
+      path: string;
+      entries: number;
+      error: string | null;
+    }>>('history_os_sources');
+    return rows.map(row => ({
+      shellKinds: row.shell_kinds,
+      path: row.path,
+      entries: row.entries,
+      error: row.error ?? undefined,
+    }));
+  },
+
+  importOsHistory: async (): Promise<OsHistoryImportResult[]> => {
+    const rows = await invokeTauri<Array<{
+      shell_kind: string;
+      path: string;
+      imported: number;
+      skipped: number;
+    }>>('history_import_os', { confirmed: true });
+    return rows.map(row => ({
+      shellKind: row.shell_kind,
+      path: row.path,
+      imported: row.imported,
+      skipped: row.skipped,
+    }));
   },
 
   listEvents: async (sessionId?: number): Promise<RunEvent[]> => {

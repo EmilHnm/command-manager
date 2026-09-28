@@ -74,6 +74,11 @@ pub fn record(
         params![command_line, shell_kind],
         |row| row.get(0),
     )?;
+    trim_to_max_entries(conn)?;
+    Ok(stored_id)
+}
+
+fn trim_to_max_entries(conn: &Connection) -> Result<()> {
     let max_entries = settings_value(conn, "history_max_entries")
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(5000)
@@ -87,7 +92,81 @@ pub fn record(
          )",
         [max_entries],
     )?;
-    Ok(stored_id)
+    Ok(())
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ImportCounts {
+    /// Entries that passed the privacy filters and were stored or merged.
+    pub imported: usize,
+    /// Entries rejected by the privacy filters.
+    pub skipped: usize,
+}
+
+/// Merge entries read from the OS shell history. Importing the same file
+/// again leaves counts unchanged: run_count keeps the larger value instead of
+/// adding, and timestamps only widen the existing range.
+pub fn import(
+    conn: &Connection,
+    shell_kind: &str,
+    entries: &[crate::os_history::Entry],
+) -> Result<ImportCounts> {
+    let mut counts = ImportCounts::default();
+    if !history_enabled(conn) {
+        return Err(crate::error::Error::msg(
+            "Ghi lịch sử lệnh đang tắt; bật lại trong Cài đặt trước khi nhập.",
+        ));
+    }
+    let patterns = BlockPatterns::load(conn);
+    conn.execute_batch("BEGIN")?;
+    let result = (|| {
+        let mut stmt = conn.prepare(
+            "INSERT INTO command_history
+             (id, command_line, shell_kind, cwd, last_exit_code, run_count,
+              first_used_at, last_used_at, source)
+             VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5, ?6, 'shell')
+             ON CONFLICT(command_line, shell_kind) DO UPDATE SET
+               run_count = MAX(command_history.run_count, excluded.run_count),
+               first_used_at = CASE
+                 WHEN CAST(excluded.first_used_at AS INTEGER)
+                      < CAST(command_history.first_used_at AS INTEGER)
+                 THEN excluded.first_used_at ELSE command_history.first_used_at END,
+               last_used_at = CASE
+                 WHEN CAST(excluded.last_used_at AS INTEGER)
+                      > CAST(command_history.last_used_at AS INTEGER)
+                 THEN excluded.last_used_at ELSE command_history.last_used_at END",
+        )?;
+        for entry in entries {
+            if !patterns.allows(&entry.command_line) {
+                counts.skipped += 1;
+                continue;
+            }
+            stmt.execute(params![
+                uuid::Uuid::new_v4().to_string(),
+                entry.command_line,
+                shell_kind,
+                entry.run_count,
+                entry.first_used_at.to_string(),
+                entry.last_used_at.to_string(),
+            ])?;
+            counts.imported += 1;
+        }
+        trim_to_max_entries(conn)
+    })();
+    match result {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(counts)
+        }
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
+pub fn history_enabled(conn: &Connection) -> bool {
+    settings_value(conn, "history_enabled").as_deref() != Some("false")
 }
 
 pub fn finish(conn: &Connection, id: &str, exit_code: Option<i32>, at: &str) -> Result<()> {
@@ -111,32 +190,47 @@ fn settings_value(conn: &Connection, key: &str) -> Option<String> {
 }
 
 fn history_allowed(conn: &Connection, command_line: &str) -> Result<bool> {
-    if command_line.is_empty() || command_line.starts_with(' ') {
+    if !history_enabled(conn) {
         return Ok(false);
     }
-    if settings_value(conn, "history_enabled").as_deref() == Some("false") {
-        return Ok(false);
-    }
-    let patterns = settings_value(conn, "history_block_patterns")
-        .unwrap_or_else(|| {
-            "(?:password|passwd|pwd|secret|token|api[_-]?key)\\w*\\s*[=:]\\s*\\S+\n--(?:password|token|secret|api[_-]?key)(?:=|\\s+)\\S+\n\\b(?:mysql|mysqldump|mysqladmin)\\b.*\\s(?-i:-p)(?:\\S+|\\s+\\S+)\nauthorization:\\s*\\S+\n\\bbearer\\s+\\S+\n://[^/\\s:@]+:[^@\\s]+@"
-                .into()
-        });
-    for pattern in patterns.lines().map(str::trim).filter(|p| !p.is_empty()) {
-        let matches = RegexBuilder::new(pattern)
-            .case_insensitive(true)
-            .build()
-            .map(|regex| regex.is_match(command_line))
-            .unwrap_or_else(|_| {
-                command_line
-                    .to_ascii_lowercase()
-                    .contains(&pattern.to_ascii_lowercase())
+    Ok(BlockPatterns::load(conn).allows(command_line))
+}
+
+/// Privacy patterns compiled once, so an import does not rebuild every regex
+/// for each of thousands of lines.
+struct BlockPatterns(Vec<std::result::Result<regex::Regex, String>>);
+
+impl BlockPatterns {
+    fn load(conn: &Connection) -> Self {
+        let patterns = settings_value(conn, "history_block_patterns")
+            .unwrap_or_else(|| {
+                "(?:password|passwd|pwd|secret|token|api[_-]?key)\\w*\\s*[=:]\\s*\\S+\n--(?:password|token|secret|api[_-]?key)(?:=|\\s+)\\S+\n\\b(?:mysql|mysqldump|mysqladmin)\\b.*\\s(?-i:-p)(?:\\S+|\\s+\\S+)\nauthorization:\\s*\\S+\n\\bbearer\\s+\\S+\n://[^/\\s:@]+:[^@\\s]+@"
+                    .into()
             });
-        if matches {
-            return Ok(false);
-        }
+        Self(
+            patterns
+                .lines()
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .map(|pattern| {
+                    RegexBuilder::new(pattern)
+                        .case_insensitive(true)
+                        .build()
+                        .map_err(|_| pattern.to_ascii_lowercase())
+                })
+                .collect(),
+        )
     }
-    Ok(true)
+
+    fn allows(&self, command_line: &str) -> bool {
+        if command_line.is_empty() || command_line.starts_with(' ') {
+            return false;
+        }
+        !self.0.iter().any(|pattern| match pattern {
+            Ok(regex) => regex.is_match(command_line),
+            Err(literal) => command_line.to_ascii_lowercase().contains(literal.as_str()),
+        })
+    }
 }
 
 pub fn delete(conn: &Connection, id: &str) -> Result<()> {
@@ -156,7 +250,8 @@ mod tests {
 
     #[test]
     fn record_upserts_and_finish_updates_latest_exit_code() {
-        let db = Db::open(tempfile::tempdir().unwrap().path().join("history.db")).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("history.db")).unwrap();
         let first = db
             .write(|conn| record(conn, "echo hello", "shell", None, "command", "1"))
             .unwrap();
@@ -173,7 +268,8 @@ mod tests {
 
     #[test]
     fn privacy_filters_and_retention_are_applied_before_persisting() {
-        let db = Db::open(tempfile::tempdir().unwrap().path().join("history.db")).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("history.db")).unwrap();
         db.write(|conn| {
             crate::db::repos::settings::set(conn, "history_max_entries", "2")?;
             assert!(record(conn, " password=secret", "pwsh", None, "typed", "1")?.is_empty());
@@ -208,8 +304,55 @@ mod tests {
     }
 
     #[test]
+    fn os_import_filters_secrets_and_is_idempotent() {
+        use crate::os_history::Entry;
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("history.db")).unwrap();
+        let entry = |line: &str, count, first, last| Entry {
+            command_line: line.into(),
+            run_count: count,
+            first_used_at: first,
+            last_used_at: last,
+        };
+        let entries = [
+            entry("git status", 3, 1_700_000_000, 1_700_000_300),
+            entry(
+                "export GITHUB_TOKEN=ghp_abc",
+                1,
+                1_700_000_100,
+                1_700_000_100,
+            ),
+        ];
+        db.write(|conn| {
+            record(conn, "git status", "zsh", Some("/w"), "shell", "1700000500")?;
+            let first = import(conn, "zsh", &entries)?;
+            assert_eq!(
+                first,
+                ImportCounts {
+                    imported: 1,
+                    skipped: 1
+                }
+            );
+            import(conn, "zsh", &entries)?;
+            Ok(())
+        })
+        .unwrap();
+        let rows = db.read(|conn| list(conn, None, 10)).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].run_count, 3);
+        assert_eq!(rows[0].first_used_at, "1700000000");
+        assert_eq!(rows[0].last_used_at, "1700000500");
+        assert_eq!(rows[0].cwd.as_deref(), Some("/w"));
+
+        db.write(|conn| crate::db::repos::settings::set(conn, "history_enabled", "false"))
+            .unwrap();
+        assert!(db.write(|conn| import(conn, "zsh", &entries)).is_err());
+    }
+
+    #[test]
     fn privacy_defaults_do_not_block_power_shell_parameters_or_ssh_ports() {
-        let db = Db::open(tempfile::tempdir().unwrap().path().join("history.db")).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("history.db")).unwrap();
         db.write(|conn| {
             let cases = [
                 ("mkdir -p src/app", false),

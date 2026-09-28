@@ -78,13 +78,31 @@ pub(super) fn spawn(
                 .join("1")
                 .join(format!("zsh-{}", uuid::Uuid::new_v4().simple()));
             std::fs::create_dir_all(&directory).map_err(|e| Error::msg(e.to_string()))?;
-            let path = directory.join(".zshrc");
+            // zsh reads .zshenv and .zshrc from ZDOTDIR, so pointing it at our
+            // directory would skip the user's ~/.zshenv (often where PATH is
+            // set) and make oh-my-zsh rebuild .zcompdump in every new tab.
+            // Each file switches ZDOTDIR back to the user's while their file
+            // runs, as VS Code's shell integration does.
+            let zshenv = "CM_APP_ZDOTDIR=$ZDOTDIR\n\
+                ZDOTDIR=${CM_USER_ZDOTDIR:-$HOME}\n\
+                if [[ -f $ZDOTDIR/.zshenv ]]; then source $ZDOTDIR/.zshenv; fi\n\
+                CM_USER_ZDOTDIR=$ZDOTDIR\n\
+                ZDOTDIR=$CM_APP_ZDOTDIR\n";
+            std::fs::write(directory.join(".zshenv"), zshenv)
+                .map_err(|e| Error::msg(e.to_string()))?;
             let contents = format!(
-                "if [[ -f $HOME/.zshrc && $HOME/.zshrc != $ZDOTDIR/.zshrc ]]; then source $HOME/.zshrc; fi\n{}\nTRAPEXIT() {{ command rm -rf -- $ZDOTDIR; }}\n",
+                "ZDOTDIR=$CM_USER_ZDOTDIR\n\
+                 if [[ -f $ZDOTDIR/.zshrc ]]; then source $ZDOTDIR/.zshrc; fi\n\
+                 {}\n\
+                 TRAPEXIT() {{ command rm -rf -- $CM_APP_ZDOTDIR; }}\n",
                 include_str!("../zsh.zsh")
             );
-            std::fs::write(&path, contents).map_err(|e| Error::msg(e.to_string()))?;
+            std::fs::write(directory.join(".zshrc"), contents)
+                .map_err(|e| Error::msg(e.to_string()))?;
             command.args(["-i"]);
+            if let Ok(user_zdotdir) = std::env::var("ZDOTDIR") {
+                command.env("CM_USER_ZDOTDIR", user_zdotdir);
+            }
             command.env("ZDOTDIR", &directory);
             command.env("CM_NONCE", &nonce);
         }
@@ -111,6 +129,7 @@ pub(super) fn spawn(
             command.arg("-i");
         }
     }
+    crate::pty::session::set_terminal_env(&mut command);
     let child = slave
         .spawn_command(command)
         .map_err(|e| Error::msg(e.to_string()))?;

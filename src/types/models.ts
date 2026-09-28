@@ -68,6 +68,23 @@ export interface CommandHistory {
   source: 'command' | 'template' | 'shell' | 'typed' | string;
 }
 
+/** A history file of the user's own shell (zsh, bash, PSReadLine). */
+export interface OsHistorySource {
+  shellKinds: string[];
+  path: string;
+  /** Distinct commands found in the file. */
+  entries: number;
+  error?: string;
+}
+
+export interface OsHistoryImportResult {
+  shellKind: string;
+  path: string;
+  imported: number;
+  /** Rejected by the privacy patterns. */
+  skipped: number;
+}
+
 export interface ActiveProcessInfo {
   runEventId?: string;
   commandId: number;

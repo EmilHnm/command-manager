@@ -284,6 +284,7 @@
 
 ### Giai đoạn 6 — Cài đặt và quản lý
 - [x] **SCR-05 — tab Terminal:** đã có bật/tắt ghi lịch sử, `history_max_entries`, danh sách mẫu chặn, chọn shell mặc định, bật/tắt ghost text và xoá lịch sử ở HistoryView.
+- [~] **Nhập lịch sử từ OS:** nút `Nhập từ OS` ở SCR-05 gọi `history_os_sources` (liệt kê file + số lệnh) và `history_import_os` (yêu cầu `confirmed`); parser [os_history.rs](../src-tauri/src/os_history.rs) đọc zsh (EXTENDED_HISTORY, unmetafy UTF-8), bash (`#timestamp`) và PSReadLine (Windows gán cho cả `pwsh` và `powershell`); upsert idempotent, áp dụng mẫu chặn và `history_max_entries`. Ghost text nạp tối đa 10.000 dòng. Có unit test parser/import; chưa QA native.
 - [x] **SCR-05 — Sao lưu:** `VACUUM INTO` và restore staging tự động bao gồm `command_history`; `backup_info.history_count` đọc số bản ghi. Tuỳ chọn loại trừ lịch sử khi export: post-MVP.
 - [x] **SCR-04 — Lịch sử lệnh:** HistoryView có tìm kiếm, lọc source (`typed/shell/command/template`), xoá từng dòng, xoá toàn bộ và lưu dòng lịch sử thành Command hoặc Template.
 

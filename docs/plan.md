@@ -80,7 +80,7 @@ Terminal tương tác của ứng dụng có **hệ thống gợi ý riêng**, h
 
 **Nguyên tắc thiết kế:**
 
-* **Không phụ thuộc shell:** nguồn dữ liệu duy nhất là bảng `command_history` của ứng dụng; không đọc lịch sử của PSReadLine, bash hay zsh, không dùng cơ chế gợi ý/completion của shell. Ứng dụng tự vẽ gợi ý trên xterm.js và tự xử lý phím nhận gợi ý; shell chỉ cung cấp **ranh giới prompt**.
+* **Không phụ thuộc shell:** nguồn dữ liệu duy nhất là bảng `command_history` của ứng dụng; không tự động đọc lịch sử của PSReadLine, bash hay zsh, không dùng cơ chế gợi ý/completion của shell. Người dùng có thể chủ động bấm **Nhập từ OS** ở SCR-05 (tab Terminal) để sao chép một lần `~/.zsh_history`, `~/.bash_history` và file lịch sử PSReadLine vào `command_history` (`source = 'shell'`); file gốc chỉ được đọc, mẫu chặn privacy vẫn áp dụng, nhập lại không làm tăng `run_count`, bỏ qua lệnh nhiều dòng. Ứng dụng tự vẽ gợi ý trên xterm.js và tự xử lý phím nhận gợi ý; shell chỉ cung cấp **ranh giới prompt**.
 * **Không đụng cấu hình người dùng:** script integration chỉ có hiệu lực trong process shell do ứng dụng mở. Gợi ý có sẵn của shell (PSReadLine prediction, zsh-autosuggestions, ble.sh) bị tắt **chỉ trong phiên đó**; không ghi vào `$PROFILE`, `.bashrc`, `.zshrc`.
 * **Shell là nguồn sự thật:** khi người dùng nhận gợi ý, phần còn lại được gửi vào PTY như phím gõ; ứng dụng không tự sửa buffer của shell.
 

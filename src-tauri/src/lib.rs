@@ -3,6 +3,7 @@ pub mod backup;
 pub mod clock;
 pub mod db;
 pub mod error;
+pub mod os_history;
 pub mod process;
 pub mod pty;
 pub mod template;
@@ -150,6 +151,8 @@ mod desktop {
                 ipc::commands::history_list,
                 ipc::commands::history_delete,
                 ipc::commands::history_clear,
+                ipc::commands::history_os_sources,
+                ipc::commands::history_import_os,
                 ipc::commands::history_record_typed,
                 ipc::commands::process_list,
                 ipc::commands::session_start,

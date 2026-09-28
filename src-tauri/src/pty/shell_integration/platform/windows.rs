@@ -50,6 +50,7 @@ pub(super) fn spawn(
             }
             command.args(["-NoExit", "-File", &script_path_string]);
             command.env("CM_NONCE", &nonce);
+            crate::pty::session::set_terminal_env(&mut command);
             if let Ok(child) = slave.spawn_command(command) {
                 let shell_kind = if kind == "Pwsh" {
                     ShellKind::Pwsh
@@ -75,6 +76,7 @@ pub(super) fn spawn(
     let prompt = format!("{esc}]633;A{bel}{esc}]633;P;Cwd=$P{bel}$P$G{esc}]633;B{bel}");
     command.args(["/D", "/Q", "/K"]);
     command.env("PROMPT", prompt);
+    crate::pty::session::set_terminal_env(&mut command);
     let child = slave
         .spawn_command(command)
         .map_err(|e| Error::msg(e.to_string()))?;

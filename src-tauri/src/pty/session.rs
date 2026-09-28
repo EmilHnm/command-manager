@@ -250,12 +250,22 @@ fn prepare_conpty_sideload() {
 #[cfg(not(windows))]
 fn prepare_conpty_sideload() {}
 
+/// Describe the xterm.js front end to the child. An app started from a
+/// desktop launcher has no TERM of its own, and zsh/ZLE without one cannot
+/// clear to end of line, so every keystroke redraw leaves the old text behind.
+/// An inherited TERM (tmux, kitty, ...) would describe the wrong terminal.
+pub(crate) fn set_terminal_env(cmd: &mut CommandBuilder) {
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+}
+
 pub fn spawn_on_slave(
     slave: Box<dyn portable_pty::SlavePty + Send>,
     is_shell: bool,
     execution_string: &str,
 ) -> Result<Box<dyn portable_pty::Child + Send + Sync>> {
-    let cmd = build_command(is_shell, execution_string)?;
+    let mut cmd = build_command(is_shell, execution_string)?;
+    set_terminal_env(&mut cmd);
     slave
         .spawn_command(cmd)
         .map_err(|e| Error::msg(e.to_string()))
@@ -269,7 +279,8 @@ pub fn spawn_shell_on_slave(
     shell_kind: Option<&str>,
     execution_string: &str,
 ) -> Result<Box<dyn portable_pty::Child + Send + Sync>> {
-    let cmd = build_shell_command(shell_kind, execution_string)?;
+    let mut cmd = build_shell_command(shell_kind, execution_string)?;
+    set_terminal_env(&mut cmd);
     match slave.spawn_command(cmd) {
         Ok(child) => Ok(child),
         Err(first_error) if cfg!(windows) && shell_kind == Some("pwsh") => {
@@ -277,6 +288,7 @@ pub fn spawn_shell_on_slave(
             // PATH while CreateProcessW rejects them. Retry with Windows
             // PowerShell so a saved pwsh command remains runnable.
             let mut fallback = build_shell_command(Some("powershell"), execution_string)?;
+            set_terminal_env(&mut fallback);
             fallback.env(
                 "COMMAND_MANAGER_SHELL_FALLBACK_WARNING",
                 "[Command Manager] pwsh không khả dụng; đang chạy bằng Windows PowerShell 5.1. Một số cú pháp pwsh 7 có thể không tương thích.",
@@ -298,7 +310,8 @@ pub fn spawn_argv_on_slave(
     if argv.is_empty() {
         return Err(Error::Argv("empty command".into()));
     }
-    let cmd = CommandBuilder::from_argv(argv.iter().map(Into::into).collect());
+    let mut cmd = CommandBuilder::from_argv(argv.iter().map(Into::into).collect());
+    set_terminal_env(&mut cmd);
     slave
         .spawn_command(cmd)
         .map_err(|e| Error::msg(e.to_string()))
@@ -702,6 +715,41 @@ mod tests {
             std::thread::sleep(Duration::from_millis(25));
         }
         panic!("shell command output was not captured");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn children_see_an_xterm_term_even_when_the_app_has_none() {
+        let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
+        let mut child = spawn_on_slave(
+            slave,
+            true,
+            "printf 'CM_TERM=%s/%s\\n' \"$TERM\" \"$COLORTERM\"",
+        )
+        .expect("spawn shell command");
+        let reader = pty.clone_reader().expect("clone pty reader");
+        let buffer = Arc::clone(&pty.buffer);
+        std::thread::spawn(move || {
+            let (tx, _rx) = tokio::sync::mpsc::channel(8);
+            pump_reader(reader, buffer, "test-term-env".into(), IpcPipe::new(tx));
+        });
+        child.wait().expect("wait for shell command");
+        let expected = b"CM_TERM=xterm-256color/truecolor";
+        for _ in 0..40 {
+            if pty
+                .snapshot()
+                .expect("read pty buffer")
+                .windows(expected.len())
+                .any(|window| window == expected)
+            {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!(
+            "TERM was not set for the child: {:?}",
+            String::from_utf8_lossy(&pty.snapshot().expect("snapshot"))
+        );
     }
 
     #[cfg(not(windows))]

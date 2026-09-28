@@ -13,7 +13,9 @@ export function useSuggestions(onChanged?: () => void) {
   const loadHistory = async () => {
     const generation = ++loadGeneration;
     const [rows, commands, templates] = await Promise.all([
-      ipcClient.listCommandHistory('', 500).catch(() => [] as CommandHistory[]),
+      // Match the backend clamp so imported OS history is not cut off at the
+      // newest few hundred rows.
+      ipcClient.listCommandHistory('', 10_000).catch(() => [] as CommandHistory[]),
       ipcClient.listCommands().catch(() => [] as CommandDefinition[]),
       isTauriRuntime()
         ? ipcClient.listTemplates().catch(() => [] as CommandTemplate[])

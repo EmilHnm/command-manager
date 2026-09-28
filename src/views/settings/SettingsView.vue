@@ -324,6 +324,32 @@
           </div>
           <label class="history-pattern-label" for="history-block-patterns">Mẫu không lưu (mỗi dòng một mẫu)</label>
           <textarea id="history-block-patterns" v-model="settings.historyBlockPatterns" rows="4" class="history-patterns" />
+
+          <div class="setting-row os-history-row">
+            <div class="row-info">
+              <span class="row-label">Nhập lịch sử từ hệ điều hành</span>
+              <span class="row-desc">Đọc lịch sử của shell trên máy (zsh, bash, PowerShell) vào lịch sử của ứng dụng để dùng cho gợi ý. File gốc chỉ được đọc; lệnh khớp mẫu không lưu sẽ bị bỏ qua. Nhập lại nhiều lần không làm trùng.</span>
+              <ul v-if="osHistorySources.length" class="os-history-sources">
+                <li v-for="source in osHistorySources" :key="source.path">
+                  <span class="font-mono">{{ source.path }}</span>
+                  <span class="os-history-meta">
+                    {{ source.shellKinds.join(', ') }} ·
+                    {{ source.error ? `lỗi: ${source.error}` : `${source.entries} lệnh` }}
+                  </span>
+                </li>
+              </ul>
+              <span v-else-if="osHistoryLoaded" class="row-desc">Không tìm thấy file lịch sử shell nào.</span>
+            </div>
+            <button
+              class="btn btn-primary"
+              :disabled="isImportingOsHistory || !osHistorySources.length"
+              @click="showOsHistoryConfirm = true"
+            >
+              <LoaderCircle v-if="isImportingOsHistory" :size="14" class="spin" />
+              <Download v-else :size="14" />
+              <span>Nhập từ OS</span>
+            </button>
+          </div>
         </div>
       </div>
     </main>
@@ -338,6 +364,19 @@
       @close="showRestoreModal = false"
     />
 
+    <ConfirmDialog
+      :visible="showOsHistoryConfirm"
+      title="Nhập Lịch Sử Từ Hệ Điều Hành"
+      subtitle="MOD-13 • Shell History Import"
+      :message="osHistoryConfirmMessage"
+      confirm-text="Nhập Lịch Sử"
+      loading-text="Đang Nhập..."
+      :privileged-notice="true"
+      :loading="isImportingOsHistory"
+      @confirm="confirmImportOsHistory"
+      @cancel="showOsHistoryConfirm = false"
+    />
+
     <div v-if="toastMessage" class="settings-toast" :class="toastType" role="status" aria-live="polite">
       <span>{{ toastMessage }}</span>
       <button class="toast-close" aria-label="Đóng thông báo" @click="dismissToast">×</button>
@@ -346,12 +385,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { Save, Cpu, Terminal, Database, Download, Upload, LoaderCircle } from 'lucide-vue-next';
 import RestoreWizard from '@/components/dialogs/RestoreWizard.vue';
+import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import { ipcClient } from '@/ipc/client';
 import { APP_ENGINE_TAG } from '@/config/version';
-import type { BackupIntegrityResult, SystemSettings } from '@/types/models';
+import type { BackupIntegrityResult, OsHistorySource, SystemSettings } from '@/types/models';
 
 const currentTab = ref<'system' | 'terminal' | 'backup'>('system');
 const isWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
@@ -400,7 +440,50 @@ onBeforeUnmount(() => {
   if (toastTimer) clearTimeout(toastTimer);
 });
 
+const osHistorySources = ref<OsHistorySource[]>([]);
+const osHistoryLoaded = ref(false);
+const showOsHistoryConfirm = ref(false);
+const isImportingOsHistory = ref(false);
+
+const osHistoryConfirmMessage = computed(() => {
+  const total = osHistorySources.value.reduce((sum, source) => sum + source.entries, 0);
+  return `Nhập ${total} lệnh từ ${osHistorySources.value.length} file lịch sử shell vào lịch sử của ứng dụng. `
+    + 'Lệnh khớp mẫu không lưu sẽ bị bỏ qua; nếu vượt giới hạn số mục, các mục cũ nhất sẽ bị loại bỏ.';
+});
+
+const loadOsHistorySources = async () => {
+  try {
+    osHistorySources.value = await ipcClient.listOsHistorySources();
+  } catch (error) {
+    osHistorySources.value = [];
+    showToast(error instanceof Error ? error.message : String(error), 'error');
+  } finally {
+    osHistoryLoaded.value = true;
+  }
+};
+
+const confirmImportOsHistory = async () => {
+  if (isImportingOsHistory.value) return;
+  isImportingOsHistory.value = true;
+  try {
+    const results = await ipcClient.importOsHistory();
+    const imported = results.reduce((sum, row) => sum + row.imported, 0);
+    const skipped = results.reduce((sum, row) => sum + row.skipped, 0);
+    showOsHistoryConfirm.value = false;
+    showToast(
+      `Đã nhập ${imported} lệnh vào lịch sử${skipped ? `, bỏ qua ${skipped} lệnh khớp mẫu không lưu` : ''}.`,
+      'success',
+    );
+  } catch (error) {
+    showOsHistoryConfirm.value = false;
+    showToast(error instanceof Error ? error.message : String(error), 'error');
+  } finally {
+    isImportingOsHistory.value = false;
+  }
+};
+
 onMounted(async () => {
+  void loadOsHistorySources();
   try {
     const [loaded, info] = await Promise.all([
       ipcClient.getSettings(),
@@ -814,6 +897,35 @@ const confirmRestoreDatabase = async () => {
 
 .row-desc {
   font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.os-history-row {
+  margin-top: 12px;
+}
+
+.os-history-row .btn {
+  flex-shrink: 0;
+}
+
+.os-history-sources {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.os-history-sources li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.os-history-meta {
   color: var(--text-muted);
 }
 

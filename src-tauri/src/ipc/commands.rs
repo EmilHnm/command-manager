@@ -682,6 +682,76 @@ pub fn history_clear(state: State<AppState>, confirmed: bool) -> Result<()> {
     state.db.write(history::clear)
 }
 
+#[derive(Serialize, Clone)]
+pub struct OsHistorySource {
+    pub shell_kinds: Vec<String>,
+    pub path: String,
+    pub entries: usize,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct OsHistoryImport {
+    pub shell_kind: String,
+    pub path: String,
+    pub imported: usize,
+    pub skipped: usize,
+}
+
+/// History files of the user's own shells, with the number of distinct
+/// commands each would contribute.
+#[tauri::command]
+pub async fn history_os_sources() -> Result<Vec<OsHistorySource>> {
+    tauri::async_runtime::spawn_blocking(|| {
+        crate::os_history::detect()
+            .into_iter()
+            .map(|source| {
+                let parsed = crate::os_history::read(&source);
+                OsHistorySource {
+                    shell_kinds: source.shell_kinds.iter().map(|s| s.to_string()).collect(),
+                    path: source.path.to_string_lossy().into_owned(),
+                    entries: parsed.as_ref().map(Vec::len).unwrap_or(0),
+                    error: parsed.err().map(|error| error.to_string()),
+                }
+            })
+            .collect()
+    })
+    .await
+    .map_err(|error| Error::msg(format!("history worker failed: {error}")))
+}
+
+/// Copy the OS shell history into `command_history` so suggestions can use
+/// it. The shell's own files are only read.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn history_import_os(app: AppHandle, confirmed: bool) -> Result<Vec<OsHistoryImport>> {
+    require(confirmed)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let mut report = Vec::new();
+        for source in crate::os_history::detect() {
+            let entries = crate::os_history::read(&source)
+                .map_err(|error| Error::msg(format!("{}: {error}", source.path.display())))?;
+            for shell_kind in &source.shell_kinds {
+                let counts = state
+                    .db
+                    .write(|c| history::import(c, shell_kind, &entries))?;
+                report.push(OsHistoryImport {
+                    shell_kind: shell_kind.to_string(),
+                    path: source.path.to_string_lossy().into_owned(),
+                    imported: counts.imported,
+                    skipped: counts.skipped,
+                });
+            }
+        }
+        if report.iter().any(|row| row.imported > 0) {
+            let _ = app.emit(events::HISTORY_ADDED, serde_json::json!({ "id": null }));
+        }
+        Ok(report)
+    })
+    .await
+    .map_err(|error| Error::msg(format!("history worker failed: {error}")))?
+}
+
 /// Record a command typed directly into a level-2 terminal. Rich shells emit
 /// OSC 633 E/C/D records and are recorded by the PTY tracker instead.
 #[tauri::command(rename_all = "snake_case")]
@@ -1339,11 +1409,7 @@ pub async fn session_stop(app: AppHandle, session_id: String) -> Result<()> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn process_stop(
-    app: AppHandle,
-    run_event_id: String,
-    force: Option<bool>,
-) -> Result<()> {
+pub async fn process_stop(app: AppHandle, run_event_id: String, force: Option<bool>) -> Result<()> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let live = state

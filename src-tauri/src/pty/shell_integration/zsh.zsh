@@ -29,7 +29,12 @@ cm_precmd() {
 }
 precmd_functions+=(cm_precmd)
 preexec_functions+=(cm_preexec)
-PROMPT="${PROMPT:-%n@%m:%~%# }%{\e]633;B\a%}"
+# Themes such as powerlevel10k rebuild PROMPT in a precmd hook that always
+# runs last, so a marker appended to PROMPT is lost. zle-line-init fires once
+# the prompt has been drawn and the line editor starts reading input.
+cm_line_init() { cm_osc B; }
+autoload -Uz add-zle-hook-widget
+add-zle-hook-widget line-init cm_line_init
 # Disable zsh-autosuggestions only for this app-owned shell. The application
 # renders its own suggestions from command_history.
 typeset -ga ZSH_AUTOSUGGEST_STRATEGY
