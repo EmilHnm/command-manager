@@ -61,7 +61,10 @@
 
         <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.LaunchApp)" />
         <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
-        <CustomAction Id="LaunchApplication" Impersonate="yes" FileKey="Path" ExeCommand="[LAUNCHAPPARGS]" Return="asyncNoWait" />
+        <!-- Do not host terminals under the MSI process: its Redirection Guard
+             is inherited and blocks pnpm's user-created junctions. This mode
+             hands launch to the existing desktop Explorer before starting Tauri. -->
+        <CustomAction Id="LaunchApplication" Impersonate="yes" FileKey="Path" ExeCommand="--launch-from-installer [LAUNCHAPPARGS]" Return="asyncNoWait" />
 
         <UI>
             <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>

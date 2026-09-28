@@ -125,6 +125,41 @@ với lỗi bộ cài. Lỗi `LGHT0204` kèm `ICE38`, `ICE43`, `ICE57` cần s�
 shortcut không advertised phải có registry key path ở `HKCU`.
 Tạo được MSI chưa xác nhận việc cài đặt/nâng cấp/gỡ cài đặt trên máy đích.
 
+### pnpm chỉ lỗi trong terminal của app (`UNKNOWN` / `MODULE_NOT_FOUND`)
+
+Không kết luận thiếu package chỉ từ `fs.existsSync(...) === false`. Windows
+Redirection Guard có thể chặn junction do pnpm tạo, dù file đích vẫn tồn tại.
+Trên máy kiểm thử, app và shell con có `ProcessRedirectionTrustPolicy=1`, còn
+terminal mở bình thường có giá trị `0`; bật cờ trong tiến trình thử tái hiện
+đúng lỗi đọc `concurrently.js`.
+Tham khảo cơ chế [RedirectionGuard của Microsoft](https://www.microsoft.com/en-us/msrc/blog/2025/06/redirectionguard-mitigating-unsafe-junction-traversal-in-windows).
+
+MSI mở app với `--launch-from-installer`; chế độ này nhờ **Explorer desktop
+hiện có** mở lại app trước khi tạo Tauri, DB, autostart hay PTY. Flag được loại
+bỏ để không mở lặp, các tham số khác (kể cả `--autostart`) được giữ nguyên.
+Không tắt Redirection Guard, sửa registry, hoặc nâng quyền terminal.
+Nếu app vẫn chạy trong ngữ cảnh bị hạn chế, nó báo lỗi rõ ngay khi khởi động;
+không tự vượt qua chính sách của quản trị viên. Luồng này chỉ áp dụng Windows.
+Việc uỷ quyền mở app dựa trên [desktop Explorer automation](https://devblogs.microsoft.com/oldnewthing/20131118-00/?p=2643),
+không phải gọi `ShellExecute` ngay trong tiến trình bộ cài.
+
+Với bản cũ đang chạy: chọn **Thoát hoàn toàn** trong tray, rồi mở lại từ Start
+Menu/Desktop. Chỉ mở tab mới hoặc mở thêm một instance sẽ không làm mới
+ngữ cảnh của app cũ. Các tiến trình đang chạy sẽ dừng khi thoát, nên lưu công
+việc trước. Không cần xoá `node_modules`.
+
+Phép thử chỉ-đọc, cần desktop Explorer, Node/pnpm và một dự án pnpm có sẵn:
+
+```powershell
+cargo build --manifest-path src-tauri/Cargo.toml --example terminal_fs_probe
+pwsh -NoProfile -File scripts/test-windows-terminal-launch.ps1 -ProjectRoot G:/Work/ln-project
+```
+
+Probe dùng PTY/shell integration/Job Object thật, đọc package qua junction và
+gọi `pnpm --version`. Kiểm tra ba ca: bình thường thành công, child bị hạn chế
+thất bại, child chuyển qua Explorer thành công. Báo cáo lưu trong thư mục
+tạm riêng. Không chạy `pnpm install` hoặc script dev trong dự án người dùng.
+
 ### Terminal trong app không tìm thấy pnpm qua Volta
 
 Nếu dùng thư mục Volta tùy chỉnh, lưu `VOLTA_HOME` trong Environment Variables

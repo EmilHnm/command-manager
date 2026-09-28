@@ -7,6 +7,8 @@ pub mod os_history;
 pub mod process;
 pub mod pty;
 pub mod template;
+#[cfg(windows)]
+pub mod windows_launch;
 
 #[cfg(feature = "desktop")]
 mod app;

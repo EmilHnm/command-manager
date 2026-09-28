@@ -262,6 +262,40 @@ pub(crate) fn set_terminal_env(cmd: &mut CommandBuilder) {
     // changes.
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    #[cfg(windows)]
+    preserve_inherited_path(cmd);
+}
+
+#[cfg(windows)]
+fn preserve_inherited_path(cmd: &mut CommandBuilder) {
+    use std::env;
+
+    // portable-pty intentionally rebuilds PATH from the Windows environment
+    // registry. A desktop-launched app can nevertheless be opened from a
+    // process whose PATH contains session-local entries (for example a tool
+    // manager activated by a dev shell). Keep both sources, without knowing
+    // which tools own the entries.
+    let Some(inherited) = env::var_os("PATH") else {
+        return;
+    };
+    let Some(builder_path) = cmd.get_env("PATH").map(std::ffi::OsStr::to_owned) else {
+        return;
+    };
+
+    let mut paths: Vec<_> = env::split_paths(&inherited).collect();
+    for path in env::split_paths(&builder_path) {
+        if !paths.iter().any(|existing| {
+            existing
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&path.to_string_lossy())
+        }) {
+            paths.push(path);
+        }
+    }
+
+    if let Ok(path) = env::join_paths(paths) {
+        cmd.env("PATH", path);
+    }
 }
 
 pub fn spawn_on_slave(
@@ -449,6 +483,27 @@ mod tests {
     use super::*;
     use crate::pty::backpressure::IpcPipe;
     use std::time::Duration;
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_env_keeps_inherited_path_entries() {
+        let inherited = std::env::var_os("PATH").expect("test process has PATH");
+        let inherited_first = std::env::split_paths(&inherited)
+            .next()
+            .expect("PATH has an entry");
+        let registry_only = std::path::PathBuf::from(r"C:\command-manager-registry-path");
+        let mut cmd = CommandBuilder::new("cmd.exe");
+        cmd.env(
+            "PATH",
+            std::env::join_paths([registry_only.as_path()]).unwrap(),
+        );
+
+        preserve_inherited_path(&mut cmd);
+
+        let paths: Vec<_> = std::env::split_paths(cmd.get_env("PATH").unwrap()).collect();
+        assert!(paths.contains(&inherited_first));
+        assert!(paths.contains(&registry_only));
+    }
 
     #[cfg(windows)]
     #[test]
