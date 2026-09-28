@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev --features desktop",
-    "tauri:build": "tauri build --features desktop"
+    "tauri:build": "sh scripts/with-appindicator-pkgconfig.sh tauri build --features desktop"
   },
   "dependencies": {
     "@fontsource/fira-code": "^5.3.0",

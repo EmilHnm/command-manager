@@ -1,5 +1,7 @@
+mod platform;
+
 use crate::error::{Error, Result};
-use portable_pty::{Child, CommandBuilder, SlavePty};
+use portable_pty::{Child, SlavePty};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellKind {
@@ -149,231 +151,18 @@ fn remove_stale_scripts(directory: &std::path::Path, prefix: &str, keep: &std::p
     }
 }
 
-#[cfg(not(windows))]
-fn shell_name(path: &str) -> &str {
-    std::path::Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(path)
-        .trim_end_matches(".exe")
-}
-
-/// Look the executable up on PATH directly; spawning `where.exe` costs a few
-/// hundred milliseconds per terminal. `symlink_metadata` also sees the
-/// zero-byte App Execution Alias that a Microsoft Store pwsh installs.
-#[cfg(windows)]
-fn command_exists(command: &str) -> bool {
-    let Some(paths) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&paths).any(|directory| {
-        [".exe", ".com", ".cmd", ".bat"].iter().any(|extension| {
-            std::fs::symlink_metadata(directory.join(format!("{command}{extension}")))
-                .is_ok_and(|metadata| !metadata.is_dir())
-        })
-    })
-}
-
-#[cfg(windows)]
 pub fn spawn(
     slave: Box<dyn SlavePty + Send>,
     integration_root: Option<&std::path::Path>,
     preferred_shell: Option<&str>,
     load_powershell_profile: bool,
 ) -> Result<InteractiveShell> {
-    let nonce = uuid::Uuid::new_v4().simple().to_string();
-    let script = include_str!("powershell.ps1");
-    let script_path = write_script("powershell", script, integration_root)?;
-    let script_path_string = script_path.to_string_lossy().to_string();
-    let preference = preferred_shell.unwrap_or_default().to_ascii_lowercase();
-    let mut candidates = Vec::new();
-    for candidate in [
-        ("pwsh", "pwsh", "Pwsh"),
-        ("powershell", "powershell.exe", "WindowsPowerShell"),
-    ] {
-        if preference.is_empty()
-            || (preference == "pwsh" && candidate.2 == "Pwsh")
-            || ((preference == "powershell" || preference == "powershell.exe")
-                && candidate.2 == "WindowsPowerShell")
-        {
-            candidates.push(candidate);
-        }
-    }
-    for (probe, executable, kind) in candidates {
-        if command_exists(probe) {
-            let mut command = CommandBuilder::new(executable);
-            command.arg("-NoLogo");
-            if !load_powershell_profile {
-                // Skipping $PROFILE avoids slow modules and prompt themes; the
-                // app provides history suggestions on its own.
-                command.arg("-NoProfile");
-            }
-            if kind != "Pwsh" {
-                command.args(["-ExecutionPolicy", "Bypass"]);
-            }
-            command.args(["-NoExit", "-File", &script_path_string]);
-            command.env("CM_NONCE", &nonce);
-            if let Ok(child) = slave.spawn_command(command) {
-                let shell_kind = if kind == "Pwsh" {
-                    ShellKind::Pwsh
-                } else {
-                    ShellKind::WindowsPowerShell
-                };
-                let has_psreadline = powershell_has_psreadline(executable, shell_kind);
-                let history_level = if has_psreadline { 1 } else { 2 };
-                return Ok(InteractiveShell {
-                    child,
-                    shell_kind,
-                    history_level,
-                    nonce: (history_level == 1).then_some(nonce),
-                });
-            }
-        }
-    }
-
-    let executable = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into());
-    let mut command = CommandBuilder::new(executable);
-    let esc = '\x1b';
-    let bel = '\x07';
-    // cmd expands PROMPT left-to-right. Put B after the visible prompt so
-    // the frontend's marker range contains the actual editable input line.
-    let prompt = format!("{esc}]633;A{bel}{esc}]633;P;Cwd=$P{bel}$P$G{esc}]633;B{bel}");
-    command.args(["/D", "/Q", "/K"]);
-    command.env("PROMPT", prompt);
-    let child = slave
-        .spawn_command(command)
-        .map_err(|e| Error::msg(e.to_string()))?;
-    Ok(InteractiveShell {
-        child,
-        shell_kind: ShellKind::Cmd,
-        history_level: 2,
-        nonce: None,
-    })
-}
-
-#[cfg(not(windows))]
-pub fn spawn(
-    slave: Box<dyn SlavePty + Send>,
-    integration_root: Option<&std::path::Path>,
-    preferred_shell: Option<&str>,
-    load_powershell_profile: bool,
-) -> Result<InteractiveShell> {
-    let preferred = preferred_shell
-        .filter(|value| !value.trim().is_empty())
-        .and_then(resolve_shell_command);
-    // `$SHELL` is commonly either an absolute path or a short executable name
-    // (for example `zsh` in containers and test runners). Resolve both forms so
-    // the documented shell order does not silently fall back to bash.
-    let configured = preferred.or_else(|| {
-        std::env::var("SHELL")
-            .ok()
-            .and_then(|value| resolve_shell_command(&value))
-    });
-    let shell = configured
-        .or_else(|| {
-            ["/bin/bash", "/bin/sh"]
-                .into_iter()
-                .find(|path| std::path::Path::new(path).is_file())
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| "/bin/sh".into());
-    let name = shell_name(&shell);
-    let kind = match name {
-        "bash" => ShellKind::Bash,
-        "zsh" => ShellKind::Zsh,
-        "sh" | "dash" => ShellKind::Sh,
-        "pwsh" => ShellKind::Pwsh,
-        "powershell" => ShellKind::WindowsPowerShell,
-        _ => ShellKind::Other,
-    };
-    let nonce = uuid::Uuid::new_v4().simple().to_string();
-    let mut command = CommandBuilder::new(shell);
-    let _script_path = match kind {
-        ShellKind::Bash => {
-            let path = write_script("bash", include_str!("bash.sh"), integration_root)?;
-            command.args(["--rcfile", &path.to_string_lossy(), "-i"]);
-            command.env("CM_NONCE", &nonce);
-            Some(path)
-        }
-        ShellKind::Zsh => {
-            let directory = integration_root
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(std::env::temp_dir)
-                .join("shell-integration")
-                .join("1")
-                .join(format!("zsh-{}", uuid::Uuid::new_v4().simple()));
-            std::fs::create_dir_all(&directory).map_err(|e| Error::msg(e.to_string()))?;
-            let path = directory.join(".zshrc");
-            let contents = format!(
-                "if [[ -f $HOME/.zshrc && $HOME/.zshrc != $ZDOTDIR/.zshrc ]]; then source $HOME/.zshrc; fi\n{}\nTRAPEXIT() {{ command rm -rf -- $ZDOTDIR; }}\n",
-                include_str!("zsh.zsh")
-            );
-            std::fs::write(&path, contents).map_err(|e| Error::msg(e.to_string()))?;
-            command.args(["-i"]);
-            command.env("ZDOTDIR", &directory);
-            command.env("CM_NONCE", &nonce);
-            Some(path)
-        }
-        ShellKind::Sh => {
-            let path = write_script("sh", include_str!("sh.sh"), integration_root)?;
-            command.args(["-i"]);
-            command.env("ENV", &path);
-            Some(path)
-        }
-        ShellKind::Pwsh | ShellKind::WindowsPowerShell => {
-            let path = write_script("pwsh", include_str!("powershell.ps1"), integration_root)?;
-            command.arg("-NoLogo");
-            if !load_powershell_profile {
-                command.arg("-NoProfile");
-            }
-            command.args(["-NoExit", "-File", &path.to_string_lossy()]);
-            command.env("CM_NONCE", &nonce);
-            Some(path)
-        }
-        ShellKind::Other => {
-            command.arg("-i");
-            None
-        }
-    };
-    let child = slave
-        .spawn_command(command)
-        .map_err(|e| Error::msg(e.to_string()))?;
-    let history_level = match kind {
-        ShellKind::Pwsh | ShellKind::WindowsPowerShell
-            if !powershell_has_psreadline(&shell, kind) =>
-        {
-            2
-        }
-        _ => kind.history_level(),
-    };
-    Ok(InteractiveShell {
-        child,
-        shell_kind: kind,
-        history_level,
-        nonce: (history_level == 1).then_some(nonce),
-    })
-}
-
-#[cfg(not(windows))]
-fn resolve_shell_command(value: &str) -> Option<String> {
-    let candidate = match value {
-        "bash" => "/bin/bash",
-        "zsh" => "/bin/zsh",
-        "sh" | "dash" => "/bin/sh",
-        "pwsh" => "pwsh",
-        "powershell" => "powershell",
-        path => path,
-    };
-    if std::path::Path::new(candidate).is_file() {
-        return Some(candidate.to_string());
-    }
-    std::process::Command::new("which")
-        .arg(candidate)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .filter(|path| !path.is_empty())
+    platform::spawn(
+        slave,
+        integration_root,
+        preferred_shell,
+        load_powershell_profile,
+    )
 }
 
 #[cfg(test)]
@@ -388,12 +177,5 @@ mod tests {
         assert!(bash.contains("bleopt complete_auto_complete=off"));
         assert!(bash.contains("builtin history 1"));
         assert!(zsh.contains("ZSH_AUTOSUGGEST_STRATEGY=()"));
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn resolves_short_shell_names_from_environment_style_values() {
-        let resolved = super::resolve_shell_command("sh").expect("sh should be available");
-        assert!(std::path::Path::new(&resolved).is_file());
     }
 }

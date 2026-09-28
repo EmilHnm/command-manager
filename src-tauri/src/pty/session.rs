@@ -363,6 +363,12 @@ pub fn build_command(is_shell: bool, execution_string: &str) -> Result<CommandBu
 }
 
 fn build_shell_command(shell_kind: Option<&str>, execution_string: &str) -> Result<CommandBuilder> {
+    #[cfg(not(windows))]
+    {
+        // Unix replays saved shell commands through `sh -c`. The recorded
+        // shell kind only selects PowerShell versus cmd.exe on Windows.
+        let _ = shell_kind;
+    }
     #[cfg(windows)]
     {
         let kind = shell_kind.unwrap_or("cmd").to_ascii_lowercase();
