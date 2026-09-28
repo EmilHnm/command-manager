@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -80,15 +81,17 @@ if (process.platform === 'linux') {
 }
 
 const [requestedCommand, ...args] = commandArgs;
-const executable = process.platform === 'win32' && requestedCommand === 'tauri'
-  ? 'tauri.cmd'
-  : requestedCommand;
-const result = spawnSync(executable, args, {
+const isTauri = requestedCommand === 'tauri';
+// Invoke the installed Node CLI directly: no .cmd shim or shell argument
+// interpolation is needed, including on Windows.
+const require = createRequire(import.meta.url);
+const executable = isTauri ? process.execPath : requestedCommand;
+const childArgs = isTauri
+  ? [require.resolve('@tauri-apps/cli/tauri.js'), ...args]
+  : args;
+const result = spawnSync(executable, childArgs, {
   cwd: projectRoot,
   env,
-  // npm/pnpm exposes local CLI binaries as .cmd shims on Windows.
-  // Running through cmd.exe is required for those shims to work reliably.
-  shell: process.platform === 'win32',
   stdio: 'inherit',
   windowsHide: true,
 });
@@ -97,4 +100,6 @@ if (result.error) {
   console.error(`Failed to start ${requestedCommand}: ${result.error.message}`);
   process.exit(1);
 }
+// Keep bundling/validation failures visible; do not manually relink with
+// -sval or report success before Tauri finishes all requested installers.
 process.exit(result.status ?? 1);

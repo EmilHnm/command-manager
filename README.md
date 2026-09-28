@@ -108,3 +108,38 @@ cargo check --features desktop
 ```
 
 `pnpm dev` chỉ chạy frontend trong browser với Mock IPC; `pnpm run tauri:dev` mới chạy toàn bộ ứng dụng desktop và IPC native.
+
+### Build bộ cài Windows
+
+```powershell
+pnpm tauri:build
+# Hiện lỗi chi tiết của WiX nếu bước đóng gói MSI thất bại:
+pnpm tauri:build --verbose
+```
+
+Bộ cài nằm trong `src-tauri/target/release/bundle/msi` và `bundle/nsis`.
+Build giữ nguyên ICE validation của WiX; không tự bỏ kiểm tra bằng `-sval`.
+Nếu log có `LGHT0217` kèm `Windows Installer Service could not be accessed`,
+hãy chạy lại từ PowerShell bên ngoài sandbox để phân biệt hạn chế môi trường
+với lỗi bộ cài. Lỗi `LGHT0204` kèm `ICE38`, `ICE43`, `ICE57` cần sửa template:
+shortcut không advertised phải có registry key path ở `HKCU`.
+Tạo được MSI chưa xác nhận việc cài đặt/nâng cấp/gỡ cài đặt trên máy đích.
+
+### Terminal trong app không tìm thấy pnpm qua Volta
+
+Nếu dùng thư mục Volta tùy chỉnh, lưu `VOLTA_HOME` trong Environment Variables
+của tài khoản Windows; chỉ đặt biến trong một phiên shell sẽ không áp dụng
+cho app mở từ desktop/autostart. PTY đọc lại môi trường Windows khi mở tab mới.
+`portable-pty` tự đọc toàn bộ biến môi trường User/Machine từ Windows Registry,
+bao gồm cả các biến mới được thêm sau này; app không duy trì danh sách biến
+riêng cho từng công cụ. Vì vậy `PNPM_HOME`, `VOLTA_FEATURE_PNPM` hoặc biến
+cấu hình khác sẽ được truyền tự động vào terminal mới. Nếu một biến có giá trị
+sai hoặc rỗng, hãy sửa/xóa biến đó trong Environment Variables của Windows
+thay vì thêm ngoại lệ vào code.
+Sau khi đổi môi trường, mở tab terminal mới; tab đang chạy giữ môi trường cũ.
+
+Test cục bộ (cần pnpm đã cài và `VOLTA_HOME` đã lưu trong Windows):
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml --lib --features desktop persisted_volta_runs_pnpm_in_pty_without_inherited_home -- --ignored --nocapture
+```

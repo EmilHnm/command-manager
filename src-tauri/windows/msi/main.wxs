@@ -98,6 +98,7 @@
             </Component>
             <Component Id="Path" Guid="{{path_component_guid}}" Win64="$(var.Win64)">
                 <File Id="Path" Source="{{main_binary_path}}" KeyPath="yes" Checksum="yes"/>
+                <RemoveFile Id="RemoveLegacyUninstallShortcut" Name="Uninstall {{product_name}}.lnk" On="install"/>
             </Component>
             {{resources}}
         </DirectoryRef>
@@ -121,6 +122,7 @@
                           Description="Uninstalls {{product_name}}"
                           Target="[System64Folder]msiexec.exe"
                           Arguments="/x [ProductCode]" />
+                <!-- Non-advertised shortcuts require an HKCU key path (ICE38/43/57). -->
                 <RegistryValue Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="Uninstaller Shortcut" Type="integer" Value="1" KeyPath="yes"/>
             </Component>
         </DirectoryRef>
@@ -167,9 +169,9 @@
         </Feature>
 
         <Property Id="INSTALLED_WEBVIEW2_VERSION">
-            <RegistrySearch Id="Webview2VersionSystemx64" Root="HKLM" Key="SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" />
-            <RegistrySearch Id="Webview2VersionSystemx86" Root="HKLM" Key="SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" />
-            <RegistrySearch Id="Webview2VersionUser" Root="HKCU" Key="SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw"/>
+            <RegistrySearch Id="Webview2VersionSystemx64" Root="HKLM" Key="SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" />
+            <RegistrySearch Id="Webview2VersionSystemx86" Root="HKLM" Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" />
+            <RegistrySearch Id="Webview2VersionUser" Root="HKCU" Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw"/>
         </Property>
 
         <CustomAction Id="DownloadAndInvokeBootstrapper" Directory="INSTALLDIR" Execute="deferred" ExeCommand="powershell.exe -NoProfile -windowstyle hidden try [\{] [\[]Net.ServicePointManager[\]]::SecurityProtocol = [\[]Net.SecurityProtocolType[\]]::Tls12 [\}] catch [\{][\}]; Invoke-WebRequest -Uri &quot;https://go.microsoft.com/fwlink/p/?LinkId=2124703&quot; -OutFile &quot;$env:TEMP\MicrosoftEdgeWebview2Setup.exe&quot; ; Start-Process -FilePath &quot;$env:TEMP\MicrosoftEdgeWebview2Setup.exe&quot; -ArgumentList (&apos;/silent&apos;, &apos;/install&apos;) -Wait" Return="check"/>

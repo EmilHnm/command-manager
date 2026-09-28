@@ -255,6 +255,11 @@ fn prepare_conpty_sideload() {}
 /// clear to end of line, so every keystroke redraw leaves the old text behind.
 /// An inherited TERM (tmux, kitty, ...) would describe the wrong terminal.
 pub(crate) fn set_terminal_env(cmd: &mut CommandBuilder) {
+    // CommandBuilder::new() already captures the complete parent environment
+    // and, on Windows, merges the current User/Machine environment from the
+    // registry. Keep this layer generic: tool-specific variables must not be
+    // copied here one by one because new tools would otherwise require code
+    // changes.
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
 }
@@ -444,6 +449,51 @@ mod tests {
     use super::*;
     use crate::pty::backpressure::IpcPipe;
     use std::time::Duration;
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires a local pnpm installation and persisted VOLTA_HOME"]
+    fn persisted_volta_runs_pnpm_in_pty_without_inherited_home() {
+        let (pty, slave) = PtySession::open(100, 30, 64 * 1024).unwrap();
+        let mut cmd = CommandBuilder::new("cmd.exe");
+        cmd.args(["/D", "/C", "pnpm --version"]);
+        // Run in a test process without inherited tool homes to verify that
+        // CommandBuilder recovers the persisted settings before spawning.
+        set_terminal_env(&mut cmd);
+        assert!(cmd.get_env("VOLTA_HOME").is_some());
+        let child = slave.spawn_command(cmd).unwrap();
+        let mut guard = ChildGuard(Some(child));
+        let reader = pty.clone_reader().unwrap();
+        let buffer = Arc::clone(&pty.buffer);
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        std::thread::spawn(move || {
+            pump_reader(reader, buffer, "pnpm-env-probe".into(), IpcPipe::new(tx))
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some(status) = guard.0.as_mut().unwrap().try_wait().unwrap() {
+                assert!(
+                    status.success(),
+                    "pnpm failed: {}",
+                    String::from_utf8_lossy(&pty.snapshot().unwrap())
+                );
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "pnpm probe timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let version = regex::Regex::new(r"\b\d+\.\d+\.\d+\b").unwrap();
+        for _ in 0..40 {
+            if version.is_match(&String::from_utf8_lossy(&pty.snapshot().unwrap())) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!(
+            "pnpm produced no version: {}",
+            String::from_utf8_lossy(&pty.snapshot().unwrap())
+        );
+    }
 
     #[cfg(windows)]
     struct ChildGuard(Option<Box<dyn portable_pty::Child + Send + Sync>>);
