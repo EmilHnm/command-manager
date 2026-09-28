@@ -225,6 +225,38 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
     return closedTab;
   };
 
+  // Đóng toàn bộ tab của một Pane cụ thể và auto-collapse nếu cần
+  const closePane = (pane: ActivePane): OpenTabItem[] => {
+    let closedTabs: OpenTabItem[] = [];
+    if (pane === 'paneB') {
+      closedTabs = [...paneBTabs.value];
+      paneBTabs.value = [];
+      activeTabIdB.value = '';
+      if (splitMode.value !== 'single') {
+        splitMode.value = 'single';
+        activePane.value = 'paneA';
+      }
+    } else {
+      // paneA
+      closedTabs = [...paneATabs.value];
+      if (splitMode.value !== 'single' && paneBTabs.value.length > 0) {
+        paneATabs.value = [...paneBTabs.value];
+        paneBTabs.value = [];
+        activeTabIdA.value = activeTabIdB.value;
+        activeTabIdB.value = '';
+        splitMode.value = 'single';
+        activePane.value = 'paneA';
+      } else {
+        paneATabs.value = [];
+        activeTabIdA.value = '';
+        splitMode.value = 'single';
+        activePane.value = 'paneA';
+      }
+    }
+    persistPreferences();
+    return closedTabs;
+  };
+
   const closeAllTabs = () => {
     paneATabs.value = [];
     paneBTabs.value = [];
@@ -357,6 +389,7 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
     moveTabToOppositePane,
     transferTab,
     closeTab,
+    closePane,
     closeAllTabs,
     addTab,
   };

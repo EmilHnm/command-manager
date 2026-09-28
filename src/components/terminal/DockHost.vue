@@ -178,15 +178,27 @@
             </div>
           </div>
 
-          <!-- Add Terminal to Pane A button -->
-          <button
-            class="pane-add-btn"
-            title="Mở thêm terminal mới vào Khung A"
-            :disabled="openingTerminal"
-            @click="openEmptyTerminal('paneA')"
-          >
-            <Plus :size="13" />
-          </button>
+          <!-- Actions for Pane A: Add terminal & Kill all terminals -->
+          <div class="pane-strip-actions">
+            <button
+              class="pane-strip-btn add-btn"
+              :title="splitMode === 'single' ? 'Mở thêm terminal mới' : 'Mở thêm terminal mới vào Khung A'"
+              :disabled="openingTerminal"
+              @click="openEmptyTerminal('paneA')"
+            >
+              <Plus :size="13" />
+            </button>
+
+            <button
+              v-if="paneATabs.length > 0"
+              class="pane-strip-btn kill-btn"
+              :title="`Dừng toàn bộ ${paneATabs.length} terminal trong ${splitMode === 'single' ? 'Workspace' : 'Khung A'}`"
+              @click="promptKillPanel('paneA')"
+            >
+              <OctagonX :size="12" />
+              <span class="kill-btn-label">Kill Hết</span>
+            </button>
+          </div>
         </div>
 
         <!-- Pane A Terminal Viewport -->
@@ -329,15 +341,27 @@
             </div>
           </div>
 
-          <!-- Add Terminal to Pane B button -->
-          <button
-            class="pane-add-btn"
-            title="Mở thêm terminal mới vào Khung B"
-            :disabled="openingTerminal"
-            @click="openEmptyTerminal('paneB')"
-          >
-            <Plus :size="13" />
-          </button>
+          <!-- Actions for Pane B: Add terminal & Kill all terminals -->
+          <div class="pane-strip-actions">
+            <button
+              class="pane-strip-btn add-btn"
+              title="Mở thêm terminal mới vào Khung B"
+              :disabled="openingTerminal"
+              @click="openEmptyTerminal('paneB')"
+            >
+              <Plus :size="13" />
+            </button>
+
+            <button
+              v-if="paneBTabs.length > 0"
+              class="pane-strip-btn kill-btn"
+              :title="`Dừng toàn bộ ${paneBTabs.length} terminal trong Khung B`"
+              @click="promptKillPanel('paneB')"
+            >
+              <OctagonX :size="12" />
+              <span class="kill-btn-label">Kill Hết</span>
+            </button>
+          </div>
         </div>
 
         <!-- Pane B Terminal Viewport -->
@@ -470,6 +494,14 @@
 
         <button
           class="context-menu-item danger"
+          @click="handleContextMenuKillPanel"
+        >
+          <OctagonX :size="13" />
+          <span>Dừng toàn bộ terminal trong khung này...</span>
+        </button>
+
+        <button
+          class="context-menu-item danger"
           @click="handleContextMenuCloseTab"
         >
           <X :size="13" />
@@ -488,6 +520,17 @@
       @save="handleRenameSave"
       @cancel="handleRenameCancel"
     />
+
+    <!-- Kill Panel Confirmation Modal (MOD-KILL) -->
+    <KillPanelModal
+      :visible="showKillModal"
+      :panel-name="killingPaneTarget || 'paneA'"
+      :tabs="targetKillTabs"
+      :loading="killInProgress"
+      :is-split-mode="splitMode !== 'single'"
+      @confirm="handleConfirmKillPanel"
+      @cancel="handleCancelKillPanel"
+    />
   </div>
 </template>
 
@@ -502,9 +545,11 @@ import {
   Plus,
   X,
   Terminal,
+  OctagonX,
 } from 'lucide-vue-next';
 import XtermPane from './XtermPane.vue';
 import RenameTerminalModal from '@/components/dialogs/RenameTerminalModal.vue';
+import KillPanelModal from '@/components/dialogs/KillPanelModal.vue';
 import { useRunSession } from '@/composables/useRunSession';
 import { ipcClient } from '@/ipc/client';
 import { useSplitLayout, type OpenTabItem, type ActivePane } from '@/composables/useSplitLayout';
@@ -542,6 +587,7 @@ const {
   moveTabToOppositePane,
   transferTab,
   closeTab: splitCloseTab,
+  closePane: splitClosePane,
   closeAllTabs: splitCloseAllTabs,
   addTab: splitAddTab,
 } = useSplitLayout(props.initialTabs || []);
@@ -774,6 +820,84 @@ const handleContextMenuCloseTab = () => {
     handleCloseTab(contextMenuTarget.value.pane, contextMenuTarget.value.tab.id);
   }
   closeContextMenu();
+};
+
+const handleContextMenuKillPanel = () => {
+  if (contextMenuTarget.value) {
+    promptKillPanel(contextMenuTarget.value.pane);
+  }
+  closeContextMenu();
+};
+
+// ----------------------------------------------------
+// Dừng toàn bộ terminal trong panel (Kill Panel Modal)
+// ----------------------------------------------------
+const showKillModal = ref(false);
+const killingPaneTarget = ref<ActivePane | null>(null);
+const killInProgress = ref(false);
+
+const targetKillTabs = computed<OpenTabItem[]>(() => {
+  if (killingPaneTarget.value === 'paneB') {
+    return paneBTabs.value;
+  }
+  return paneATabs.value;
+});
+
+const promptKillPanel = (pane: ActivePane) => {
+  const tabs = pane === 'paneA' ? paneATabs.value : paneBTabs.value;
+  if (tabs.length === 0) return;
+  killingPaneTarget.value = pane;
+  showKillModal.value = true;
+};
+
+const handleCancelKillPanel = () => {
+  if (killInProgress.value) return;
+  showKillModal.value = false;
+  killingPaneTarget.value = null;
+};
+
+const handleConfirmKillPanel = async (force: boolean) => {
+  if (!killingPaneTarget.value) return;
+  const targetPane = killingPaneTarget.value;
+  const tabsToKill = targetPane === 'paneB' ? [...paneBTabs.value] : [...paneATabs.value];
+
+  killInProgress.value = true;
+  try {
+    // 1. Dừng các tiến trình PTY tương ứng
+    await Promise.allSettled(
+      tabsToKill.map(async tab => {
+        try {
+          await ipcClient.stopProcess(tab.commandId, force);
+        } catch (err) {
+          // Bỏ qua lỗi nếu tiến trình đã hoàn thành hoặc dừng trước đó
+          console.warn(`[DockHost] Tiến trình ${tab.commandId} (${tab.name}) đã dừng hoặc lỗi:`, err);
+        }
+      })
+    );
+
+    // 2. Đóng toàn bộ tab của panel và auto-collapse nếu split mode
+    const closedTabs = splitClosePane(targetPane);
+    closedTabs.forEach(tab => {
+      if (isManualTab(tab)) {
+        setManualMeta(tab.commandId, {
+          name: tab.name,
+          shellKind: tab.shellKind,
+          historyLevel: tab.historyLevel,
+        });
+        ipcClient.setTerminalName?.(tab.commandId, tab.name);
+        updateProcessName(tab.commandId, tab.name);
+      }
+    });
+
+    // 3. Làm mới trạng thái tiến trình
+    await refreshProcesses();
+    showKillModal.value = false;
+    killingPaneTarget.value = null;
+  } catch (error) {
+    console.error('[DockHost] Lỗi khi kill toàn bộ panel:', error);
+  } finally {
+    killInProgress.value = false;
+  }
 };
 
 // ----------------------------------------------------
@@ -1557,6 +1681,31 @@ defineExpose({
   scrollbar-width: thin;
 }
 
+.pane-strip-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.pane-strip-btn {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.pane-strip-btn.add-btn,
 .pane-add-btn {
   width: 24px;
   height: 24px;
@@ -1572,10 +1721,32 @@ defineExpose({
   transition: all 0.15s ease;
 }
 
+.pane-strip-btn.add-btn:hover,
 .pane-add-btn:hover {
   background-color: var(--bg-surface-hover);
   color: var(--text-primary);
   border-color: var(--border-medium);
+}
+
+.pane-strip-btn.kill-btn {
+  padding: 0 7px;
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  background: rgba(239, 68, 68, 0.08);
+  color: #f87171;
+}
+
+.pane-strip-btn.kill-btn:hover {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #fca5a5;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.25);
+}
+
+.kill-btn-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 /* ----------------------------------------------------
