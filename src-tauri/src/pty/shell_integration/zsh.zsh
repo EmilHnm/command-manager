@@ -21,18 +21,21 @@ cm_preexec() {
   cm_osc "E;$(cm_escape "$1");$(cm_escape "$CM_APP_NONCE")"
   cm_osc C
 }
+CM_PROMPT_B=$'%{\e]633;B\a%}'
 cm_precmd() {
   local code=$?
   cm_osc "D;$code"
   cm_osc "P;Cwd=$(cm_escape "$PWD")"
   cm_osc A
+  [[ $PROMPT == *$CM_PROMPT_B* ]] || PROMPT="$PROMPT$CM_PROMPT_B"
 }
 precmd_functions+=(cm_precmd)
 preexec_functions+=(cm_preexec)
 # Themes such as powerlevel10k rebuild PROMPT in a precmd hook that always
-# runs last, so a marker appended to PROMPT is lost. zle-line-init fires once
-# the prompt has been drawn and the line editor starts reading input.
-cm_line_init() { cm_osc B; }
+# runs after ours, dropping the marker added above. zle-line-init fires once
+# the prompt has been drawn, so it emits B only when PROMPT lost the marker;
+# a prompt keeps exactly one B even when a plugin replaces zle-line-init.
+cm_line_init() { [[ $PROMPT == *$CM_PROMPT_B* ]] || cm_osc B; }
 autoload -Uz add-zle-hook-widget
 add-zle-hook-widget line-init cm_line_init
 # Disable zsh-autosuggestions only for this app-owned shell. The application

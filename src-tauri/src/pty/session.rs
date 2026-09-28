@@ -472,7 +472,9 @@ mod tests {
         let prompt = &text[content_start..content_start + end_relative];
         assert!(
             !prompt.is_empty()
-                && (prompt.contains('>') || prompt.contains('$') || prompt.contains("PS ")),
+                // zsh's default prompt ends in `%#`, drawn as `%` or `#`.
+                && (['>', '$', '%', '#'].iter().any(|c| prompt.contains(*c))
+                    || prompt.contains("PS ")),
             "{shell} A-B marker range did not contain the visible prompt: {prompt:?}"
         );
     }
@@ -803,7 +805,11 @@ mod tests {
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            assert!(found_prompt, "{name} did not emit the B prompt marker");
+            assert!(
+                found_prompt,
+                "{name} did not emit the B prompt marker: {:?}",
+                String::from_utf8_lossy(&pty.snapshot().expect("snapshot"))
+            );
             assert_prompt_marker_wraps_visible_prompt(&pty.snapshot().expect("snapshot"), name);
 
             pty.write(b"printf 'CM_UNIX_SHELL_TEST\\n'\n")
