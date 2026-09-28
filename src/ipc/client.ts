@@ -1414,4 +1414,18 @@ export const ipcClient = {
     const { listen } = await import('@tauri-apps/api/event');
     return listen(IPC_EVENTS.HISTORY_ADDED, () => callback());
   },
+
+  openUrl: async (url: string): Promise<void> => {
+    if (!url) return;
+    try {
+      if (usingNativeIpc()) {
+        await invokeTauri('open_url', { url });
+        return;
+      }
+    } catch (e) {
+      console.warn('[IPC] open_url error, falling back to window.open:', e);
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+  },
 };
+

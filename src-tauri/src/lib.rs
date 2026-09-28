@@ -176,6 +176,7 @@ mod desktop {
                 ipc::commands::autostart_os_set,
                 ipc::commands::app_hide,
                 ipc::commands::app_shutdown,
+                ipc::commands::open_url,
             ])
             .run(tauri::generate_context!())
             .expect("error while running Command Manager");

@@ -69,6 +69,27 @@
         <span v-if="suggestionItems.length === 0" class="suggestion-empty">Chưa có lịch sử phù hợp</span>
       </div>
     </div>
+
+    <!-- Link Hover Tooltip (Ctrl+Click hint) -->
+    <Teleport to="body">
+      <div
+        v-if="linkTooltip.visible"
+        class="terminal-link-tooltip"
+        :class="{ 'ctrl-needed': linkTooltip.ctrlNeeded, 'ctrl-active': isCtrlPressed }"
+        :style="tooltipStyle"
+      >
+        <ExternalLink :size="12" class="link-icon" />
+        <span v-if="linkTooltip.ctrlNeeded" class="link-hint-text">
+          Nhấn giữ <kbd class="key-badge warning">{{ isMac ? '⌘ Cmd' : 'Ctrl' }}</kbd> và click để mở
+        </span>
+        <span v-else-if="isCtrlPressed" class="link-hint-text">
+          Click để mở: <span class="link-url">{{ linkTooltip.url }}</span>
+        </span>
+        <span v-else class="link-hint-text">
+          <kbd class="key-badge">{{ isMac ? '⌘ Cmd' : 'Ctrl' }}</kbd> + click để mở liên kết
+        </span>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -76,7 +97,8 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { RefreshCw, Trash2, Square, RotateCw, LoaderCircle } from 'lucide-vue-next';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { RefreshCw, Trash2, Square, RotateCw, LoaderCircle, ExternalLink } from 'lucide-vue-next';
 import { usePtyStream } from '@/composables/usePtyStream';
 import type { ProcessLifecycleStatus } from '@/types/models';
 import type { CommandHistory } from '@/types/models';
@@ -197,6 +219,84 @@ let historyNavigationOriginal = '';
 let historyNavigationSent = '';
 let historyNavigationRows: CommandHistory[] = [];
 
+const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+const linkTooltip = ref<{
+  visible: boolean;
+  url: string;
+  x: number;
+  y: number;
+  ctrlNeeded: boolean;
+}>({
+  visible: false,
+  url: '',
+  x: 0,
+  y: 0,
+  ctrlNeeded: false,
+});
+const isCtrlPressed = ref(false);
+let ctrlNoticeTimer: number | undefined;
+let webLinksAddon: WebLinksAddon | null = null;
+
+const tooltipStyle = computed(() => {
+  const x = Math.min(Math.max(linkTooltip.value.x, 120), window.innerWidth - 120);
+  const y = Math.max(linkTooltip.value.y - 12, 32);
+  return {
+    left: `${x}px`,
+    top: `${y}px`,
+  };
+});
+
+const showLinkTooltip = (event: MouseEvent, text: string) => {
+  if (ctrlNoticeTimer) clearTimeout(ctrlNoticeTimer);
+  isCtrlPressed.value = event.ctrlKey || event.metaKey;
+  linkTooltip.value = {
+    visible: true,
+    url: text,
+    x: event.clientX,
+    y: event.clientY,
+    ctrlNeeded: false,
+  };
+};
+
+const hideLinkTooltip = () => {
+  if (ctrlNoticeTimer) clearTimeout(ctrlNoticeTimer);
+  linkTooltip.value.visible = false;
+  linkTooltip.value.ctrlNeeded = false;
+};
+
+const handleLinkClick = (event: MouseEvent, uri: string) => {
+  if (event.ctrlKey || event.metaKey) {
+    hideLinkTooltip();
+    void ipcClient.openUrl(uri);
+  } else {
+    if (ctrlNoticeTimer) clearTimeout(ctrlNoticeTimer);
+    linkTooltip.value = {
+      visible: true,
+      url: uri,
+      x: event.clientX,
+      y: event.clientY,
+      ctrlNeeded: true,
+    };
+    ctrlNoticeTimer = window.setTimeout(() => {
+      if (linkTooltip.value.ctrlNeeded) {
+        linkTooltip.value.ctrlNeeded = false;
+      }
+    }, 2000);
+  }
+};
+
+const handleWindowKeyDown = (e: KeyboardEvent) => {
+  if (e.key === 'Control' || e.key === 'Meta') {
+    isCtrlPressed.value = true;
+  }
+};
+
+const handleWindowKeyUp = (e: KeyboardEvent) => {
+  if (e.key === 'Control' || e.key === 'Meta') {
+    isCtrlPressed.value = false;
+  }
+};
+
 onMounted(async () => {
   if (!terminalElement.value) return;
 
@@ -239,9 +339,27 @@ onMounted(async () => {
 
   fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+
+  webLinksAddon = new WebLinksAddon(
+    (event: MouseEvent, uri: string) => {
+      handleLinkClick(event, uri);
+    },
+    {
+      hover: (event: MouseEvent, text: string) => {
+        showLinkTooltip(event, text);
+      },
+      leave: () => {
+        hideLinkTooltip();
+      },
+    },
+  );
+  term.loadAddon(webLinksAddon);
+
   term.open(terminalElement.value);
   fitAddon.fit();
   term.focus();
+  window.addEventListener('keydown', handleWindowKeyDown, { passive: true });
+  window.addEventListener('keyup', handleWindowKeyUp, { passive: true });
   window.setTimeout(() => {
     term?.focus();
   }, 50);
@@ -450,6 +568,10 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleWindowKeyDown);
+  window.removeEventListener('keyup', handleWindowKeyUp);
+  if (ctrlNoticeTimer) clearTimeout(ctrlNoticeTimer);
+  webLinksAddon?.dispose();
   if (inputScanTimer) clearTimeout(inputScanTimer);
   if (compositionTarget) {
     if (onCompositionStart) compositionTarget.removeEventListener('compositionstart', onCompositionStart);
@@ -922,5 +1044,74 @@ const handleReattach = async () => {
   to {
     transform: rotate(360deg);
   }
+}
+
+.terminal-link-tooltip {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  background: #171b27;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  backdrop-filter: blur(10px);
+  color: #f1f5f9;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+  max-width: 450px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transform: translate(-50%, -100%);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+  user-select: none;
+}
+
+.terminal-link-tooltip.ctrl-active {
+  border-color: #a855f7;
+  background: #1e1932;
+}
+
+.terminal-link-tooltip.ctrl-needed {
+  border-color: #f59e0b;
+  background: #271f14;
+  animation: pulse-border 0.3s ease;
+}
+
+.key-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-family: inherit;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  color: #e2e8f0;
+}
+
+.key-badge.warning {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.link-url {
+  color: #38bdf8;
+  text-decoration: underline;
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+@keyframes pulse-border {
+  0% { transform: translate(-50%, -100%) scale(0.96); }
+  50% { transform: translate(-50%, -100%) scale(1.03); }
+  100% { transform: translate(-50%, -100%) scale(1); }
 }
 </style>

@@ -1613,3 +1613,53 @@ pub fn app_shutdown(app: AppHandle, force: Option<bool>) -> Result<()> {
     app::shutdown::request(&app, force.unwrap_or(false));
     Ok(())
 }
+
+#[tauri::command]
+pub fn open_url(url: String) -> Result<()> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(Error::msg("Chỉ hỗ trợ mở đường dẫn http hoặc https"));
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let wide_url: Vec<u16> = std::ffi::OsStr::new(&url).encode_wide().chain(std::iter::once(0)).collect();
+        let wide_open: Vec<u16> = std::ffi::OsStr::new("open").encode_wide().chain(std::iter::once(0)).collect();
+        unsafe {
+            let ret = ShellExecuteW(
+                None,
+                PCWSTR(wide_open.as_ptr()),
+                PCWSTR(wide_url.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            );
+            if (ret.0 as usize) <= 32 {
+                return Err(Error::msg(format!("Không thể mở trình duyệt: mã lỗi {}", ret.0 as usize)));
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| Error::msg(e.to_string()))?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| Error::msg(e.to_string()))?;
+    }
+
+    Ok(())
+}
+
