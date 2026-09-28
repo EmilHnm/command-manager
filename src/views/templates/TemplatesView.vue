@@ -239,6 +239,18 @@
       @close="editorModalVisible = false"
       @save="fetchTemplates"
     />
+
+    <!-- Confirm Dialog Delete Template (MOD-13) -->
+    <ConfirmDialog
+      :visible="showDeleteConfirm"
+      title="Xóa Mẫu Lệnh"
+      subtitle="MOD-13 • Template Removal Gate"
+      :message="`Bạn có chắc chắn muốn xóa Template '${deletingTemplate?.name}'? Toàn bộ các bộ tham số Preset liên kết cũng sẽ bị xóa vĩnh viễn khỏi SQLite.`"
+      confirm-text="Xóa Template"
+      :danger="true"
+      @confirm="confirmDeleteTemplate"
+      @cancel="showDeleteConfirm = false"
+    />
   </div>
 </template>
 
@@ -264,6 +276,7 @@ import { useTemplates } from '@/composables/useTemplates';
 import { ipcClient } from '@/ipc/client';
 import TemplateRunModal from '@/components/dialogs/TemplateRunModal.vue';
 import TemplateEditorModal from '@/components/dialogs/TemplateEditorModal.vue';
+import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import type { CommandTemplate } from '@/types/models';
 
 const router = useRouter();
@@ -285,6 +298,8 @@ const runModalVisible = ref(false);
 const editorModalVisible = ref(false);
 const selectedTemplateId = ref<number | null>(null);
 const runError = ref('');
+const showDeleteConfirm = ref(false);
+const deletingTemplate = ref<{ id: number; name: string } | null>(null);
 
 onMounted(async () => {
   await fetchTemplates();
@@ -350,9 +365,18 @@ const handleDuplicate = async (tpl: CommandTemplate) => {
   await createTemplate(dup);
 };
 
-const handleDelete = async (id: number, name: string) => {
-  if (window.confirm(`Bạn có chắc chắn muốn xóa Template "${name}"?`)) {
-    await deleteTemplate(id);
+const handleDelete = (id: number, name: string) => {
+  deletingTemplate.value = { id, name };
+  showDeleteConfirm.value = true;
+};
+
+const confirmDeleteTemplate = async () => {
+  if (!deletingTemplate.value) return;
+  try {
+    await deleteTemplate(deletingTemplate.value.id);
+  } finally {
+    showDeleteConfirm.value = false;
+    deletingTemplate.value = null;
   }
 };
 

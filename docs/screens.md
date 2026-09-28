@@ -93,6 +93,7 @@ graph TD
     App --> MOD09[MOD-09: Graceful Shutdown Progress Overlay]
     App --> MOD12[MOD-12: Single-Instance Alert Toast]
     App --> MOD13[MOD-13: Privileged Action & Confirmation Modal - ConfirmDialog]
+    App --> MOD15[MOD-15: Interactive Prompt & Quick Input Modal - PromptDialog]
 ```
 
 ---
@@ -771,9 +772,10 @@ Quản lý các mẫu lệnh tái sử dụng chứa các tham số linh hoạt 
 
 * **Quy tắc Nghiệp vụ & Thiết kế UI:**
   * **Hai biến thể trực quan:**
-    1. **Biến thể Destructive (Đỏ / Hazard):** Áp dụng cho xóa Lệnh, xóa Template, xóa Nhóm, xóa Preset. Nút bấm màu đỏ hazard (`--status-failed: #ef4444`).
+    1. **Biến thể Destructive (Đỏ / Hazard):** Áp dụng cho xóa Lệnh (`SCR-02`), xóa Template (`SCR-06`), xóa Nhóm (`SCR-03`), xóa Preset (`MOD-10`), và xóa sạch Lịch sử chạy (`SCR-04`). Nút bấm màu đỏ hazard (`--status-failed: #ef4444`). Có vạch cảnh báo sọc chéo hazard, icon `ShieldAlert` hoặc `AlertTriangle`, và hộp cảnh báo *"HÀNH ĐỘNG NÀY KHÔNG THỂ HỒI PHỤC!"*.
     2. **Biến thể Privileged Warning (Vàng / System):** Áp dụng cho Autostart, Import đè DB, Chạy lệnh Shell không sandbox. Nút bấm màu cam/vàng (`--status-warning: #f59e0b` hoặc `--primary: #744791`).
   * **Cờ Xác Nhận Bắt Buộc (`confirmed: true`):** Truyền cờ xác nhận an toàn xuống Backend Rust qua IPC để bảo vệ ranh giới vùng tin cậy (Trusted Zone).
+  * **Tiêu chuẩn Hóa Toàn Hệ Thống:** Thay thế triệt để 100% mọi lệnh `window.confirm` mặc định của hệ thống/trình duyệt, hỗ trợ đóng/hủy bằng phím `Esc` và xác nhận bằng phím `Enter`.
 
 ---
 
@@ -835,6 +837,80 @@ Cho phép người dùng tùy biến nhãn tên hiển thị của các tab term
 * **In-Memory Tab Scope:** Tên tùy chỉnh được lưu trữ trực tiếp trong mảng trạng thái `openTabs: OpenTabItem[]` ở component [DockHost.vue](../src/components/terminal/DockHost.vue).
 * **Không làm gián đoạn PTY:** Thao tác đổi tên chỉ tác động đến lớp hiển thị của Tab Strip (DOM label và title attribute), hoàn toàn **không khởi động lại tiến trình, không gián đoạn stream dữ liệu PTY hay can thiệp vào Ring Buffer**.
 * **Phân định rõ ràng:** Tab của `command_definition` lấy tên theo DB SQLite; chỉ tab mở thủ công từ nút `[+ Terminal mới]` mới có cờ `isManual: true` để cho phép đổi tên.
+
+---
+
+### MOD-15: Hộp Thoại Nhập Liệu Nhanh & Xác Nhận Tương Tác (PromptDialog / Quick Prompt Modal)
+
+#### 1. Mục đích & Vai trò
+Thay thế triệt để các hộp thoại mặc định của trình duyệt (`window.prompt`, `window.alert`) bằng modal tùy chỉnh mang phong cách **Technical Precision Dark**. Hộp thoại này phục vụ các luồng nhập liệu chuỗi ngắn, tức thì có kiểm thực (single-input inline prompt) như:
+* Lưu một dòng lịch sử thực thi thành **Lệnh mới** vào Thư Viện Lệnh (`HistoryView -> saveAsCommand`).
+* Lưu một dòng lịch sử shell thành **Mẫu Lệnh Shell mới** (`HistoryView -> saveAsTemplate`).
+* Lưu bộ giá trị tham số cấu hình hiện tại thành **Preset mới** (`TemplateRunModal -> promptSavePreset`).
+
+#### 2. Kích thước & Vị trí
+* **Kích thước:** Compact modal 480px x 240px (co giãn linh hoạt theo nội dung gợi ý/lỗi).
+* **Vị trí:** Canh giữa màn hình (Center-aligned), phủ lên trên backdrop mờ (`background: rgba(11, 13, 19, 0.8); backdrop-filter: blur(6px)`).
+* **Độ ưu tiên z-index:** Thuộc tầng modal (`z-index: 120`), ngang hàng với ConfirmDialog và các modal cấu hình hệ thống.
+* **Stitch Screen Reference:** Screen ID `223e53ac59e44c9381610af4eba20ac1` tại Project `14914224436748087443`.
+
+#### 3. Wireframe Chi tiết
+
+##### Biến thể 1: Lưu Câu Lệnh Mới / Mẫu Lệnh từ Lịch Sử (Save As Command / Template)
+```
++-----------------------------------------------------------------------------+
+|  ✏️ LƯU LỆNH MỚI TỪ LỊCH SỬ                                            [X]  |
+|  MOD-15 • Technical Input Gate • Shell History Replay                       |
++-----------------------------------------------------------------------------+
+|  💡 Nhập tên định danh gợi nhớ để lưu câu lệnh này vào Thư Viện Lệnh.      |
+|                                                                             |
+|  Tên Câu Lệnh Mới (*)                                               18 / 64 |
+|  +-----------------------------------------------------------------------+  |
+|  | cargo test --lib --features desktop                               (x) |  |
+|  +-----------------------------------------------------------------------+  |
+|  ⚠️ Tên câu lệnh không được để trống hoặc chỉ chứa khoảng trắng.            |
++-----------------------------------------------------------------------------+
+|  ⌨️ Nhấn Esc để hủy, Enter để lưu                  [ Hủy Bỏ ]   [💾 Lưu Lại] |
++-----------------------------------------------------------------------------+
+```
+
+##### Biến thể 2: Lưu Bộ Tham Số Mẫu Lệnh (Save Template Preset)
+```
++-----------------------------------------------------------------------------+
+|  🔖 LƯU BỘ THAM SỐ PRESET                                              [X]  |
+|  MOD-15 • Parameter Snapshot Gate • FFmpeg Transcoder                       |
++-----------------------------------------------------------------------------+
+|  💡 Lưu lại các giá trị tham số hiện thời thành một Preset tái sử dụng.     |
+|                                                                             |
+|  Tên Preset Mới (*)                                                 12 / 32 |
+|  +-----------------------------------------------------------------------+  |
+|  | Fast 1080p Web                                                    (x) |  |
+|  +-----------------------------------------------------------------------+  |
++-----------------------------------------------------------------------------+
+|  ⌨️ Nhấn Esc để hủy, Enter để lưu                  [ Hủy Bỏ ]  [💾 Lưu Preset]|
++-----------------------------------------------------------------------------+
+```
+
+#### 4. Các Thành phần Dữ liệu & Quy tắc Kiểm Thực (Validation Rules)
+1. **Thông tin Ngữ cảnh (Header Context):**
+   * Tiêu đề modal kèm icon biểu trưng (`✏️ Edit3`, `🔖 Bookmark`, `Terminal`).
+   * Subtitle kỹ thuật định danh nguồn gọi (`MOD-15 • Interactive Input Gate`).
+   * Nút đóng nhanh `[X]` góc trên bên phải.
+2. **Trường Nhập Liệu (Input Field):**
+   * **Tự động kích hoạt (Autofocus & Select):** Ngay khi modal hiển thị, con trỏ tự động focus vào ô input và bôi đen toàn bộ giá trị ban đầu (`select()`) để người dùng có thể gõ đè ngay mà không cần dùng chuột.
+   * **Nút xóa nhanh `(x)` (Clear Button):** Xuất hiện khi có văn bản trong ô input, click sẽ xóa sạch nội dung và giữ focus.
+   * **Bộ đếm ký tự (Character Counter):** Hiển thị thời gian thực theo định dạng `current / maxLength`.
+   * **Kiểm thực dữ liệu (Live Validation):**
+     * Không được để trống hoặc chỉ toàn khoảng trắng (`value.trim().length > 0`).
+     * Độ dài tối đa khống chế theo prop `maxLength` (mặc định 64 ký tự).
+     * Loại bỏ các ký tự xuống dòng (`\r`, `\n`).
+     * Khi không hợp lệ: Hiển thị cảnh báo lỗi màu đỏ (`--status-failed: #ef4444`) và vô hiệu hóa nút Submit (`disabled: true`).
+3. **Phím Tắt & Tương Tác Bàn Phím (Keyboard UX):**
+   * **Phím `Enter`:** Tương đương bấm nút Xác Nhận / Lưu (nếu giá trị hợp lệ).
+   * **Phím `Esc`:** Hủy bỏ thao tác và đóng modal ngay lập tức.
+   * **Backdrop Click:** Click ra ngoài vùng modal tương đương lệnh Hủy (`Esc`).
+4. **Xử lý Thông báo & Lỗi (Error Handling):**
+   * Thay thế hoàn toàn `window.alert(...)` bằng thông báo lỗi trực tiếp trên giao diện hoặc inline error message, đảm bảo trải nghiệm người dùng liền mạch không bị chặn bởi pop-up hệ điều hành.
 
 ---
 

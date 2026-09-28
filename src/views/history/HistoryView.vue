@@ -239,7 +239,7 @@
               <td class="history-delete-cell">
                 <button class="btn btn-ghost btn-sm" title="Lưu thành command" @click="saveAsCommand(item)">Lưu Command</button>
                 <button class="btn btn-ghost btn-sm" title="Lưu thành template shell" @click="saveAsTemplate(item)">Lưu Template</button>
-                <button class="btn btn-ghost btn-sm" title="Xóa dòng lịch sử" @click="deleteCommandHistory(item.id)">Xóa</button>
+                <button class="btn btn-ghost btn-sm" title="Xóa dòng lịch sử" @click="promptDeleteHistory(item.id)">Xóa</button>
               </td>
             </tr>
           </tbody>
@@ -276,6 +276,52 @@
         </div>
       </div>
     </div>
+
+    <!-- Toast Notification -->
+    <div v-if="toastMessage" class="history-toast" :class="toastType">
+      <span>{{ toastMessage }}</span>
+      <button class="toast-close" @click="toastMessage = ''">×</button>
+    </div>
+
+    <!-- Confirm Dialog Clear History (MOD-13) -->
+    <ConfirmDialog
+      :visible="showClearHistoryConfirm"
+      title="Xóa Toàn Bộ Lịch Sử Lệnh"
+      subtitle="MOD-13 • Execution History Purge"
+      message="Bạn có chắc chắn muốn xóa toàn bộ lịch sử lệnh đã chạy? Toàn bộ danh mục lệnh đã lưu trong nhật ký sẽ bị xóa sạch khỏi cơ sở dữ liệu SQLite."
+      confirm-text="Xóa Toàn Bộ Lịch Sử"
+      :danger="true"
+      @confirm="confirmClearHistory"
+      @cancel="showClearHistoryConfirm = false"
+    />
+
+    <!-- Confirm Dialog Delete Single History (MOD-13) -->
+    <ConfirmDialog
+      :visible="showSingleDeleteConfirm"
+      title="Xóa Dòng Lịch Sử"
+      subtitle="MOD-13 • Record Removal Gate"
+      message="Bạn có chắc chắn muốn xóa dòng lịch sử lệnh này?"
+      confirm-text="Xóa Dòng"
+      :danger="true"
+      @confirm="confirmDeleteSingleHistory"
+      @cancel="showSingleDeleteConfirm = false"
+    />
+
+    <!-- Prompt Dialog Save As Command / Template (MOD-15) -->
+    <PromptDialog
+      :visible="showPromptModal"
+      :title="promptConfig.title"
+      :subtitle="promptConfig.subtitle"
+      :hint="promptConfig.hint"
+      :label="promptConfig.label"
+      :command-preview="promptConfig.commandPreview"
+      :command-badge="promptConfig.commandBadge"
+      :default-value="promptConfig.defaultValue"
+      :presets="promptConfig.presets"
+      :icon="promptConfig.icon"
+      @confirm="handlePromptConfirm"
+      @cancel="showPromptModal = false"
+    />
   </div>
 </template>
 
@@ -287,6 +333,8 @@ import {
 } from 'lucide-vue-next';
 import { ipcClient } from '@/ipc/client';
 import { useRunSession } from '@/composables/useRunSession';
+import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
+import PromptDialog from '@/components/dialogs/PromptDialog.vue';
 import type { CommandHistory, RunSession, RunEvent } from '@/types/models';
 
 const { activeProcesses } = useRunSession();
@@ -344,46 +392,145 @@ const filteredCommandHistories = computed(() => commandHistorySource.value
   ? commandHistories.value.filter((item) => item.source === commandHistorySource.value)
   : commandHistories.value);
 
-const deleteCommandHistory = async (id: string) => {
-  await ipcClient.deleteCommandHistory(id);
-  await loadCommandHistory();
+const showClearHistoryConfirm = ref(false);
+const showSingleDeleteConfirm = ref(false);
+const deletingHistoryId = ref<string | null>(null);
+
+const showPromptModal = ref(false);
+const promptConfig = ref<{
+  type: 'command' | 'template';
+  item: CommandHistory | null;
+  title: string;
+  subtitle: string;
+  hint: string;
+  label: string;
+  commandPreview: string;
+  commandBadge: string;
+  defaultValue: string;
+  presets: string[];
+  icon: 'terminal' | 'bookmark' | 'edit';
+}>({
+  type: 'command',
+  item: null,
+  title: '',
+  subtitle: '',
+  hint: '',
+  label: '',
+  commandPreview: '',
+  commandBadge: '',
+  defaultValue: '',
+  presets: [],
+  icon: 'terminal',
+});
+
+const toastMessage = ref('');
+const toastType = ref<'success' | 'error'>('success');
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+  toastMessage.value = message;
+  toastType.value = type;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toastMessage.value = '';
+  }, 3500);
 };
 
-const saveAsCommand = async (item: CommandHistory) => {
-  const name = window.prompt('Tên command mới:', item.command_line.slice(0, 48));
-  if (!name?.trim()) return;
+const promptDeleteHistory = (id: string) => {
+  deletingHistoryId.value = id;
+  showSingleDeleteConfirm.value = true;
+};
+
+const confirmDeleteSingleHistory = async () => {
+  if (!deletingHistoryId.value) return;
   try {
-    await ipcClient.saveCommand({
-      name: name.trim(),
-      execution_string: item.command_line,
-      is_shell: item.shell_kind !== 'argv',
-      shell_kind: item.shell_kind === 'argv' ? undefined : item.shell_kind,
-    });
+    await ipcClient.deleteCommandHistory(deletingHistoryId.value);
+    await loadCommandHistory();
+    showToast('Đã xóa dòng lịch sử lệnh.', 'success');
   } catch (error) {
-    window.alert(error instanceof Error ? error.message : String(error));
+    showToast(error instanceof Error ? error.message : String(error), 'error');
+  } finally {
+    showSingleDeleteConfirm.value = false;
+    deletingHistoryId.value = null;
   }
 };
 
-const saveAsTemplate = async (item: CommandHistory) => {
-  const name = window.prompt('Tên template shell mới:', item.command_line.slice(0, 48));
-  if (!name?.trim()) return;
+const saveAsCommand = (item: CommandHistory) => {
+  promptConfig.value = {
+    type: 'command',
+    item,
+    title: 'Lưu Lệnh Mới Từ Lịch Sử',
+    subtitle: 'MOD-15 • Technical Input Gate • Shell History Replay',
+    hint: 'Nhập tên gợi nhớ để lưu câu lệnh này vào Thư Viện Lệnh. Lệnh sẽ có sẵn để chạy lại hoặc đưa vào Nhóm.',
+    label: 'Tên Câu Lệnh Mới (*)',
+    commandPreview: item.command_line,
+    commandBadge: item.shell_kind === 'argv' ? 'Direct Argv' : 'Shell',
+    defaultValue: item.command_line.slice(0, 48),
+    presets: ['Build', 'Test', 'Dev Server', 'Migration', 'Backup'],
+    icon: 'terminal',
+  };
+  showPromptModal.value = true;
+};
+
+const saveAsTemplate = (item: CommandHistory) => {
+  promptConfig.value = {
+    type: 'template',
+    item,
+    title: 'Lưu Mẫu Lệnh Shell Mới',
+    subtitle: 'MOD-15 • Template Generator • Shell History Replay',
+    hint: 'Tạo một mẫu lệnh mới từ dòng lệnh lịch sử để cấu hình thêm tham số {{param}} sau này.',
+    label: 'Tên Mẫu Lệnh Mới (*)',
+    commandPreview: item.command_line,
+    commandBadge: 'Shell Template',
+    defaultValue: item.command_line.slice(0, 48),
+    presets: ['FFmpeg', 'Docker', 'Git', 'Script', 'Dev'],
+    icon: 'bookmark',
+  };
+  showPromptModal.value = true;
+};
+
+const handlePromptConfirm = async (name: string) => {
+  const item = promptConfig.value.item;
+  if (!item || !name.trim()) return;
+  showPromptModal.value = false;
+
   try {
-    await ipcClient.saveTemplate({
-      name: name.trim(),
-      description: 'Tạo từ lịch sử lệnh',
-      template_string: item.command_line,
-      is_shell: true,
-      params: [],
-    });
+    if (promptConfig.value.type === 'command') {
+      await ipcClient.saveCommand({
+        name: name.trim(),
+        execution_string: item.command_line,
+        is_shell: item.shell_kind !== 'argv',
+        shell_kind: item.shell_kind === 'argv' ? undefined : item.shell_kind,
+      });
+      showToast(`Đã lưu câu lệnh "${name.trim()}" vào Thư Viện Lệnh.`, 'success');
+    } else {
+      await ipcClient.saveTemplate({
+        name: name.trim(),
+        description: 'Tạo từ lịch sử lệnh',
+        template_string: item.command_line,
+        is_shell: true,
+        params: [],
+      });
+      showToast(`Đã lưu Mẫu Lệnh "${name.trim()}" thành công.`, 'success');
+    }
   } catch (error) {
-    window.alert(error instanceof Error ? error.message : String(error));
+    showToast(error instanceof Error ? error.message : String(error), 'error');
   }
 };
 
-const clearCommandHistory = async () => {
-  if (!window.confirm('Xóa toàn bộ lịch sử lệnh đã chạy?')) return;
-  await ipcClient.clearCommandHistory();
-  commandHistories.value = [];
+const clearCommandHistory = () => {
+  showClearHistoryConfirm.value = true;
+};
+
+const confirmClearHistory = async () => {
+  showClearHistoryConfirm.value = false;
+  try {
+    await ipcClient.clearCommandHistory();
+    commandHistories.value = [];
+    showToast('Đã xóa toàn bộ lịch sử lệnh.', 'success');
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error), 'error');
+  }
 };
 
 const selectSession = async (id: number) => {
@@ -997,5 +1144,57 @@ const showLogNotice = async (evt: RunEvent) => {
 
 .log-line.success {
   color: var(--status-running);
+}
+
+.history-toast {
+  position: fixed;
+  bottom: 38px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  z-index: 150;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  animation: toastIn 0.2s ease-out;
+}
+
+.history-toast.success {
+  background-color: #141721;
+  border: 1px solid var(--status-running);
+  color: #a7f3d0;
+}
+
+.history-toast.error {
+  background-color: #141721;
+  border: 1px solid var(--status-failed);
+  color: #fca5a5;
+}
+
+.toast-close {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.toast-close:hover {
+  opacity: 1;
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 </style>

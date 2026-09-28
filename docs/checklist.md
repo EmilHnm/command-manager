@@ -143,6 +143,7 @@
 - [x] **Kiểm soát thao tác đặc quyền:** các command/settings/autostart/template/group/import mutation đều yêu cầu `confirmed: bool` ở Rust; frontend truyền xác nhận từ các luồng thao tác người dùng.
 - [x] **Cảnh báo nguồn ngoài:** Hộp thoại khôi phục hiển thị rõ cảnh báo chỉ nạp tệp từ nguồn tin cậy (Trusted Zone).
 - [x] **Ranh giới Capability:** WebView không spawn trực tiếp; mọi spawn, PTY write và lifecycle đều đi qua IPC đã đăng ký, process manager và backend validation. Terminal tương tác được cấp có chủ đích, còn command/template được backend render/kiểm tra trước khi chạy.
+- [x] **Triệt tiêu toàn bộ modal mặc định của hệ thống:** Thay thế 100% các lệnh `window.confirm`, `window.prompt`, `window.alert` bằng custom modal theo thiết kế Technical Precision Dark: MOD-13 ([ConfirmDialog.vue](../src/components/dialogs/ConfirmDialog.vue)) cho xác nhận xoá/thao tác nguy hiểm và MOD-15 ([PromptDialog.vue](../src/components/dialogs/PromptDialog.vue)) cho nhập liệu nhanh/lưu cấu hình tức thời.
 
 ---
 

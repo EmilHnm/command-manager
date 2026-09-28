@@ -209,6 +209,33 @@
         </button>
       </div>
     </div>
+
+    <!-- Prompt Dialog Save Preset (MOD-15) -->
+    <PromptDialog
+      :visible="showSavePresetPrompt"
+      title="Lưu Bộ Tham Số Preset"
+      subtitle="MOD-15 • Parameter Snapshot Gate"
+      hint="Lưu lại các giá trị tham số hiện tại thành Preset để tái sử dụng nhanh chóng cho các lần thực thi sau."
+      label="Tên Preset Mới (*)"
+      placeholder="Ví dụ: Production 1080p, Debug Mode..."
+      :max-length="32"
+      icon="bookmark"
+      confirm-text="Lưu Preset"
+      @confirm="handleConfirmSavePreset"
+      @cancel="showSavePresetPrompt = false"
+    />
+
+    <!-- Confirm Dialog Delete Preset (MOD-13) -->
+    <ConfirmDialog
+      :visible="showDeletePresetConfirm"
+      title="Xóa Bộ Tham Số Preset"
+      subtitle="MOD-13 • Preset Removal Gate"
+      :message="`Bạn có chắc chắn muốn xóa bộ tham số Preset '${selectedPresetName}'? Thao tác này không thể hoàn tác.`"
+      confirm-text="Xóa Preset"
+      :danger="true"
+      @confirm="confirmDeletePreset"
+      @cancel="showDeletePresetConfirm = false"
+    />
   </div>
 </template>
 
@@ -232,6 +259,8 @@ import {
 } from 'lucide-vue-next';
 import { useTemplates } from '@/composables/useTemplates';
 import { ipcClient, isTauriRuntime } from '@/ipc/client';
+import PromptDialog from '@/components/dialogs/PromptDialog.vue';
+import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import type { CommandTemplate, TemplatePreviewPayload } from '@/types/models';
 
 const props = defineProps<{
@@ -420,22 +449,41 @@ const applySelectedPreset = () => {
   }
 };
 
-const promptSavePreset = async () => {
+const showSavePresetPrompt = ref(false);
+const showDeletePresetConfirm = ref(false);
+
+const selectedPresetName = computed(() => {
+  if (!selectedPresetId.value) return '';
+  const p = availablePresets.value.find(pr => pr.id === selectedPresetId.value);
+  return p ? p.name : '';
+});
+
+const promptSavePreset = () => {
   if (!template.value) return;
-  const presetName = window.prompt('Nhập tên bộ tham số Preset để lưu lại:');
-  if (presetName && presetName.trim()) {
-    const newP = await savePreset(template.value.id, presetName.trim(), paramValues.value);
-    if (newP) {
-      selectedPresetId.value = newP.id;
-    }
+  showSavePresetPrompt.value = true;
+};
+
+const handleConfirmSavePreset = async (name: string) => {
+  if (!template.value || !name.trim()) return;
+  showSavePresetPrompt.value = false;
+  const newP = await savePreset(template.value.id, name.trim(), paramValues.value);
+  if (newP) {
+    selectedPresetId.value = newP.id;
   }
 };
 
-const handleDeletePreset = async () => {
+const handleDeletePreset = () => {
   if (!selectedPresetId.value) return;
-  if (window.confirm('Bạn có chắc chắn muốn xóa Preset này?')) {
+  showDeletePresetConfirm.value = true;
+};
+
+const confirmDeletePreset = async () => {
+  if (!selectedPresetId.value) return;
+  try {
     await deletePreset(selectedPresetId.value);
     selectedPresetId.value = null;
+  } finally {
+    showDeletePresetConfirm.value = false;
   }
 };
 
