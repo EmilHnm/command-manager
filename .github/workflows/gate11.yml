@@ -79,6 +79,13 @@ jobs:
           components: clippy
       - name: Install supported shells
         run: sudo apt-get update && sudo apt-get install --yes zsh dash
+      # Ubuntu's /etc/zsh/zshrc runs compinit, which stops at an interactive
+      # "insecure directories" question when fpath dirs are group/other
+      # writable on the runner, so the shell never draws its prompt.
+      - name: Secure zsh completion directories
+        run: |
+          zsh -fc 'autoload -U compaudit; compaudit' | xargs -r sudo chmod g-w,o-w
+          test -z "$(zsh -fc 'autoload -U compaudit; compaudit')"
       - name: Validate POSIX integration scripts
         run: |
           bash -n src-tauri/src/pty/shell_integration/bash.sh

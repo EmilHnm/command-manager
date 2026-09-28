@@ -89,6 +89,7 @@ mod tests {
     use super::split_argv;
 
     #[test]
+    #[cfg_attr(not(windows), allow(unused_variables))]
     fn parses_windows_executable_and_model_paths() {
         let command = r#"G:\Work\llama.cpp\build\bin\llama-server.exe -m "E:\Models\Qwen3.5-Hasutsubomi-9B-Q4_K_M-no-mtp.gguf" -ngl 99 -c 8192 --flash-attn on --tensor-split 7,3 -c 32768 --jinja"#;
         let argv = split_argv(command).expect("valid Windows argv");
@@ -116,6 +117,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(windows), allow(unused_variables))]
     fn keeps_a_quoted_argument_as_one_token() {
         let argv =
             split_argv(r#"tool.exe -m "C:\Models\model file.gguf" --flag"#).expect("valid argv");
