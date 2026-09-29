@@ -414,7 +414,7 @@
 
       <!-- Drop Zones Overlay khi kéo tab trong Single View Mode để kích hoạt Split -->
       <div
-        v-if="dragState?.isDragging && splitMode === 'single' && paneATabs.length > 1"
+        v-if="dragState?.isDragging && splitMode === 'single'"
         class="single-mode-split-hints"
       >
         <div
@@ -440,7 +440,7 @@
         v-if="dragState?.isDragging"
         class="terminal-tab floating-drag-tab"
         :style="{
-          top: `${dragState.top + Math.max(-8, Math.min(8, dragState.currentY - dragState.startY))}px`,
+          top: `${dragState.currentY - dragState.grabOffsetY}px`,
           left: `${dragState.currentX - dragState.grabOffsetX}px`,
           width: `${dragState.width}px`,
           height: `${dragState.height}px`,
@@ -453,6 +453,14 @@
         />
         <span class="tab-title">{{ dragState.tabName }}</span>
       </div>
+    </Teleport>
+
+    <!-- Tab Drag Guard (Overlay bảo vệ khi kéo tab để tránh xterm nuốt mouse events) -->
+    <Teleport to="body">
+      <div
+        v-if="dragState?.isDragging"
+        class="tab-drag-guard"
+      />
     </Teleport>
 
     <!-- Pointer Overlay Guard khi đang kéo thanh Sash để tránh mất mouse events -->
@@ -594,6 +602,7 @@ const {
   swapPanes,
   selectTab,
   moveTabToOppositePane,
+  splitWithTab,
   transferTab,
   closeTab: splitCloseTab,
   closePane: splitClosePane,
@@ -802,17 +811,22 @@ const closeContextMenu = () => {
 const handleContextMenuMoveOpposite = () => {
   if (contextMenuTarget.value) {
     if (splitMode.value === 'single') {
-      setSplitMode('horizontal');
+      splitWithTab('horizontal', contextMenuTarget.value.tab.id);
+    } else {
+      moveTabToOppositePane(contextMenuTarget.value.tab.id);
     }
-    moveTabToOppositePane(contextMenuTarget.value.tab.id);
   }
   closeContextMenu();
 };
 
 const handleContextMenuSplitVertical = () => {
   if (contextMenuTarget.value) {
-    setSplitMode('vertical');
-    moveTabToOppositePane(contextMenuTarget.value.tab.id);
+    if (splitMode.value === 'single') {
+      splitWithTab('vertical', contextMenuTarget.value.tab.id);
+    } else {
+      splitMode.value = 'vertical';
+      moveTabToOppositePane(contextMenuTarget.value.tab.id);
+    }
   }
   closeContextMenu();
 };
@@ -935,6 +949,7 @@ interface PointerDragState {
   currentX: number;
   currentY: number;
   grabOffsetX: number;
+  grabOffsetY: number;
   top: number;
   width: number;
   height: number;
@@ -1078,6 +1093,7 @@ const handleTabPointerDown = (e: PointerEvent, tab: OpenTabItem, pane: ActivePan
     currentX: e.clientX,
     currentY: e.clientY,
     grabOffsetX: e.clientX - rect.left,
+    grabOffsetY: e.clientY - rect.top,
     top: rect.top,
     width: rect.width,
     height: rect.height,
@@ -1121,13 +1137,33 @@ const onTabPointerMove = (e: PointerEvent) => {
 
   if (splitMode.value === 'single') {
     const container = splitContainerRef.value;
-    if (container && paneATabs.value.length > 1) {
+    if (container && paneATabs.value.length > 0) {
       const cRect = container.getBoundingClientRect();
-      // Kéo về 30% cạnh phải -> kích hoạt split-right
-      if (e.clientX > cRect.right - Math.max(180, cRect.width * 0.3)) {
-        targetDrop = 'split-right';
-      } else if (e.clientY > cRect.bottom - Math.max(120, cRect.height * 0.3)) {
-        targetDrop = 'split-bottom';
+      const tabStrip = container.querySelector('.pane-tab-strip') as HTMLElement | null;
+      const tabStripBottom = tabStrip ? tabStrip.getBoundingClientRect().bottom : cRect.top + 34;
+
+      const rightZoneWidth = Math.max(240, cRect.width * 0.3);
+      const bottomZoneHeight = Math.max(140, cRect.height * 0.3);
+
+      const inRightZone = e.clientX > cRect.right - rightZoneWidth;
+      const inBottomZone = e.clientY > cRect.bottom - bottomZoneHeight;
+      const hasLeftTabStrip = e.clientY > tabStripBottom + 16;
+
+      if (hasLeftTabStrip) {
+        if (inRightZone && !inBottomZone) {
+          targetDrop = 'split-right';
+        } else if (inBottomZone && !inRightZone) {
+          targetDrop = 'split-bottom';
+        } else {
+          // Khi kéo vào góc hoặc giữa màn hình terminal: chọn hướng gần nhất
+          const distToRight = cRect.right - e.clientX;
+          const distToBottom = cRect.bottom - e.clientY;
+          if (distToRight < distToBottom) {
+            targetDrop = 'split-right';
+          } else {
+            targetDrop = 'split-bottom';
+          }
+        }
       } else {
         targetDrop = 'paneA';
       }
@@ -1138,6 +1174,7 @@ const onTabPointerMove = (e: PointerEvent) => {
     // Đang ở Split Mode: kiểm tra xem chuột đang ở Pane A hay Pane B
     const container = splitContainerRef.value;
     if (container) {
+      const paneAEl = container.querySelector('.pane-a') as HTMLElement | null;
       const paneBEl = container.querySelector('.pane-b') as HTMLElement | null;
       if (paneBEl) {
         const bRect = paneBEl.getBoundingClientRect();
@@ -1148,8 +1185,16 @@ const onTabPointerMove = (e: PointerEvent) => {
           e.clientY <= bRect.bottom
         ) {
           targetDrop = 'paneB';
-        } else {
-          targetDrop = 'paneA';
+        } else if (paneAEl) {
+          const aRect = paneAEl.getBoundingClientRect();
+          if (
+            e.clientX >= aRect.left &&
+            e.clientX <= aRect.right &&
+            e.clientY >= aRect.top &&
+            e.clientY <= aRect.bottom
+          ) {
+            targetDrop = 'paneA';
+          }
         }
       }
     }
@@ -1166,10 +1211,7 @@ const onTabPointerMove = (e: PointerEvent) => {
   const containerEl = getTabsListEl(hoverPane);
   if (!containerEl) return;
 
-  const currentScroll = containerEl.scrollLeft;
-  const effectiveX = e.clientX + currentScroll;
-
-  // Đo midpoints của tabs trong pane đang hover
+  // Đo midpoints của tabs trong pane đang hover (loại trừ placeholder)
   const tabElements = Array.from(
     containerEl.querySelectorAll<HTMLElement>('.terminal-tab:not(.tab-placeholder)')
   );
@@ -1179,26 +1221,24 @@ const onTabPointerMove = (e: PointerEvent) => {
     return r.left + r.width / 2;
   });
 
+  const cursorX = e.clientX;
   let newSlot = 0;
   if (hoverPane === dragState.value.fromPane) {
     // Kéo nội bộ cùng một khung
-    const fromIndex = dragState.value.initialIndex;
     for (let i = 0; i < midpoints.length; i++) {
-      if (i === fromIndex) continue;
-      if (effectiveX > midpoints[i]) {
-        newSlot++;
+      if (cursorX > midpoints[i]) {
+        newSlot = i + 1;
       }
     }
   } else {
     // Kéo từ khung khác sang khung này
     const tabStripRect = containerEl.getBoundingClientRect();
-    // Nếu con trỏ chuột nằm sâu dưới viewport (không phải trên tab strip), thả vào cuối danh sách tab
     if (e.clientY > tabStripRect.bottom + 8) {
       newSlot = midpoints.length;
     } else {
       for (let i = 0; i < midpoints.length; i++) {
-        if (effectiveX > midpoints[i]) {
-          newSlot++;
+        if (cursorX > midpoints[i]) {
+          newSlot = i + 1;
         }
       }
     }
@@ -1230,20 +1270,16 @@ const onTabPointerUp = () => {
     isDropping.value = true;
 
     if (dropTimer) clearTimeout(dropTimer);
-    dropTimer = setTimeout(() => {
-      if (hoverPane === 'split-right') {
-        setSplitMode('horizontal');
-        moveTabToOppositePane(tabId);
-      } else if (hoverPane === 'split-bottom') {
-        setSplitMode('vertical');
-        moveTabToOppositePane(tabId);
-      } else if (hoverPane === 'paneA' || hoverPane === 'paneB') {
-        transferTab(fromPane, hoverPane, tabId, toIndex ?? undefined);
-      }
-      dragState.value = null;
-      placeholderIndex.value = null;
-      isDropping.value = false;
-    }, 45);
+    if (hoverPane === 'split-right') {
+      splitWithTab('horizontal', tabId);
+    } else if (hoverPane === 'split-bottom') {
+      splitWithTab('vertical', tabId);
+    } else if (hoverPane === 'paneA' || hoverPane === 'paneB') {
+      transferTab(fromPane, hoverPane, tabId, toIndex ?? undefined);
+    }
+    dragState.value = null;
+    placeholderIndex.value = null;
+    isDropping.value = false;
   } else {
     // Click đơn giản không kéo: chọn tab ở pane nguồn
     selectTab(fromPane, tabId);
@@ -1482,6 +1518,7 @@ defineExpose({
   swapPanes,
   resetSplitRatio,
   moveTabToOppositePane,
+  splitWithTab,
   transferTab,
 });
 </script>
@@ -2131,6 +2168,16 @@ defineExpose({
   user-select: none;
 }
 
+/* Guard toàn màn hình khi kéo Tab để tránh xterm/iframe nuốt mouse events */
+.tab-drag-guard {
+  position: fixed;
+  inset: 0;
+  z-index: 99998;
+  cursor: grabbing;
+  user-select: none;
+  background: transparent;
+}
+
 /* ----------------------------------------------------
    Single View Mode Drop Zones (Chia đôi màn hình khi kéo tab)
 ---------------------------------------------------- */
@@ -2159,17 +2206,17 @@ defineExpose({
 }
 
 .split-drop-zone.right-zone {
-  top: 6px;
-  right: 6px;
-  bottom: 6px;
-  width: 240px;
+  top: 8px;
+  right: 8px;
+  bottom: 8px;
+  width: max(240px, 30%);
 }
 
 .split-drop-zone.bottom-zone {
-  left: 6px;
-  right: 254px;
-  bottom: 6px;
-  height: 140px;
+  left: 8px;
+  right: calc(max(240px, 30%) + 16px);
+  bottom: 8px;
+  height: max(140px, 30%);
 }
 
 .split-drop-zone.is-hovered {

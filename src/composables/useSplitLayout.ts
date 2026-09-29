@@ -141,6 +141,43 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
     }
   };
 
+  // Tách màn hình sang Horizontal hoặc Vertical với một tab cụ thể được chỉ định
+  const splitWithTab = (mode: 'horizontal' | 'vertical', tabId: string) => {
+    // 1. Nếu tab đang ở Pane A
+    const inA = paneATabs.value.findIndex(t => t.id === tabId);
+    if (inA !== -1) {
+      if (paneATabs.value.length > 1) {
+        const [tab] = paneATabs.value.splice(inA, 1);
+        paneBTabs.value.push(tab);
+        splitMode.value = mode;
+        activeTabIdB.value = tab.id;
+        activePane.value = 'paneB';
+
+        // Cập nhật active tab của Pane A
+        if (activeTabIdA.value === tabId) {
+          activeTabIdA.value = paneATabs.value[Math.min(inA, paneATabs.value.length - 1)]?.id || '';
+        }
+      } else {
+        // Nếu Pane A chỉ có 1 tab duy nhất, giữ tab ở Pane A và mở Pane B ở trạng thái sẵn sàng
+        splitMode.value = mode;
+        activePane.value = 'paneB';
+      }
+
+      persistPreferences();
+      return;
+    }
+
+    // 2. Nếu tab đang ở Pane B
+    const inB = paneBTabs.value.findIndex(t => t.id === tabId);
+    if (inB !== -1) {
+      splitMode.value = mode;
+      activeTabIdB.value = tabId;
+      activePane.value = 'paneB';
+      persistPreferences();
+      return;
+    }
+  };
+
   // Di chuyển tab sang Pane đối diện
   const moveTabToOppositePane = (tabId: string) => {
     const inA = paneATabs.value.findIndex(t => t.id === tabId);
@@ -388,6 +425,7 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
     swapPanes,
     selectTab,
     moveTabToOppositePane,
+    splitWithTab,
     transferTab,
     closeTab,
     closePane,

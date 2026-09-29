@@ -59,6 +59,7 @@
   - Giao diện người dùng chặn đóng cửa sổ và hiển thị [ShutdownOverlay.vue](../src/components/dialogs/ShutdownOverlay.vue) (MOD-09).
 - [x] **Adapter nền tảng Windows:** [windows.rs](../src-tauri/src/process/platform/windows.rs) dùng `taskkill` và cờ `/T` để tiêu diệt toàn bộ cây tiến trình con.
 - [~] **Linux `PR_SET_PDEATHSIG` trước `exec`:** Hàm `pdeathsig_pre_exec` đã được hiện thực trong [unix.rs](../src-tauri/src/process/platform/unix.rs). *(Ghi chú: portable-pty 0.8 chưa mở hook pre-exec công khai; cần chuyển hướng sang std::process::Command nếu cần ghim trực tiếp).*
+- [x] **Linux cô lập bộ nhớ theo tiến trình con:** `register_process` ([linux.rs](../src-tauri/src/process/platform/linux.rs)) chuyển mỗi child (terminal, lệnh) sang một transient scope riêng `app-command\x2dmanager-<uuid>.scope` qua D-Bus `StartTransientUnit` của systemd user manager (như `vte-spawn-*.scope` của GNOME Terminal), đặt cùng slice và `BindsTo` scope của app. Nhờ đó systemd-oomd kill riêng terminal ngốn RAM thay vì cả app. Child cũng được tăng `oom_score_adj` thêm 300 (tối đa 1000) để kernel OOM killer ưu tiên chọn child. Không có session bus/systemd user manager thì bỏ qua. Giới hạn: việc chuyển scope chạy nền ngay sau spawn, nên process cháu tạo trước đó vẫn ở lại scope của app.
 
 ---
 
