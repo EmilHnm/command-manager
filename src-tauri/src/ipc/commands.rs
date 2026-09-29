@@ -1247,13 +1247,16 @@ pub fn command_run(app: AppHandle, command_id: String) -> Result<TerminalInfo> {
 /// stream as command-backed terminals, so input, resize, reattach, and stop
 /// behave consistently.
 #[tauri::command]
-pub async fn terminal_open(app: AppHandle) -> Result<TerminalInfo> {
-    tauri::async_runtime::spawn_blocking(move || terminal_open_sync(app))
+pub async fn terminal_open(app: AppHandle, cwd: Option<String>) -> Result<TerminalInfo> {
+    tauri::async_runtime::spawn_blocking(move || terminal_open_sync(app, cwd))
         .await
         .map_err(|error| Error::msg(format!("terminal worker failed: {error}")))?
 }
 
-fn terminal_open_sync(app: AppHandle) -> Result<TerminalInfo> {
+fn terminal_open_sync(app: AppHandle, cwd: Option<String>) -> Result<TerminalInfo> {
+    let cwd = cwd
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_dir());
     let state = app.state::<AppState>();
     let terminal_id = Uuid::new_v4().to_string();
     let run_event_id = format!("terminal:{terminal_id}");
@@ -1289,6 +1292,7 @@ fn terminal_open_sync(app: AppHandle) -> Result<TerminalInfo> {
         integration_root,
         preferred_shell,
         load_powershell_profile,
+        cwd,
         move |code| {
             let state = app2.state::<AppState>();
             state.processes.remove(&run_event_id2);
@@ -1627,8 +1631,14 @@ pub fn open_url(url: String) -> Result<()> {
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-        let wide_url: Vec<u16> = std::ffi::OsStr::new(&url).encode_wide().chain(std::iter::once(0)).collect();
-        let wide_open: Vec<u16> = std::ffi::OsStr::new("open").encode_wide().chain(std::iter::once(0)).collect();
+        let wide_url: Vec<u16> = std::ffi::OsStr::new(&url)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let wide_open: Vec<u16> = std::ffi::OsStr::new("open")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         unsafe {
             let ret = ShellExecuteW(
                 None,
@@ -1639,7 +1649,10 @@ pub fn open_url(url: String) -> Result<()> {
                 SW_SHOWNORMAL,
             );
             if (ret.0 as usize) <= 32 {
-                return Err(Error::msg(format!("Không thể mở trình duyệt: mã lỗi {}", ret.0 as usize)));
+                return Err(Error::msg(format!(
+                    "Không thể mở trình duyệt: mã lỗi {}",
+                    ret.0 as usize
+                )));
             }
         }
     }
@@ -1662,4 +1675,3 @@ pub fn open_url(url: String) -> Result<()> {
 
     Ok(())
 }
-

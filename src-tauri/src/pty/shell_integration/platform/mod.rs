@@ -12,6 +12,7 @@ pub(super) fn spawn(
     integration_root: Option<&std::path::Path>,
     preferred_shell: Option<&str>,
     load_powershell_profile: bool,
+    cwd: Option<&std::path::Path>,
 ) -> Result<InteractiveShell> {
     #[cfg(windows)]
     {
@@ -20,6 +21,7 @@ pub(super) fn spawn(
             integration_root,
             preferred_shell,
             load_powershell_profile,
+            cwd,
         )
     }
     #[cfg(not(windows))]
@@ -29,6 +31,7 @@ pub(super) fn spawn(
             integration_root,
             preferred_shell,
             load_powershell_profile,
+            cwd,
         )
     }
 }

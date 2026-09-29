@@ -11,6 +11,7 @@ export interface OpenTabItem {
   shellKind?: string;
   historyLevel?: number;
   isManual?: boolean;
+  cwd?: string;
 }
 
 const SPLIT_MODE_KEY = 'cm_split_mode_v1';

@@ -1027,7 +1027,7 @@ export const ipcClient = {
     };
   },
 
-  openTerminal: async (): Promise<{
+  openTerminal: async (cwd?: string): Promise<{
     commandId: number;
     runEventId: string;
     pid?: number;
@@ -1040,14 +1040,15 @@ export const ipcClient = {
       terminalNames.set(commandId, 'Terminal');
       runEventToCommand.set(runEventId, commandId);
       mockTerminalInput.set(commandId, '');
+      const mockCwd = (cwd || 'C:\\Users\\HOA').replace(/\\/g, '\\\\').replace(/;/g, '\\x3b');
       mockLogBuffers.set(
         commandId,
-        '\x1b]633;D;0\x07\x1b]633;P;Cwd=C:\\\\Users\\\\HOA\x07\x1b]633;A\x07\x1b]633;B\x07',
+        `\x1b]633;D;0\x07\x1b]633;P;Cwd=${mockCwd}\x07\x1b]633;A\x07\x1b]633;B\x07`,
       );
       return { commandId, runEventId, shellKind: 'mock', historyLevel: 2 };
     }
 
-    const terminal = await invokeTauri<BackendTerminal>('terminal_open');
+    const terminal = await invokeTauri<BackendTerminal>('terminal_open', { cwd: cwd || null });
     const commandId = terminalUiIdFor(terminal.command_id);
     runEventToCommand.set(terminal.run_event_id, commandId);
     runEventToSession.set(

@@ -1062,6 +1062,7 @@ Hệ màu tối ưu cho Dark Theme với phong cách kỹ thuật cao cấp:
 | `Ctrl + Alt + Up / Down` | Chuyển focus giữa Khung Trên (Pane A) và Khung Dưới (Pane B) | Màn hình Workspace (SCR-01) |
 | `Ctrl + Alt + M` | Chuyển tab đang active sang Pane đối diện (Move to Opposite Pane) | Màn hình Workspace (SCR-01) |
 | `Ctrl + Alt + R` | Đặt lại tỉ lệ chia đôi về trạng thái cân bằng chuẩn 50:50 | Màn hình Workspace (SCR-01) |
+| `Ctrl + N` | Mở terminal mới vào khung đang focus, cùng thư mục làm việc (cwd do shell báo qua OSC 633 `P;Cwd`) với terminal đang active; thư mục không còn tồn tại thì dùng thư mục mặc định | Màn hình Workspace (kể cả khi đang gõ trong terminal) |
 | `Ctrl + W` | Ẩn tab Terminal hiện tại (không dừng process) | Màn hình Workspace |
 | `Ctrl + Shift + W` | Dừng tiến trình hiện tại và đóng tab | Màn hình Workspace |
 | `Ctrl + Shift + C` | Sao chép vùng chọn trong xterm.js | Tab Terminal |

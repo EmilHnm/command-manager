@@ -156,12 +156,14 @@ pub fn spawn(
     integration_root: Option<&std::path::Path>,
     preferred_shell: Option<&str>,
     load_powershell_profile: bool,
+    cwd: Option<&std::path::Path>,
 ) -> Result<InteractiveShell> {
     platform::spawn(
         slave,
         integration_root,
         preferred_shell,
         load_powershell_profile,
+        cwd,
     )
 }
 

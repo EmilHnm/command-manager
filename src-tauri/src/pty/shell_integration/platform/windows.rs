@@ -19,6 +19,7 @@ pub(super) fn spawn(
     integration_root: Option<&std::path::Path>,
     preferred_shell: Option<&str>,
     load_powershell_profile: bool,
+    cwd: Option<&std::path::Path>,
 ) -> Result<InteractiveShell> {
     let nonce = uuid::Uuid::new_v4().simple().to_string();
     let script = include_str!("../powershell.ps1");
@@ -51,6 +52,9 @@ pub(super) fn spawn(
             command.args(["-NoExit", "-File", &script_path_string]);
             command.env("CM_NONCE", &nonce);
             crate::pty::session::set_terminal_env(&mut command);
+            if let Some(cwd) = cwd {
+                command.cwd(cwd);
+            }
             if let Ok(child) = slave.spawn_command(command) {
                 let shell_kind = if kind == "Pwsh" {
                     ShellKind::Pwsh
@@ -77,6 +81,9 @@ pub(super) fn spawn(
     command.args(["/D", "/Q", "/K"]);
     command.env("PROMPT", prompt);
     crate::pty::session::set_terminal_env(&mut command);
+    if let Some(cwd) = cwd {
+        command.cwd(cwd);
+    }
     let child = slave
         .spawn_command(command)
         .map_err(|e| Error::msg(e.to_string()))?;

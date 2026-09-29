@@ -159,9 +159,10 @@ watch(() => [props.fontFamily, props.fontSize], async () => {
   updateSuggestionPosition();
 });
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'stop-process', id: number): void;
   (e: 'restart-process', id: number): void;
+  (e: 'cwd-change', cwd: string): void;
 }>();
 
 const terminalElement = ref<HTMLDivElement | null>(null);
@@ -419,6 +420,7 @@ onMounted(async () => {
       shellPhase = 'prompt';
     } else if (kind === 'P' && payload.startsWith('Cwd=')) {
       currentCwd = decodeOsc(payload.slice(4));
+      emit('cwd-change', currentCwd);
     }
     return true;
   });
@@ -430,6 +432,12 @@ onMounted(async () => {
   // onKey for an event it is told not to process.
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true;
+    // Ctrl+N opens a new terminal (handled by DockHost on window); keep it
+    // from reaching the shell as ^N.
+    if (event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey
+      && event.key.toLowerCase() === 'n') {
+      return false;
+    }
     if (event.ctrlKey && (event.code === 'Space' || event.key === ' ')) {
       event.preventDefault();
       event.stopPropagation();

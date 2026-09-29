@@ -108,6 +108,7 @@ pub fn spawn_interactive(
     integration_root: Option<std::path::PathBuf>,
     preferred_shell: Option<String>,
     load_powershell_profile: bool,
+    cwd: Option<std::path::PathBuf>,
     on_exit: impl FnOnce(Option<i32>) + Send + 'static,
     on_history: impl FnMut(ShellHistoryRecord) + Send + 'static,
 ) -> Result<Spawned> {
@@ -117,6 +118,7 @@ pub fn spawn_interactive(
         integration_root,
         preferred_shell,
         load_powershell_profile,
+        cwd.as_deref(),
     )?;
     let mut child = metadata.child;
     let killer = child.clone_killer();

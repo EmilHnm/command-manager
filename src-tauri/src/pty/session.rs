@@ -362,7 +362,7 @@ pub fn spawn_argv_on_slave(
 pub fn spawn_interactive_on_slave(
     slave: Box<dyn portable_pty::SlavePty + Send>,
 ) -> Result<Box<dyn portable_pty::Child + Send + Sync>> {
-    Ok(spawn_interactive_with_metadata(slave, None, None, true)?.child)
+    Ok(spawn_interactive_with_metadata(slave, None, None, true, None)?.child)
 }
 
 pub fn spawn_interactive_with_metadata(
@@ -370,12 +370,14 @@ pub fn spawn_interactive_with_metadata(
     integration_root: Option<std::path::PathBuf>,
     preferred_shell: Option<String>,
     load_powershell_profile: bool,
+    cwd: Option<&std::path::Path>,
 ) -> Result<InteractiveShell> {
     shell_integration::spawn(
         slave,
         integration_root.as_deref(),
         preferred_shell.as_deref(),
         load_powershell_profile,
+        cwd,
     )
 }
 
@@ -656,7 +658,8 @@ mod tests {
         let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
         let run_event_id = "test-interactive-shell".to_string();
-        let shell = spawn_interactive_with_metadata(slave, None, None, false).expect("spawn shell");
+        let shell =
+            spawn_interactive_with_metadata(slave, None, None, false, None).expect("spawn shell");
         let mut child = shell.child;
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
@@ -704,11 +707,51 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn interactive_shell_starts_in_the_requested_cwd() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().canonicalize().expect("canonical cwd");
+        let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
+        let mut shell = spawn_interactive_with_metadata(
+            slave,
+            None,
+            Some(String::from("bash")),
+            true,
+            Some(&cwd),
+        )
+        .expect("spawn shell");
+        let reader = pty.clone_reader().expect("clone pty reader");
+        let buffer = Arc::clone(&pty.buffer);
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        std::thread::spawn(move || {
+            pump_reader(reader, buffer, "test-cwd".into(), IpcPipe::new(tx));
+        });
+
+        let marker = format!("\x1b]633;P;Cwd={}", cwd.display());
+        let mut found = false;
+        for _ in 0..200 {
+            let snapshot = pty.snapshot().expect("read pty buffer");
+            if String::from_utf8_lossy(&snapshot).contains(&marker) {
+                found = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = shell.child.kill();
+        let _ = shell.child.wait();
+        assert!(
+            found,
+            "shell did not report {cwd:?}: {:?}",
+            String::from_utf8_lossy(&pty.snapshot().expect("snapshot"))
+        );
+    }
+
     #[test]
     fn interactive_shell_tracker_records_a_level_one_command() {
         let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
         let mut shell =
-            spawn_interactive_with_metadata(slave, None, None, true).expect("spawn shell");
+            spawn_interactive_with_metadata(slave, None, None, true, None).expect("spawn shell");
         let Some(nonce) = shell.nonce.clone() else {
             let _ = shell.child.kill();
             let _ = shell.child.wait();
@@ -882,7 +925,7 @@ mod tests {
             tested += 1;
             let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
             let mut shell =
-                spawn_interactive_with_metadata(slave, None, Some(name.to_string()), true)
+                spawn_interactive_with_metadata(slave, None, Some(name.to_string()), true, None)
                     .expect("spawn unix shell");
             let reader = pty.clone_reader().expect("clone pty reader");
             let buffer = Arc::clone(&pty.buffer);
@@ -979,7 +1022,7 @@ mod tests {
     fn cmd_preference_emits_prompt_markers_and_uses_level_two_history() {
         let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
         let mut shell =
-            spawn_interactive_with_metadata(slave, None, Some(String::from("cmd")), true)
+            spawn_interactive_with_metadata(slave, None, Some(String::from("cmd")), true, None)
                 .expect("spawn cmd shell");
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
@@ -1135,9 +1178,14 @@ mod tests {
             return;
         }
         let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
-        let mut shell =
-            spawn_interactive_with_metadata(slave, None, Some(String::from("powershell")), true)
-                .expect("spawn Windows PowerShell");
+        let mut shell = spawn_interactive_with_metadata(
+            slave,
+            None,
+            Some(String::from("powershell")),
+            true,
+            None,
+        )
+        .expect("spawn Windows PowerShell");
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
@@ -1212,7 +1260,7 @@ mod tests {
         }
         let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
         let mut shell =
-            spawn_interactive_with_metadata(slave, None, Some(String::from("pwsh")), false)
+            spawn_interactive_with_metadata(slave, None, Some(String::from("pwsh")), false, None)
                 .expect("spawn pwsh without profile");
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);

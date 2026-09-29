@@ -221,6 +221,7 @@
                 :restarting="restartingCmdId === tab.commandId"
                 @stop-process="handleStopProcess"
                 @restart-process="handleRestartProcess"
+                @cwd-change="tab.cwd = $event"
               />
             </div>
           </template>
@@ -387,6 +388,7 @@
                 :restarting="restartingCmdId === tab.commandId"
                 @stop-process="handleStopProcess"
                 @restart-process="handleRestartProcess"
+                @cwd-change="tab.cwd = $event"
               />
             </div>
           </template>
@@ -541,7 +543,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, onActivated, onDeactivated, nextTick } from 'vue';
 import {
   Square,
   Columns2,
@@ -1253,12 +1255,22 @@ const onTabPointerUp = () => {
 // ----------------------------------------------------
 // Mở tab terminal mới và chạy lệnh
 // ----------------------------------------------------
+// The new shell starts where the focused terminal is: the active tab of the
+// pane it opens into (or of the active pane).
+const focusedTerminalCwd = (targetPane?: ActivePane) => {
+  const pane = splitMode.value === 'single' ? 'paneA' : (targetPane || activePane.value);
+  const tabs = pane === 'paneB' ? paneBTabs.value : paneATabs.value;
+  const activeId = pane === 'paneB' ? activeTabIdB.value : activeTabIdA.value;
+  return tabs.find(tab => tab.id === activeId)?.cwd;
+};
+
 const openEmptyTerminal = async (targetPane?: ActivePane) => {
   if (openingTerminal.value) return;
   openingTerminal.value = true;
   try {
+    const cwd = focusedTerminalCwd(targetPane);
     await refreshProcesses();
-    const terminal = await ipcClient.openTerminal();
+    const terminal = await ipcClient.openTerminal(cwd);
     await refreshProcesses();
     const newTab: OpenTabItem = {
       id: `terminal-${terminal.commandId}-${Date.now()}`,
@@ -1268,6 +1280,7 @@ const openEmptyTerminal = async (targetPane?: ActivePane) => {
       shellKind: terminal.shellKind,
       historyLevel: terminal.historyLevel,
       isManual: true,
+      cwd,
     };
     setManualMeta(terminal.commandId, {
       name: 'Terminal',
@@ -1361,8 +1374,26 @@ const restartProcess = async (commandId: number) => {
 // ----------------------------------------------------
 // Phím tắt toàn cục cho Split View Terminal Mode
 // ----------------------------------------------------
+// WorkspaceView is kept alive, so this listener stays attached while
+// another screen is shown; shortcuts only apply on the terminal screen.
+const workspaceVisible = ref(true);
+onActivated(() => { workspaceVisible.value = true; });
+onDeactivated(() => { workspaceVisible.value = false; });
+
 const handleGlobalKeydown = (e: KeyboardEvent) => {
-  const tag = (e.target as HTMLElement | null)?.tagName;
+  if (!workspaceVisible.value) return;
+  const target = e.target as HTMLElement | null;
+
+  // Ctrl+N : Mở terminal mới (cả khi đang gõ trong terminal — xterm nhận
+  // phím qua textarea ẩn), cùng thư mục với terminal đang focus
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'n'
+    && (!target || !['INPUT', 'TEXTAREA'].includes(target.tagName) || target.closest('.xterm'))) {
+    e.preventDefault();
+    void openEmptyTerminal();
+    return;
+  }
+
+  const tag = target?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
   // Ctrl+\ hoặc Cmd+\ : Bật/Tắt Split Horizontal

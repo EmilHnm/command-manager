@@ -36,6 +36,7 @@ pub(super) fn spawn(
     integration_root: Option<&std::path::Path>,
     preferred_shell: Option<&str>,
     load_powershell_profile: bool,
+    cwd: Option<&std::path::Path>,
 ) -> Result<InteractiveShell> {
     let preferred = preferred_shell
         .filter(|value| !value.trim().is_empty())
@@ -130,6 +131,9 @@ pub(super) fn spawn(
         }
     }
     crate::pty::session::set_terminal_env(&mut command);
+    if let Some(cwd) = cwd {
+        command.cwd(cwd);
+    }
     let child = slave
         .spawn_command(command)
         .map_err(|e| Error::msg(e.to_string()))?;
