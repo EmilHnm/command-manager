@@ -510,7 +510,13 @@ onMounted(async () => {
   });
 
   // Gửi input bàn phím tới Rust PTY
-  term.onData((data) => {
+  term.onData((typed) => {
+    // WebKitGTK can hand over a space committed by an IME (ibus) as U+00A0.
+    // No shell splits words on it ("cd\u00a0/x" is one word), so typed input
+    // gets a plain space; pasted text is kept as is.
+    const data = bracketedPaste || typed.includes('\x1b[200~')
+      ? typed
+      : typed.replace(/\u00a0/g, ' ');
     // ConPTY focus reporting is terminal protocol traffic, not user editing.
     // Do not lose the ↑/↓ position when the app window is refocused.
     if (!isFocusReport(data)) resetHistoryNavigation();
@@ -646,7 +652,12 @@ const readInputFromMarker = (readToLineEnd = false) => {
     const text = buffer.getLine(line)?.translateToString(true, startColumn, endColumn) || '';
     lines.push(text);
   }
-  return lines.join('').trimEnd();
+  // Up to the cursor every cell is typed input, trailing spaces included:
+  // trimming "cd " to "cd" made accepting the suggestion for "cd /x" send
+  // " /x" after the typed space. Reading to the line end picks up blank
+  // cells past the input, so only that form is trimmed.
+  const input = lines.join('');
+  return readToLineEnd ? input.trimEnd() : input;
 };
 
 const currentInput = () => {

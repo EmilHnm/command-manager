@@ -533,6 +533,7 @@ dependencies = [
  "tokio",
  "uuid",
  "windows",
+ "zbus",
 ]
 
 [[package]]

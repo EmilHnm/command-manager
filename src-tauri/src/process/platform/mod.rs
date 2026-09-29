@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
@@ -48,14 +50,20 @@ pub fn is_process_alive(pid: u32) -> bool {
 }
 
 /// Attach a spawned process to the platform's app-bound lifetime mechanism.
-/// Windows uses a Job Object with `KILL_ON_JOB_CLOSE`; other platforms do not
-/// need an additional registration here.
+/// Windows uses a Job Object with `KILL_ON_JOB_CLOSE`. Linux moves the child
+/// into its own systemd scope and makes it the OOM killer's first choice, so
+/// running out of memory kills that child instead of the whole app.
 pub fn register_process(pid: u32) -> Result<()> {
     #[cfg(windows)]
     {
         windows::register_process(pid)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::isolate_child(pid);
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = pid;
         Ok(())

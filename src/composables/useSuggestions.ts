@@ -46,7 +46,9 @@ export function useSuggestions(onChanged?: () => void) {
       })),
     ];
     if (disposed || generation !== loadGeneration) return rows;
-    const merged = [...rows, ...staticRows];
+    // Lines typed with a non-breaking space for a word separator failed in the
+    // shell; suggesting them only repeats the error.
+    const merged = [...rows, ...staticRows].filter((row) => !row.command_line.includes('\u00a0'));
     const unique = new Map<string, CommandHistory>();
     for (const row of merged) unique.set(`${row.command_line}\n${row.shell_kind}`, row);
     history.value = [...unique.values()];
