@@ -222,7 +222,7 @@ function commandNameForUi(commandId: number) {
 }
 
 function runEventIdForCommand(commandId: number) {
-  // Map giữ insertion order; phần tử cuối là lần chạy gần nhất của command.
+  // Map preserves insertion order; the last entry represents the most recent command run.
   return [...runEventToCommand.entries()]
     .reverse()
     .find(([, id]) => id === commandId)?.[0];
@@ -334,7 +334,7 @@ async function invokeTauri<T>(cmd: string, args?: Record<string, unknown>): Prom
 }
 
 // ----------------------------------------------------
-// Dữ liệu mẫu khởi tạo cho Mock Store
+// Initial seed data for Mock Store
 // ----------------------------------------------------
 let mockCommands: CommandDefinition[] = [
   { id: 1, name: 'Vite Frontend Dev', execution_string: 'pnpm --filter web dev --port 3000', is_shell: true },
@@ -384,7 +384,7 @@ let mockSettings: SystemSettings = {
   terminalLoadProfile: true,
 };
 
-// Mock buffer logs cho terminal
+// Mock terminal buffer logs
 const mockLogBuffers = new Map<number, string>();
 const mockTerminalInput = new Map<number, string>();
 const mockPtyDataListeners = new Set<(commandId: number, data: string) => void>();
@@ -396,7 +396,7 @@ mockLogBuffers.set(2, '\x1b[32m[Nest]\x1b[0m 2845  - 09/25/2026, 2:20:10 PM     
 mockLogBuffers.set(3, 'Starting postgresql container...\npostgres: Container postgresql running.\nExited with code 0\n');
 
 async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  // Giả lập network delay nhẹ
+  // Simulate slight network delay
   if (cmd !== 'pty_write') await new Promise(r => setTimeout(r, 60));
 
   switch (cmd) {

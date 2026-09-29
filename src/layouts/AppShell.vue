@@ -94,25 +94,25 @@ const handleHideToTray = () => {
   }
 };
 
-// Đăng ký phím tắt toàn cục theo ma trận Section 7.2 trong docs/screens.md
+// Global shortcuts based on Section 7.2 matrix in docs/screens.md
 const handleGlobalKeydown = (e: KeyboardEvent) => {
   const isCtrlOrCmd = e.ctrlKey || e.metaKey;
 
-  // Ctrl+Q: Đóng ứng dụng (mở modal xác nhận)
+  // Ctrl+Q: Request app close
   if (isCtrlOrCmd && (e.key === 'q' || e.key === 'Q')) {
     e.preventDefault();
     requestClose();
     return;
   }
 
-  // Ctrl+K: Mở Command Palette
+  // Ctrl+K: Toggle Command Palette
   if (isCtrlOrCmd && (e.key === 'k' || e.key === 'K')) {
     e.preventDefault();
     showPalette.value = !showPalette.value;
     return;
   }
 
-  // Ctrl+1 .. Ctrl+5: Chuyển nhanh giữa 5 màn hình
+  // Ctrl+1 .. Ctrl+6: Quick navigation between views
   if (isCtrlOrCmd && !e.shiftKey) {
     if (e.key === '1') { e.preventDefault(); router.push('/workspace'); }
     else if (e.key === '2') { e.preventDefault(); router.push('/commands'); }
@@ -122,7 +122,7 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
     else if (e.key === '6') { e.preventDefault(); router.push('/templates'); }
   }
 
-  // Ctrl+Shift+S: Mở nhanh Cài đặt
+  // Ctrl+Shift+S: Open Settings
   if (isCtrlOrCmd && e.shiftKey && (e.key === 'S' || e.key === 's')) {
     e.preventDefault();
     router.push('/settings');

@@ -29,7 +29,6 @@ export function usePtyStream() {
     return await ipcClient.reattachPty(commandId, runEventId);
   };
 
-  // Khởi tạo listener cho Tauri IPC
   const initIpcListener = async () => {
     try {
       unlistenPty = await ipcClient.onPtyData((commandId, data) => {

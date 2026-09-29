@@ -57,12 +57,10 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
     return paneBTabs.value.find(t => t.id === activeTabIdB.value) || paneBTabs.value[0];
   });
 
-  // Chuyển đổi chế độ Split View
   const setSplitMode = (mode: SplitMode) => {
     if (splitMode.value === mode) return;
 
     if (mode === 'single') {
-      // Gộp toàn bộ tabs từ Pane B sang Pane A
       if (paneBTabs.value.length > 0) {
         paneATabs.value.push(...paneBTabs.value);
         paneBTabs.value = [];
@@ -72,8 +70,7 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
         activeTabIdA.value = paneATabs.value[0].id;
       }
     } else {
-      // Chuyển sang split horizontal hoặc vertical
-      // Nếu Pane B đang rỗng và Pane A có từ 2 tab trở lên, chuyển tab hiện tại sang Pane B
+      // When splitting with an empty Pane B and Pane A has multiple tabs, move current active tab to Pane B
       if (paneBTabs.value.length === 0 && paneATabs.value.length > 1) {
         const curTabId = activeTabIdA.value;
         const idx = paneATabs.value.findIndex(t => t.id === curTabId);
@@ -141,9 +138,8 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
     }
   };
 
-  // Tách màn hình sang Horizontal hoặc Vertical với một tab cụ thể được chỉ định
+  // Split pane horizontally or vertically with a designated tab
   const splitWithTab = (mode: 'horizontal' | 'vertical', tabId: string) => {
-    // 1. Nếu tab đang ở Pane A
     const inA = paneATabs.value.findIndex(t => t.id === tabId);
     if (inA !== -1) {
       if (paneATabs.value.length > 1) {
@@ -153,12 +149,11 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
         activeTabIdB.value = tab.id;
         activePane.value = 'paneB';
 
-        // Cập nhật active tab của Pane A
         if (activeTabIdA.value === tabId) {
           activeTabIdA.value = paneATabs.value[Math.min(inA, paneATabs.value.length - 1)]?.id || '';
         }
       } else {
-        // Nếu Pane A chỉ có 1 tab duy nhất, giữ tab ở Pane A và mở Pane B ở trạng thái sẵn sàng
+        // If Pane A has only one tab, keep it in Pane A and open Pane B in ready state
         splitMode.value = mode;
         activePane.value = 'paneB';
       }
@@ -167,7 +162,6 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
       return;
     }
 
-    // 2. Nếu tab đang ở Pane B
     const inB = paneBTabs.value.findIndex(t => t.id === tabId);
     if (inB !== -1) {
       splitMode.value = mode;
@@ -178,11 +172,9 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
     }
   };
 
-  // Di chuyển tab sang Pane đối diện
   const moveTabToOppositePane = (tabId: string) => {
     const inA = paneATabs.value.findIndex(t => t.id === tabId);
     if (inA !== -1) {
-      // Tab đang ở Pane A -> chuyển sang Pane B
       const [tab] = paneATabs.value.splice(inA, 1);
       if (splitMode.value === 'single') {
         splitMode.value = 'horizontal';
@@ -191,12 +183,11 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
       activeTabIdB.value = tab.id;
       activePane.value = 'paneB';
 
-      // Cập nhật active tab của Pane A
       if (activeTabIdA.value === tabId) {
         activeTabIdA.value = paneATabs.value[Math.min(inA, paneATabs.value.length - 1)]?.id || '';
       }
 
-      // Nếu Pane A rỗng sau khi chuyển và Pane B có tab, auto-collapse về Pane A
+      // If Pane A is empty after moving, auto-collapse back to single pane in Pane A
       if (paneATabs.value.length === 0) {
         paneATabs.value = [...paneBTabs.value];
         paneBTabs.value = [];
@@ -210,18 +201,16 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
 
     const inB = paneBTabs.value.findIndex(t => t.id === tabId);
     if (inB !== -1) {
-      // Tab đang ở Pane B -> chuyển sang Pane A
       const [tab] = paneBTabs.value.splice(inB, 1);
       paneATabs.value.push(tab);
       activeTabIdA.value = tab.id;
       activePane.value = 'paneA';
 
-      // Cập nhật active tab của Pane B
       if (activeTabIdB.value === tabId) {
         activeTabIdB.value = paneBTabs.value[Math.min(inB, paneBTabs.value.length - 1)]?.id || '';
       }
 
-      // Auto-collapse nếu Pane B hết tab
+      // Auto-collapse if Pane B is empty
       if (paneBTabs.value.length === 0) {
         splitMode.value = 'single';
       }
@@ -229,7 +218,6 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
     }
   };
 
-  // Đóng tab trong một Pane cụ thể
   const closeTab = (pane: ActivePane, tabId: string): OpenTabItem | undefined => {
     const list = pane === 'paneA' ? paneATabs : paneBTabs;
     const activeIdRef = pane === 'paneA' ? activeTabIdA : activeTabIdB;
@@ -246,11 +234,11 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
     // Auto-collapse logic:
     if (splitMode.value !== 'single') {
       if (paneBTabs.value.length === 0) {
-        // Pane B hết tab -> chuyển về single
+        // Pane B is empty -> collapse to single pane
         splitMode.value = 'single';
         activePane.value = 'paneA';
       } else if (paneATabs.value.length === 0) {
-        // Pane A hết tab -> chuyển toàn bộ Pane B sang Pane A và về single
+        // Pane A is empty -> move all Pane B tabs to Pane A and collapse to single pane
         paneATabs.value = [...paneBTabs.value];
         paneBTabs.value = [];
         activeTabIdA.value = activeTabIdB.value;
@@ -263,7 +251,6 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
     return closedTab;
   };
 
-  // Đóng toàn bộ tab của một Pane cụ thể và auto-collapse nếu cần
   const closePane = (pane: ActivePane): OpenTabItem[] => {
     let closedTabs: OpenTabItem[] = [];
     if (pane === 'paneB') {
@@ -305,9 +292,7 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
     persistPreferences();
   };
 
-  // Mở thêm một tab mới
   const addTab = (tab: OpenTabItem, targetPane?: ActivePane) => {
-    // Kiểm tra xem tab đã tồn tại ở Pane nào chưa
     const existingA = paneATabs.value.find(t => t.commandId === tab.commandId);
     if (existingA) {
       activePane.value = 'paneA';
@@ -324,7 +309,6 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
       return existingB;
     }
 
-    // Chưa tồn tại -> mở vào targetPane hoặc activePane
     const dest = targetPane || (splitMode.value === 'single' ? 'paneA' : activePane.value);
 
     if (dest === 'paneB' && splitMode.value !== 'single') {
@@ -340,7 +324,6 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
     return tab;
   };
 
-  // Di chuyển hoặc sắp xếp lại tab giữa 2 khung hoặc nội bộ 1 khung
   const transferTab = (
     fromPane: ActivePane,
     toPane: ActivePane,
@@ -348,7 +331,6 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
     targetIndex?: number,
   ) => {
     if (fromPane === toPane) {
-      // Sắp xếp lại trong cùng một pane
       const list = fromPane === 'paneA' ? paneATabs : paneBTabs;
       const fromIdx = list.value.findIndex(t => t.id === tabId);
       if (fromIdx !== -1 && targetIndex !== undefined && targetIndex !== fromIdx) {
@@ -360,7 +342,6 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
       return;
     }
 
-    // Di chuyển giữa 2 pane khác nhau
     const sourceList = fromPane === 'paneA' ? paneATabs : paneBTabs;
     const destList = toPane === 'paneA' ? paneATabs : paneBTabs;
     const sourceActiveId = fromPane === 'paneA' ? activeTabIdA : activeTabIdB;
@@ -379,16 +360,14 @@ export function useSplitLayout(initialTabs: OpenTabItem[] = []) {
     }
     destList.value = [...destList.value];
 
-    // Cập nhật active tab cho Pane đích
     destActiveId.value = tab.id;
     activePane.value = toPane;
 
-    // Cập nhật active tab cho Pane nguồn nếu tab vừa chuyển là active tab
     if (sourceActiveId.value === tabId) {
       sourceActiveId.value = sourceList.value[Math.min(fromIdx, sourceList.value.length - 1)]?.id || '';
     }
 
-    // Auto-collapse nếu một pane rỗng
+    // Auto-collapse if either pane becomes empty
     if (splitMode.value !== 'single') {
       if (paneBTabs.value.length === 0) {
         splitMode.value = 'single';

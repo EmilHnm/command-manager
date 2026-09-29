@@ -75,7 +75,6 @@
 
             <!-- Process Items List -->
             <div v-else class="process-list">
-              <!-- Header cột để căn lề thẳng hàng, đều tăm tắp -->
               <div class="list-column-headers">
                 <span class="col-hdr ident">Tiến trình / Tên</span>
                 <span class="col-hdr status">Trạng thái Tab &amp; Bộ nhớ</span>
@@ -89,7 +88,7 @@
                 :class="{ 'is-detached': !isTabOpen(proc.commandId) }"
               >
                 <div class="card-main">
-                  <!-- CỘT 1: ĐỊNH DANH TIẾN TRÌNH & TÊN (Căn lề chuẩn, không rớt dòng) -->
+                  <!-- Column 1: Process identification & name -->
                   <div class="proc-col-ident">
                     <div class="proc-title-line">
                       <span class="status-dot active" title="Đang chạy ngầm" />
@@ -120,7 +119,7 @@
                     </div>
                   </div>
 
-                  <!-- CỘT 2: TRẠNG THÁI TAB UI & PTY BUFFER (Cố định width, căn lề thẳng hàng) -->
+                  <!-- Column 2: Tab UI status & telemetry -->
                   <div class="proc-col-status">
                     <span
                       class="tab-status-badge"
@@ -141,7 +140,7 @@
                     </div>
                   </div>
 
-                  <!-- CỘT 3: THAO TÁC HÀNH ĐỘNG -->
+                  <!-- Column 3: Actions -->
                   <div class="proc-actions">
                     <button
                       class="btn btn-sm"
@@ -277,7 +276,6 @@ const stopInProgress = ref<number | null>(null);
 const stoppingAll = ref(false);
 let stopFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
 
-// Tự động làm mới danh sách khi mở modal
 watch(
   () => props.visible,
   (val) => {
@@ -308,17 +306,17 @@ const isManualTerminal = (proc: ActiveProcessInfo): boolean => {
 };
 
 const getProcessDisplayName = (proc: ActiveProcessInfo): string => {
-  // 1. Kiểm tra openTabs nếu tab đang hiển thị
+  // 1. Check openTabs if tab is currently displayed
   const openTab = props.openTabs?.find(t => t.commandId === proc.commandId);
   if (openTab && openTab.name && openTab.name.trim() !== '') {
     return openTab.name;
   }
-  // 2. Kiểm tra từ ipcClient lưu trong cache / localStorage
+  // 2. Check stored name in ipcClient cache / localStorage
   const storedName = ipcClient.getTerminalName?.(proc.commandId);
   if (storedName && storedName.trim() !== '') {
     return storedName;
   }
-  // 3. Nếu là terminal thủ công
+  // 3. Manual terminal
   if (isManualTerminal(proc)) {
     if (proc.commandName && proc.commandName !== 'Terminal' && proc.commandName.trim() !== '') {
       return proc.commandName;
@@ -326,7 +324,7 @@ const getProcessDisplayName = (proc: ActiveProcessInfo): string => {
     const shell = proc.shellKind ? proc.shellKind.toUpperCase() : 'POWERSHELL';
     return `Terminal (${shell})`;
   }
-  // 4. Lệnh thông thường
+  // 4. Standard command
   return proc.commandName || `Lệnh #${proc.commandId}`;
 };
 
@@ -421,7 +419,7 @@ const fetchPeekLog = async (proc: ActiveProcessInfo) => {
   loadingPeek.value = true;
   try {
     const text = await ipcClient.reattachPty(proc.commandId, proc.runEventId);
-    // Strip escape codes nhẹ hoặc giữ nguyên xterm plain
+    // Strip escape codes or keep plain xterm text
     peekLogText.value = text || '[Ring buffer rỗng]';
   } catch (err) {
     peekLogText.value = `[Lỗi khi đọc log buffer: ${String(err)}]`;

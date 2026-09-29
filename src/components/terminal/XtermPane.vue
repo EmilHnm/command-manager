@@ -199,9 +199,9 @@ let currentCwd: string | undefined;
 let shellPhase: 'prompt' | 'input' | 'running' = 'prompt';
 let bracketedPaste = false;
 let composing = false;
-// Fallback cho level 2: trong browser mock hoặc khi shell chưa kịp echo,
-// marker B có thể chưa chứa dòng vừa gõ lúc onData nhận Enter. Shadow này
-// chỉ dùng khi marker không đọc được; native backend vẫn validate lại lệnh.
+// Level 2 fallback: in browser mock or before the shell echoes back,
+// marker B might not yet contain the line just typed when onData receives Enter.
+// This shadow buffer is only used when the marker cannot be read; the native backend re-validates the command.
 let inputShadow = '';
 let inputScanTimer: number | undefined;
 let compositionTarget: HTMLTextAreaElement | null = null;
@@ -304,7 +304,7 @@ onMounted(async () => {
   await loadTerminalFonts();
   if (!terminalElement.value) return;
 
-  // Khởi tạo xterm.js với Dark Theme đồng bộ primary #744791
+  // Initialize xterm.js with dark theme matching brand palette
   term = new Terminal({
     fontFamily: terminalFontFamily.value,
     fontSize: props.fontSize,
@@ -509,7 +509,7 @@ onMounted(async () => {
     return true;
   });
 
-  // Gửi input bàn phím tới Rust PTY
+  // Forward keyboard input to Rust PTY
   term.onData((typed) => {
     // WebKitGTK can hand over a space committed by an IME (ibus) as U+00A0.
     // No shell splits words on it ("cd\u00a0/x" is one word), so typed input
@@ -558,17 +558,17 @@ onMounted(async () => {
     });
   });
 
-  // Đăng ký nhận luồng byte từ PTY
+  // Subscribe to PTY byte stream
   unsubscribePty = subscribePty(props.commandId, (chunk) => {
     term?.write(chunk);
   });
 
-  // Xả dữ liệu gần nhất từ Ring Buffer in-memory
+  // Replay recent output from in-memory ring buffer
   await handleReattach();
   if (!terminalElement.value || !term) return;
   focusTerminal();
 
-  // Tự động căn kích thước và đồng bộ cols/rows với PTY
+  // Auto-fit terminal and sync cols/rows with PTY
   resizeObserver = new ResizeObserver(() => {
     if (fitAddon && term) {
       fitAddon.fit();

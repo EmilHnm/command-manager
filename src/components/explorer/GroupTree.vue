@@ -163,7 +163,7 @@ const { getProcessStatus, getProcessInfo, activeProcesses } = useRunSession();
 
 const filterText = ref('');
 const searchInput = ref<HTMLInputElement | null>(null);
-const expandedGroups = ref<Set<number>>(new Set([1, 2, 3])); // Mặc định mở các nhóm
+const expandedGroups = ref<Set<number>>(new Set([1, 2, 3]));
 
 const targetGroup = computed(() => {
   return props.groups.find(group => group.id === props.selectedGroupId) || props.groups[0] || null;

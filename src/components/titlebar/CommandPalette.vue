@@ -161,7 +161,6 @@ const paletteItems = computed(() => {
     });
   }
 
-  // Thêm các Template để mở giao diện chạy trực tiếp
   templates.value.forEach(tpl => {
     items.push({
       id: `template-run-${tpl.id}`,
@@ -176,7 +175,6 @@ const paletteItems = computed(() => {
     });
   });
 
-  // Thêm các nhóm lệnh để có thể Play trực tiếp
   groups.value.forEach(g => {
     items.push({
       id: `group-run-${g.id}`,

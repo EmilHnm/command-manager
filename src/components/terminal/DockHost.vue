@@ -89,7 +89,7 @@
       ]"
       :style="splitGridStyle"
     >
-      <!-- PANE A (Khung Trái / Khung Trên) -->
+      <!-- PANE A (Left / Top) -->
       <div
         class="terminal-pane pane-a"
         :class="{
@@ -161,7 +161,7 @@
                   <ArrowLeftRight :size="10" />
                 </button>
 
-                <!-- Close tab button: chỉ ẩn tab, KHÔNG kill process -->
+                <!-- Close tab button: hide tab only, do NOT terminate process -->
                 <button
                   class="tab-close-btn"
                   title="Ẩn tab này (Tiến trình vẫn tiếp tục chạy ngầm)"
@@ -226,7 +226,7 @@
             </div>
           </template>
 
-          <!-- Empty State khi không có tab nào ở Pane A -->
+          <!-- Empty State when Pane A has no open tabs -->
           <div v-if="paneATabs.length === 0" class="empty-pane-state">
             <div class="empty-pane-box">
               <Terminal :size="28" class="empty-icon" />
@@ -245,7 +245,7 @@
         </div>
       </div>
 
-      <!-- RESIZABLE SASH / SPLITTER (chỉ hiển thị khi ở chế độ Split) -->
+      <!-- RESIZABLE SASH / SPLITTER (split mode only) -->
       <div
         v-if="splitMode !== 'single'"
         class="resizable-sash"
@@ -257,7 +257,7 @@
         <div class="sash-grip-line" />
       </div>
 
-      <!-- PANE B (Khung Phải / Khung Dưới - chỉ hiển thị khi ở chế độ Split) -->
+      <!-- PANE B (Right / Bottom - split mode only) -->
       <div
         v-if="splitMode !== 'single'"
         class="terminal-pane pane-b"
@@ -328,7 +328,7 @@
                   <ArrowLeftRight :size="10" />
                 </button>
 
-                <!-- Close tab button: chỉ ẩn tab, KHÔNG kill process -->
+                <!-- Close tab button: hide tab only, do NOT terminate process -->
                 <button
                   class="tab-close-btn"
                   title="Ẩn tab này (Tiến trình vẫn tiếp tục chạy ngầm)"
@@ -393,7 +393,7 @@
             </div>
           </template>
 
-          <!-- Empty State khi không có tab nào ở Pane B -->
+          <!-- Empty State when Pane B has no open tabs -->
           <div v-if="paneBTabs.length === 0" class="empty-pane-state">
             <div class="empty-pane-box">
               <Terminal :size="28" class="empty-icon" />
@@ -412,7 +412,7 @@
         </div>
       </div>
 
-      <!-- Drop Zones Overlay khi kéo tab trong Single View Mode để kích hoạt Split -->
+      <!-- Drop Zones Overlay when dragging tab in Single View Mode to trigger split -->
       <div
         v-if="dragState?.isDragging && splitMode === 'single'"
         class="single-mode-split-hints"
@@ -455,7 +455,7 @@
       </div>
     </Teleport>
 
-    <!-- Tab Drag Guard (Overlay bảo vệ khi kéo tab để tránh xterm nuốt mouse events) -->
+    <!-- Tab Drag Guard (protects against xterm swallowing mouse events during tab drag) -->
     <Teleport to="body">
       <div
         v-if="dragState?.isDragging"
@@ -463,7 +463,7 @@
       />
     </Teleport>
 
-    <!-- Pointer Overlay Guard khi đang kéo thanh Sash để tránh mất mouse events -->
+    <!-- Pointer Overlay Guard during sash drag to prevent lost mouse events -->
     <Teleport to="body">
       <div
         v-if="isDraggingSash"
@@ -583,7 +583,6 @@ const emit = defineEmits<{
 
 const { getProcessStatus, getProcessInfo, refreshProcesses, updateProcessName } = useRunSession();
 
-// Sử dụng composable Split Layout
 const {
   splitMode,
   splitRatio,
@@ -619,7 +618,7 @@ const splitContainerRef = ref<HTMLElement | null>(null);
 const tabsListARef = ref<HTMLElement | null>(null);
 const tabsListBRef = ref<HTMLElement | null>(null);
 
-// Tính toán Grid / Flex CSS style cho split layout
+// Compute CSS grid/flex styles for split layout
 const splitGridStyle = computed(() => {
   if (splitMode.value === 'single') {
     return {};
@@ -634,7 +633,6 @@ const handlePaneFocus = (pane: ActivePane) => {
   activePane.value = pane;
 };
 
-// Đóng tab an toàn
 const handleCloseTab = (pane: ActivePane, tabId: string) => {
   const closed = splitCloseTab(pane, tabId);
   if (closed && isManualTab(closed)) {
@@ -664,7 +662,7 @@ const closeAllTabs = () => {
 };
 
 // ----------------------------------------------------
-// Thanh phân cách Resizable Sash Drag Logic
+// Resizable Sash Drag Logic
 // ----------------------------------------------------
 const isDraggingSash = ref(false);
 
@@ -705,7 +703,7 @@ const handleSashPointerDown = (e: PointerEvent) => {
 };
 
 // ----------------------------------------------------
-// Quản lý metadata tên và shell của terminal mở thủ công
+// Manage manual terminal metadata (name and shell kind)
 // ----------------------------------------------------
 interface ManualTerminalRecord {
   name: string;
@@ -759,7 +757,7 @@ const isManualTab = (tab?: OpenTabItem): boolean => {
     || (!!tab.shellKind && tab.shellKind !== 'command');
 };
 
-// Modal Đổi tên Terminal thủ công (MOD-14)
+// Manual terminal rename modal (MOD-14)
 const renameModalVisible = ref(false);
 const renamingTab = ref<OpenTabItem | null>(null);
 
@@ -853,7 +851,7 @@ const handleContextMenuKillPanel = () => {
 };
 
 // ----------------------------------------------------
-// Dừng toàn bộ terminal trong panel (Kill Panel Modal)
+// Kill Panel Modal
 // ----------------------------------------------------
 const showKillModal = ref(false);
 const killingPaneTarget = ref<ActivePane | null>(null);
@@ -888,19 +886,19 @@ const handleConfirmKillPanel = async (force: boolean) => {
   await nextTick();
   await new Promise((resolve) => requestAnimationFrame(resolve));
   try {
-    // 1. Dừng các tiến trình PTY tương ứng
+    // 1. Stop corresponding PTY processes
     await Promise.allSettled(
       tabsToKill.map(async tab => {
         try {
           await ipcClient.stopProcess(tab.commandId, force);
         } catch (err) {
-          // Bỏ qua lỗi nếu tiến trình đã hoàn thành hoặc dừng trước đó
+          // Ignore errors if process was already completed or stopped
           console.warn(`[DockHost] Tiến trình ${tab.commandId} (${tab.name}) đã dừng hoặc lỗi:`, err);
         }
       })
     );
 
-    // 2. Đóng toàn bộ tab của panel và auto-collapse nếu split mode
+    // 2. Close all tabs in panel and auto-collapse if in split mode
     const closedTabs = splitClosePane(targetPane);
     closedTabs.forEach(tab => {
       if (isManualTab(tab)) {
@@ -914,7 +912,7 @@ const handleConfirmKillPanel = async (force: boolean) => {
       }
     });
 
-    // 3. Làm mới trạng thái tiến trình
+    // 3. Refresh process states
     await refreshProcesses();
     showKillModal.value = false;
     killingPaneTarget.value = null;
@@ -982,9 +980,9 @@ const createDisplayedTabList = (pane: ActivePane) => {
   const draggedTabId = dragState.value?.tabId;
   const draggedTab = allOpenTabs.value.find(t => t.id === draggedTabId);
 
-  // Nếu pane này không phải là nơi chuột đang hover:
+  // If pane is not the current hover target:
   if (hoverPane !== pane) {
-    // Nếu chính là pane nguồn của tab: ẩn tab đang bị kéo đi
+    // Hide dragged tab from its source pane
     if (fromPane === pane) {
       return tabs.filter(t => t.id !== draggedTabId).map(t => ({
         key: t.id,
@@ -993,7 +991,7 @@ const createDisplayedTabList = (pane: ActivePane) => {
         name: t.name,
       }));
     }
-    // Ngược lại, hiển thị tabs bình thường
+    // Otherwise, render tabs normally
     return tabs.map(t => ({
       key: t.id,
       isPlaceholder: false,
@@ -1002,7 +1000,7 @@ const createDisplayedTabList = (pane: ActivePane) => {
     }));
   }
 
-  // Khung này ĐANG được hover để nhận tab:
+  // Current pane is hovered drop target:
   if (!draggedTab || placeholderIndex.value === null) {
     return tabs.map(t => ({
       key: t.id,
@@ -1132,7 +1130,7 @@ const onTabPointerMove = (e: PointerEvent) => {
   dragState.value.currentX = e.clientX;
   dragState.value.currentY = e.clientY;
 
-  // Xác định vị trí chuột đang hover qua Pane nào
+  // Determine which pane or split edge is hovered
   let targetDrop: HoverDropTarget = dragState.value.fromPane;
 
   if (splitMode.value === 'single') {
@@ -1155,7 +1153,7 @@ const onTabPointerMove = (e: PointerEvent) => {
         } else if (inBottomZone && !inRightZone) {
           targetDrop = 'split-bottom';
         } else {
-          // Khi kéo vào góc hoặc giữa màn hình terminal: chọn hướng gần nhất
+          // When dragging near terminal edges: pick nearest split direction
           const distToRight = cRect.right - e.clientX;
           const distToBottom = cRect.bottom - e.clientY;
           if (distToRight < distToBottom) {
@@ -1171,7 +1169,7 @@ const onTabPointerMove = (e: PointerEvent) => {
       targetDrop = 'paneA';
     }
   } else {
-    // Đang ở Split Mode: kiểm tra xem chuột đang ở Pane A hay Pane B
+    // In split mode: determine whether cursor is over Pane A or Pane B
     const container = splitContainerRef.value;
     if (container) {
       const paneAEl = container.querySelector('.pane-a') as HTMLElement | null;
@@ -1211,7 +1209,7 @@ const onTabPointerMove = (e: PointerEvent) => {
   const containerEl = getTabsListEl(hoverPane);
   if (!containerEl) return;
 
-  // Đo midpoints của tabs trong pane đang hover (loại trừ placeholder)
+  // Measure tab midpoints in hovered pane (excluding placeholder)
   const tabElements = Array.from(
     containerEl.querySelectorAll<HTMLElement>('.terminal-tab:not(.tab-placeholder)')
   );
@@ -1224,14 +1222,14 @@ const onTabPointerMove = (e: PointerEvent) => {
   const cursorX = e.clientX;
   let newSlot = 0;
   if (hoverPane === dragState.value.fromPane) {
-    // Kéo nội bộ cùng một khung
+    // Reorder within the same pane
     for (let i = 0; i < midpoints.length; i++) {
       if (cursorX > midpoints[i]) {
         newSlot = i + 1;
       }
     }
   } else {
-    // Kéo từ khung khác sang khung này
+    // Drag tab from another pane
     const tabStripRect = containerEl.getBoundingClientRect();
     if (e.clientY > tabStripRect.bottom + 8) {
       newSlot = midpoints.length;
@@ -1281,15 +1279,13 @@ const onTabPointerUp = () => {
     placeholderIndex.value = null;
     isDropping.value = false;
   } else {
-    // Click đơn giản không kéo: chọn tab ở pane nguồn
+    // Simple click without dragging: select tab in source pane
     selectTab(fromPane, tabId);
     dragState.value = null;
     placeholderIndex.value = null;
   }
 };
 
-// ----------------------------------------------------
-// Mở tab terminal mới và chạy lệnh
 // ----------------------------------------------------
 // The new shell starts where the focused terminal is: the active tab of the
 // pane it opens into (or of the active pane).
@@ -1408,7 +1404,7 @@ const restartProcess = async (commandId: number) => {
 };
 
 // ----------------------------------------------------
-// Phím tắt toàn cục cho Split View Terminal Mode
+// Global keyboard shortcuts for Split View Terminal Mode
 // ----------------------------------------------------
 // WorkspaceView is kept alive, so this listener stays attached while
 // another screen is shown; shortcuts only apply on the terminal screen.
@@ -1420,8 +1416,8 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
   if (!workspaceVisible.value) return;
   const target = e.target as HTMLElement | null;
 
-  // Ctrl+N : Mở terminal mới (cả khi đang gõ trong terminal — xterm nhận
-  // phím qua textarea ẩn), cùng thư mục với terminal đang focus
+  // Ctrl+N: Open new terminal (intercepted even when typing in xterm via hidden textarea),
+  // in the same working directory as the focused terminal
   if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'n'
     && (!target || !['INPUT', 'TEXTAREA'].includes(target.tagName) || target.closest('.xterm'))) {
     e.preventDefault();
@@ -1432,14 +1428,14 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
   const tag = target?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
-  // Ctrl+\ hoặc Cmd+\ : Bật/Tắt Split Horizontal
+  // Ctrl+\ or Cmd+\: Toggle Horizontal Split
   if ((e.ctrlKey || e.metaKey) && e.key === '\\' && !e.shiftKey && !e.altKey) {
     e.preventDefault();
     toggleSplitHorizontal();
     return;
   }
 
-  // Ctrl+Shift+\ : Đổi hướng Dọc ⇄ Ngang
+  // Ctrl+Shift+\: Toggle Split Direction (Horizontal ⇄ Vertical)
   if ((e.ctrlKey || e.metaKey) && e.key === '\\' && e.shiftKey && !e.altKey) {
     e.preventDefault();
     toggleSplitDirection();
@@ -1462,7 +1458,7 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
     return;
   }
 
-  // Ctrl+Alt+M : Di chuyển tab đang active sang Pane đối diện
+  // Ctrl+Alt+M: Move active tab to opposite pane
   if (e.ctrlKey && e.altKey && (e.key === 'm' || e.key === 'M')) {
     e.preventDefault();
     const curTabId = activePane.value === 'paneA' ? activeTabIdA.value : activeTabIdB.value;
@@ -1472,7 +1468,7 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
     return;
   }
 
-  // Ctrl+Alt+R : Đặt lại tỉ lệ 50:50
+  // Ctrl+Alt+R: Reset split ratio to 50:50
   if (e.ctrlKey && e.altKey && (e.key === 'r' || e.key === 'R')) {
     e.preventDefault();
     resetSplitRatio();
@@ -1535,7 +1531,7 @@ defineExpose({
 }
 
 /* ----------------------------------------------------
-   Workspace Split View Toolbar (Thanh công cụ chia màn hình)
+   Workspace Split View Toolbar
 ---------------------------------------------------- */
 .workspace-split-toolbar {
   height: 36px;
@@ -1626,7 +1622,7 @@ defineExpose({
 }
 
 /* ----------------------------------------------------
-   Split Workspace Body (Container chia 2 nửa)
+   Split Workspace Body
 ---------------------------------------------------- */
 .split-workspace-body {
   flex: 1;
@@ -1694,14 +1690,14 @@ defineExpose({
   width: 100%;
 }
 
-/* Chỉ báo Khung đang Active (Active Focus Indicator) */
+/* Active Focus Indicator */
 .terminal-pane.is-focused {
   outline: 1.5px solid var(--primary, #744791);
   outline-offset: -1.5px;
   box-shadow: inset 0 0 12px rgba(116, 71, 145, 0.2);
 }
 
-/* Hiệu ứng Drop Target khi kéo tab qua khung */
+/* Drop Target Hover Indicator */
 .terminal-pane.is-drop-target {
   outline: 2px dashed var(--primary, #744791) !important;
   outline-offset: -2px;
@@ -1709,7 +1705,7 @@ defineExpose({
 }
 
 /* ----------------------------------------------------
-   Pane Tab Strip Header (Thanh tab của từng khung)
+   Pane Tab Strip Header
 ---------------------------------------------------- */
 .pane-tab-strip {
   height: 34px;
@@ -2160,7 +2156,7 @@ defineExpose({
   opacity: 1;
 }
 
-/* Guard toàn màn hình khi kéo Sash để chuột không bị nuốt sự kiện */
+/* Fullscreen guard during sash resize to prevent mouse event loss */
 .sash-drag-guard {
   position: fixed;
   inset: 0;
@@ -2168,7 +2164,7 @@ defineExpose({
   user-select: none;
 }
 
-/* Guard toàn màn hình khi kéo Tab để tránh xterm/iframe nuốt mouse events */
+/* Fullscreen guard during tab drag to prevent xterm/iframe from capturing mouse events */
 .tab-drag-guard {
   position: fixed;
   inset: 0;
@@ -2179,7 +2175,7 @@ defineExpose({
 }
 
 /* ----------------------------------------------------
-   Single View Mode Drop Zones (Chia đôi màn hình khi kéo tab)
+   Single View Mode Drop Zones
 ---------------------------------------------------- */
 .single-mode-split-hints {
   position: absolute;

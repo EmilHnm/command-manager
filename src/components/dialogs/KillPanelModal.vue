@@ -235,7 +235,6 @@ watch(
   color: var(--text-primary, #f1f5f9);
 }
 
-/* Danh sách terminal box */
 .terminals-list-box {
   background-color: var(--bg-app-base, #0f1117);
   border: 1px solid var(--border-subtle, #242a3e);

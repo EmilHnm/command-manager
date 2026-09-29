@@ -117,7 +117,7 @@
       </div>
     </main>
 
-    <!-- Modal Dừng Tiến Trình MOD-01 -->
+    <!-- Stop Process Modal (MOD-01) -->
     <StopProcessModal
       :visible="showStopModal"
       :command-id="stoppingCmdId"
@@ -127,7 +127,7 @@
       @confirm="confirmStopProcess"
       @cancel="showStopModal = false"
     />
-    <!-- Modal Quản Lý Tiến Trình Chạy Ngầm (Active Daemons Manager) -->
+    <!-- Active Daemons Manager Modal -->
     <BackgroundProcessesModal
       :visible="showBgModal"
       :open-tab-command-ids="dockHostRef?.openTabCommandIds"
@@ -291,7 +291,6 @@ const handleRunGroup = async (group: CommandGroupWithCommands) => {
   try {
     selectedGroupId.value = group.id;
     await startGroupSession(group.id, group.group_name, group.commands);
-    // Tự động mở tab cho từng lệnh trong nhóm
     group.commands.forEach(cmd => {
       dockHostRef.value?.openCommandTab(cmd.id, cmd.name, getProcessInfo(cmd.id)?.runEventId);
     });

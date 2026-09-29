@@ -2,7 +2,7 @@ import { ref } from 'vue';
 import { ipcClient } from '@/ipc/client';
 import type { RunSession, ActiveProcessInfo, ProcessLifecycleStatus } from '@/types/models';
 
-// State chia sẻ toàn app
+// Shared app-level state
 const activeSession = ref<RunSession | null>(null);
 const activeProcesses = ref<Map<number, ActiveProcessInfo>>(new Map());
 const sessionByGroup = new Map<number, number>();
