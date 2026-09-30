@@ -205,10 +205,22 @@
         </div>
 
         <!-- Pane A Terminal Viewport -->
-        <div class="pane-viewport">
+        <div class="pane-viewport" data-pane="paneA">
+          <!-- Drag-and-drop file overlay for Pane A -->
+          <div v-if="hoverDropPane === 'paneA'" class="pane-drop-overlay">
+            <div class="drop-overlay-box">
+              <FileUp :size="24" class="drop-icon" />
+              <span class="drop-title">Thả file để chèn đường dẫn vào Khung A</span>
+              <span v-if="activeTabA && getProcessStatus(activeTabA.commandId) !== 'running'" class="drop-warning">
+                (Tiến trình đang dừng)
+              </span>
+            </div>
+          </div>
+
           <template v-for="tab in paneATabs" :key="tab.id">
             <div v-show="tab.id === activeTabIdA" class="pane-wrapper">
               <XtermPane
+                :ref="(el) => registerXtermRef(tab.id, el)"
                 :command-id="tab.commandId"
                 :command-name="tabLabel(tab)"
                 :run-event-id="tab.runEventId"
@@ -374,10 +386,22 @@
         </div>
 
         <!-- Pane B Terminal Viewport -->
-        <div class="pane-viewport">
+        <div class="pane-viewport" data-pane="paneB">
+          <!-- Drag-and-drop file overlay for Pane B -->
+          <div v-if="hoverDropPane === 'paneB'" class="pane-drop-overlay">
+            <div class="drop-overlay-box">
+              <FileUp :size="24" class="drop-icon" />
+              <span class="drop-title">Thả file để chèn đường dẫn vào Khung B</span>
+              <span v-if="activeTabB && getProcessStatus(activeTabB.commandId) !== 'running'" class="drop-warning">
+                (Tiến trình đang dừng)
+              </span>
+            </div>
+          </div>
+
           <template v-for="tab in paneBTabs" :key="tab.id">
             <div v-show="tab.id === activeTabIdB" class="pane-wrapper">
               <XtermPane
+                :ref="(el) => registerXtermRef(tab.id, el)"
                 :command-id="tab.commandId"
                 :command-name="tabLabel(tab)"
                 :run-event-id="tab.runEventId"
@@ -551,6 +575,18 @@
       @confirm="handleConfirmKillPanel"
       @cancel="handleCancelKillPanel"
     />
+
+    <!-- Toast notification for drag-and-drop feedback -->
+    <transition name="dock-toast-anim">
+      <div v-if="dropToast" class="dock-toast" :class="dropToast.type" role="alert">
+        <AlertTriangle v-if="dropToast.type === 'warning'" :size="14" class="toast-icon" />
+        <AlertOctagon v-else :size="14" class="toast-icon" />
+        <span class="toast-text">{{ dropToast.message }}</span>
+        <button class="toast-close" aria-label="Đóng" @click="dropToast = null">
+          <X :size="12" />
+        </button>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -567,13 +603,17 @@ import {
   Terminal,
   OctagonX,
   LoaderCircle,
+  FileUp,
+  AlertTriangle,
+  AlertOctagon,
 } from 'lucide-vue-next';
 import XtermPane from './XtermPane.vue';
 import RenameTerminalModal from '@/components/dialogs/RenameTerminalModal.vue';
 import KillPanelModal from '@/components/dialogs/KillPanelModal.vue';
 import { useRunSession } from '@/composables/useRunSession';
-import { ipcClient } from '@/ipc/client';
+import { ipcClient, isTauriRuntime } from '@/ipc/client';
 import { useSplitLayout, type OpenTabItem, type ActivePane } from '@/composables/useSplitLayout';
+import { formatDroppedPaths } from '@/composables/useTerminalDrop';
 
 export type { OpenTabItem };
 
@@ -622,6 +662,68 @@ const splitContainerRef = ref<HTMLElement | null>(null);
 const tabsListARef = ref<HTMLElement | null>(null);
 const tabsListBRef = ref<HTMLElement | null>(null);
 
+const activeTabA = computed(() => paneATabs.value.find(t => t.id === activeTabIdA.value));
+const activeTabB = computed(() => paneBTabs.value.find(t => t.id === activeTabIdB.value));
+
+const hoverDropPane = ref<'paneA' | 'paneB' | null>(null);
+let unlistenDragDrop: (() => void) | null = null;
+
+export interface XtermPaneInstance {
+  focusTerminal: () => void;
+  pasteText: (text: string) => boolean;
+}
+
+const dropToast = ref<{ message: string; type: 'warning' | 'error' } | null>(null);
+let dropToastTimer: ReturnType<typeof setTimeout> | null = null;
+
+const showDropToast = (message: string, type: 'warning' | 'error' = 'warning') => {
+  if (dropToastTimer) clearTimeout(dropToastTimer);
+  dropToast.value = { message, type };
+  dropToastTimer = setTimeout(() => {
+    dropToast.value = null;
+  }, 3500);
+};
+
+// Registry of mounted XtermPane component instances for paste and focus
+const xtermPaneRefs = new Map<string, XtermPaneInstance>();
+const registerXtermRef = (tabId: string, el: unknown) => {
+  if (el) {
+    xtermPaneRefs.set(tabId, el as XtermPaneInstance);
+  }
+  // Note: We deliberately do not delete on null here.
+  // Moving a tab across panes (B -> A) causes the new component in Pane A to register
+  // before the old component in Pane B unmounts. Deleting on null would wipe out the new instance.
+  // Explicit cleanup is handled on tab closure (handleCloseTab, closeAllTabs, handleConfirmKillPanel).
+};
+
+const handleFileDrop = (pane: 'paneA' | 'paneB', paths: string[]) => {
+  if (!paths || paths.length === 0) return;
+  const targetTab = pane === 'paneB' ? activeTabB.value : activeTabA.value;
+  if (!targetTab) return;
+
+  if (getProcessStatus(targetTab.commandId) !== 'running') {
+    showDropToast(`Không thể chèn file: tiến trình trên tab "${targetTab.name}" đã dừng.`, 'warning');
+    console.warn(`[DockHost] Cannot drop file: process for tab "${targetTab.name}" is not running.`);
+    return;
+  }
+
+  const { text, skipped } = formatDroppedPaths(paths, targetTab.shellKind);
+  if (skipped.length > 0) {
+    showDropToast(`Đã bỏ qua ${skipped.length} file chứa ký tự điều khiển không an toàn.`, 'warning');
+    console.warn('[DockHost] Skipped files containing unsafe control characters:', skipped);
+  }
+  if (!text) return;
+
+  activePane.value = pane;
+  const paneInstance = xtermPaneRefs.get(targetTab.id);
+  if (paneInstance) {
+    const ok = paneInstance.pasteText(text);
+    if (!ok) {
+      showDropToast('Không thể dán đường dẫn vào terminal.', 'warning');
+    }
+  }
+};
+
 // Compute CSS grid/flex styles for split layout
 const splitGridStyle = computed(() => {
   if (splitMode.value === 'single') {
@@ -638,6 +740,7 @@ const handlePaneFocus = (pane: ActivePane) => {
 };
 
 const handleCloseTab = (pane: ActivePane, tabId: string) => {
+  xtermPaneRefs.delete(tabId);
   const closed = splitCloseTab(pane, tabId);
   if (closed && isManualTab(closed)) {
     setManualMeta(closed.commandId, {
@@ -651,6 +754,7 @@ const handleCloseTab = (pane: ActivePane, tabId: string) => {
 };
 
 const closeAllTabs = () => {
+  xtermPaneRefs.clear();
   allOpenTabs.value.forEach(tab => {
     if (isManualTab(tab)) {
       setManualMeta(tab.commandId, {
@@ -921,6 +1025,7 @@ const handleConfirmKillPanel = async (force: boolean) => {
     // 2. Close all tabs in panel and auto-collapse if in split mode
     const closedTabs = splitClosePane(targetPane);
     closedTabs.forEach(tab => {
+      xtermPaneRefs.delete(tab.id);
       if (isManualTab(tab)) {
         setManualMeta(tab.commandId, {
           name: tab.name,
@@ -1403,6 +1508,8 @@ const restartProcess = async (commandId: number) => {
   await new Promise((resolve) => requestAnimationFrame(resolve));
   try {
     if (commandId <= 0) {
+      const oldTabId = activePane.value === 'paneB' ? activeTabIdB.value : activeTabIdA.value;
+      if (oldTabId) xtermPaneRefs.delete(oldTabId);
       await openEmptyTerminal(activePane.value);
       splitCloseTab(activePane.value, activeTabIdA.value);
       return;
@@ -1430,7 +1537,10 @@ const restartProcess = async (commandId: number) => {
 // another screen is shown; shortcuts only apply on the terminal screen.
 const workspaceVisible = ref(true);
 onActivated(() => { workspaceVisible.value = true; });
-onDeactivated(() => { workspaceVisible.value = false; });
+onDeactivated(() => {
+  workspaceVisible.value = false;
+  hoverDropPane.value = null;
+});
 
 const handleGlobalKeydown = (e: KeyboardEvent) => {
   if (!workspaceVisible.value) return;
@@ -1508,9 +1618,47 @@ onMounted(async () => {
   } catch {
     ghostTextEnabled.value = true;
   }
+
+  // Listen for OS file drag-and-drop events via Tauri webview
+  if (isTauriRuntime()) {
+    try {
+      const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+      unlistenDragDrop = await getCurrentWebview().onDragDropEvent((event) => {
+        if (!workspaceVisible.value) {
+          hoverDropPane.value = null;
+          return;
+        }
+
+        const { type } = event.payload;
+
+        if (type === 'enter' || type === 'over') {
+          const logicalX = event.payload.position.x / window.devicePixelRatio;
+          const logicalY = event.payload.position.y / window.devicePixelRatio;
+          const el = document.elementFromPoint(logicalX, logicalY);
+          const target = el?.closest<HTMLElement>('[data-pane]')?.dataset.pane as 'paneA' | 'paneB' | undefined;
+          hoverDropPane.value = target || null;
+        } else if (type === 'leave') {
+          hoverDropPane.value = null;
+        } else if (type === 'drop') {
+          const logicalX = event.payload.position.x / window.devicePixelRatio;
+          const logicalY = event.payload.position.y / window.devicePixelRatio;
+          const el = document.elementFromPoint(logicalX, logicalY);
+          const target = el?.closest<HTMLElement>('[data-pane]')?.dataset.pane as 'paneA' | 'paneB' | undefined;
+          hoverDropPane.value = null;
+          if (target) {
+            handleFileDrop(target, event.payload.paths);
+          }
+        }
+      });
+    } catch (err) {
+      console.warn('[DockHost] Failed to register Tauri onDragDropEvent:', err);
+    }
+  }
 });
 
 onBeforeUnmount(() => {
+  if (unlistenDragDrop) unlistenDragDrop();
+  if (dropToastTimer) clearTimeout(dropToastTimer);
   window.removeEventListener('click', closeContextMenu);
   window.removeEventListener('keydown', handleGlobalKeydown);
   window.removeEventListener('pointermove', onTabPointerMove);
@@ -2061,6 +2209,60 @@ defineExpose({
   background-color: var(--bg-terminal);
 }
 
+.pane-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(11, 13, 19, 0.78);
+  backdrop-filter: blur(4px);
+  border: 2px dashed var(--primary-accent);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+  animation: dropOverlayFadeIn 0.15s ease-out;
+}
+
+.drop-overlay-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 24px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px var(--primary-glow);
+  color: var(--text-primary);
+}
+
+.drop-icon {
+  color: var(--primary-accent);
+  animation: dropBounce 1s infinite alternate ease-in-out;
+}
+
+.drop-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.drop-warning {
+  font-size: 11px;
+  color: #f87171;
+  font-weight: 500;
+}
+
+@keyframes dropOverlayFadeIn {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes dropBounce {
+  from { transform: translateY(0); }
+  to { transform: translateY(-4px); }
+}
+
 .pane-wrapper {
   width: 100%;
   height: 100%;
@@ -2296,7 +2498,7 @@ defineExpose({
 .spin {
   animation: spin 1s linear infinite;
 }
-
+ 
 @keyframes spin {
   from {
     transform: rotate(0deg);
@@ -2304,5 +2506,74 @@ defineExpose({
   to {
     transform: rotate(360deg);
   }
+}
+
+.dock-toast {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 12px rgba(0, 0, 0, 0.3);
+  font-size: 12px;
+  color: var(--text-primary);
+  pointer-events: auto;
+}
+
+.dock-toast.warning {
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.dock-toast.warning .toast-icon {
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+
+.dock-toast.error {
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.dock-toast.error .toast-icon {
+  color: #ef4444;
+  flex-shrink: 0;
+}
+
+.dock-toast .toast-text {
+  max-width: 380px;
+  line-height: 1.4;
+}
+
+.dock-toast .toast-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  transition: color 0.15s ease;
+}
+
+.dock-toast .toast-close:hover {
+  color: var(--text-primary);
+}
+
+.dock-toast-anim-enter-active,
+.dock-toast-anim-leave-active {
+  transition: all 0.2s ease-out;
+}
+
+.dock-toast-anim-enter-from,
+.dock-toast-anim-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }
 </style>

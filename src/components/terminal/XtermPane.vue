@@ -199,6 +199,7 @@ let rightPromptStartColumn: number | undefined;
 let currentCwd: string | undefined;
 let shellPhase: 'prompt' | 'input' | 'running' = 'prompt';
 let bracketedPaste = false;
+let isPasting = false;
 let composing = false;
 // Level 2 fallback: in browser mock or before the shell echoes back,
 // marker B might not yet contain the line just typed when onData receives Enter.
@@ -520,7 +521,7 @@ onMounted(async () => {
     // WebKitGTK can hand over a space committed by an IME (ibus) as U+00A0.
     // No shell splits words on it ("cd\u00a0/x" is one word), so typed input
     // gets a plain space; pasted text is kept as is.
-    const data = bracketedPaste || typed.includes('\x1b[200~')
+    const data = isPasting || bracketedPaste || typed.includes('\x1b[200~')
       ? typed
       : typed.replace(/\u00a0/g, ' ');
     // ConPTY focus reporting is terminal protocol traffic, not user editing.
@@ -604,7 +605,10 @@ onBeforeUnmount(() => {
   promptMarker?.dispose();
   if (unsubscribePty) unsubscribePty();
   if (resizeObserver) resizeObserver.disconnect();
-  if (term) term.dispose();
+  if (term) {
+    term.dispose();
+    term = null;
+  }
 });
 
 const decodeOsc = (value: string) => value.replace(/\\x([0-9a-fA-F]{2})/g, (_, hex: string) =>
@@ -922,6 +926,23 @@ const handleReattach = async () => {
     terminalError.value = String(error);
   }
 };
+
+const pasteText = (text: string): boolean => {
+  if (!term || props.processStatus !== 'running') return false;
+  isPasting = true;
+  try {
+    term.paste(text);
+  } finally {
+    isPasting = false;
+  }
+  focusTerminal();
+  return true;
+};
+
+defineExpose({
+  focusTerminal,
+  pasteText,
+});
 </script>
 
 <style scoped>
