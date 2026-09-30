@@ -12,6 +12,8 @@ export interface OpenTabItem {
   historyLevel?: number;
   isManual?: boolean;
   cwd?: string;
+  // Latest title set by the program running in the terminal (OSC 0/2).
+  title?: string;
 }
 
 const SPLIT_MODE_KEY = 'cm_split_mode_v1';

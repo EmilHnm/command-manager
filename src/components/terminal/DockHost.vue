@@ -142,9 +142,9 @@
                 <span
                   class="tab-title"
                   :class="{ 'is-manual': isManualTab(item.tab) }"
-                  :title="isManualTab(item.tab) ? `${item.tab.name} (Nháy đúp để đổi tên)` : item.tab.name"
+                  :title="tabTooltip(item.tab)"
                 >
-                  {{ item.tab.name }}
+                  {{ tabLabel(item.tab) }}
                 </span>
                 <span v-if="getProcessInfo(item.tab.commandId)?.pid" class="tab-pid">
                   {{ getProcessInfo(item.tab.commandId)?.pid }}
@@ -209,7 +209,7 @@
             <div v-show="tab.id === activeTabIdA" class="pane-wrapper">
               <XtermPane
                 :command-id="tab.commandId"
-                :command-name="tab.name"
+                :command-name="tabLabel(tab)"
                 :run-event-id="tab.runEventId"
                 :pid="getProcessInfo(tab.commandId)?.pid ?? undefined"
                 :process-status="getProcessStatus(tab.commandId)"
@@ -222,6 +222,7 @@
                 @stop-process="handleStopProcess"
                 @restart-process="handleRestartProcess"
                 @cwd-change="tab.cwd = $event"
+                @title-change="tab.title = $event"
               />
             </div>
           </template>
@@ -310,9 +311,9 @@
                 <span
                   class="tab-title"
                   :class="{ 'is-manual': isManualTab(item.tab) }"
-                  :title="isManualTab(item.tab) ? `${item.tab.name} (Nháy đúp để đổi tên)` : item.tab.name"
+                  :title="tabTooltip(item.tab)"
                 >
-                  {{ item.tab.name }}
+                  {{ tabLabel(item.tab) }}
                 </span>
                 <span v-if="getProcessInfo(item.tab.commandId)?.pid" class="tab-pid">
                   {{ getProcessInfo(item.tab.commandId)?.pid }}
@@ -376,7 +377,7 @@
             <div v-show="tab.id === activeTabIdB" class="pane-wrapper">
               <XtermPane
                 :command-id="tab.commandId"
-                :command-name="tab.name"
+                :command-name="tabLabel(tab)"
                 :run-event-id="tab.runEventId"
                 :pid="getProcessInfo(tab.commandId)?.pid ?? undefined"
                 :process-status="getProcessStatus(tab.commandId)"
@@ -389,6 +390,7 @@
                 @stop-process="handleStopProcess"
                 @restart-process="handleRestartProcess"
                 @cwd-change="tab.cwd = $event"
+                @title-change="tab.title = $event"
               />
             </div>
           </template>
@@ -755,6 +757,22 @@ const isManualTab = (tab?: OpenTabItem): boolean => {
     || tab.id.startsWith('terminal-')
     || tab.commandId <= 0
     || (!!tab.shellKind && tab.shellKind !== 'command');
+};
+
+// A terminal opened by hand shows the title its program sets (OSC 0/2)
+// until the user names it; a saved command keeps its own name and only
+// lists the program title in the tooltip.
+const DEFAULT_TERMINAL_NAME = 'Terminal';
+
+const tabLabel = (tab: OpenTabItem) =>
+  isManualTab(tab) && tab.name === DEFAULT_TERMINAL_NAME && tab.title ? tab.title : tab.name;
+
+const tabTooltip = (tab: OpenTabItem) => {
+  const label = tabLabel(tab);
+  const lines = [label];
+  if (tab.title && tab.title !== label) lines.push(tab.title);
+  if (isManualTab(tab)) lines.push('(Nháy đúp để đổi tên)');
+  return lines.join('\n');
 };
 
 // Manual terminal rename modal (MOD-14)

@@ -163,6 +163,7 @@ const emit = defineEmits<{
   (e: 'stop-process', id: number): void;
   (e: 'restart-process', id: number): void;
   (e: 'cwd-change', cwd: string): void;
+  (e: 'title-change', title: string): void;
 }>();
 
 const terminalElement = ref<HTMLDivElement | null>(null);
@@ -388,6 +389,11 @@ onMounted(async () => {
   // actually drew. Refreshing on a timer after a keystroke could read the
   // line before the shell echoed it and paint a stale suggestion over it.
   writeParsedDisposable = term.onWriteParsed(() => scheduleSuggestionRefresh());
+  // Programs (claude, vim, oh-my-zsh's termsupport…) set the window title
+  // with OSC 0/2; the tab shows it the way a desktop terminal would.
+  term.onTitleChange((title) => {
+    emit('title-change', title.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, 200));
+  });
 
   await loadHistory();
 

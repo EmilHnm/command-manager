@@ -243,6 +243,7 @@ Màn hình trung tâm hàng ngày của người dùng. Cho phép kích hoạt c
     * Mỗi Tab Strip có đầy đủ:
       * Dot màu trạng thái tiến trình (Xanh = Running, Xám = Stopped, Đỏ = Crashed).
       * Tên tab (hỗ trợ nháy đúp đổi tên đối với terminal thủ công MOD-14).
+      * Tiêu đề do chương trình đặt qua OSC 0/2 (vd. `claude`, `vim`, termsupport của oh-my-zsh): terminal thủ công chưa được đổi tên (tên mặc định `Terminal`) hiển thị tiêu đề này làm tên tab và trên thanh công cụ của pane; tên người dùng đặt qua MOD-14 luôn được ưu tiên. Tab của lệnh đã lưu giữ tên lệnh, tiêu đề chương trình chỉ hiện trong tooltip.
       * Badge PID chẩn đoán.
       * Nút đóng tab `[x]`: Chỉ ẩn tab khỏi Pane hiện tại, không ngắt tiến trình ngầm.
       * Nút `[+]`: Mở terminal mới trực tiếp vào Pane đó.
