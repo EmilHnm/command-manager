@@ -49,6 +49,20 @@
         <div class="stat-sub">Đã đăng ký trong Registry</div>
       </div>
 
+      <div
+        class="stat-card quick-stat-card"
+        :class="{ 'stat-active': filterMode === 'quick' }"
+        title="Bấm để lọc nhanh các lệnh Quick Access"
+        @click="filterMode = filterMode === 'quick' ? 'all' : 'quick'"
+      >
+        <div class="stat-header">
+          <span class="stat-title">QUICK ACCESS</span>
+          <Zap :size="16" class="stat-icon text-accent" />
+        </div>
+        <div class="stat-value font-mono text-accent">{{ quickAccessCount }}</div>
+        <div class="stat-sub">Ghim chạy nhanh tại SCR-01</div>
+      </div>
+
       <div class="stat-card">
         <div class="stat-header">
           <span class="stat-title">SHELL WRAPPER</span>
@@ -89,8 +103,27 @@
       </div>
 
       <div class="toolbar-filters">
+        <button
+          type="button"
+          class="filter-tab-btn"
+          :class="{ active: filterMode === 'all' }"
+          @click="filterMode = 'all'"
+        >
+          Tất cả ({{ commands.length }})
+        </button>
+        <button
+          type="button"
+          class="filter-tab-btn quick-tab-btn"
+          :class="{ active: filterMode === 'quick' }"
+          @click="filterMode = filterMode === 'quick' ? 'all' : 'quick'"
+        >
+          <Zap :size="12" class="quick-tab-icon" />
+          <span>Quick Access</span>
+          <span class="filter-count-badge">{{ quickAccessCount }}</span>
+        </button>
         <select v-model="filterMode" class="filter-select">
           <option value="all">Tất cả kiểu (All)</option>
+          <option value="quick">⚡ Chỉ Quick Access</option>
           <option value="argv">Chỉ Direct Argv</option>
           <option value="shell">Chỉ Shell Commands</option>
         </select>
@@ -106,15 +139,16 @@
             <th style="width: 220px;">TÊN LỆNH</th>
             <th style="width: 140px;">KIỂU THỰC THI</th>
             <th>CHUỖI LỆNH (COMMAND / ARGS)</th>
+            <th style="width: 90px; text-align: center;">⚡ QUICK</th>
             <th style="width: 140px; text-align: right;">THAO TÁC</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="loading">
-            <td colspan="5" class="empty-cell">Đang đồng bộ thư viện lệnh...</td>
+            <td colspan="6" class="empty-cell">Đang đồng bộ thư viện lệnh...</td>
           </tr>
           <tr v-else-if="filteredCommands.length === 0">
-            <td colspan="5" class="empty-cell">
+            <td colspan="6" class="empty-cell">
               Không tìm thấy lệnh nào phù hợp với bộ lọc tìm kiếm
             </td>
           </tr>
@@ -161,6 +195,21 @@
               </div>
             </td>
 
+            <td style="text-align: center;">
+              <button
+                type="button"
+                role="switch"
+                :aria-checked="Boolean(cmd.quick_access)"
+                class="quick-toggle table-toggle"
+                :class="{ active: Boolean(cmd.quick_access), toggling: togglingQuickId === cmd.id }"
+                :disabled="togglingQuickId === cmd.id"
+                :title="cmd.quick_access ? 'Đang ghim trên Quick Access (bấm để tắt)' : 'Chưa ghim trên Quick Access (bấm để bật)'"
+                @click="toggleQuickAccess(cmd)"
+              >
+                <span class="toggle-thumb" />
+              </button>
+            </td>
+
             <td style="text-align: right;">
               <div class="actions-group">
                 <button
@@ -201,6 +250,8 @@
     <!-- Footer Stats -->
     <footer class="view-footer">
       <span>Tổng cộng: {{ commands.length }} câu lệnh</span>
+      <span>•</span>
+      <span class="quick-footer-stat">⚡ {{ quickAccessCount }} Quick Access</span>
       <span>•</span>
       <span>{{ shellCount }} lệnh Shell</span>
       <span>•</span>
@@ -246,6 +297,7 @@ import { useCommands } from '@/composables/useCommands';
 import { useGroups } from '@/composables/useGroups';
 import { useRunSession } from '@/composables/useRunSession';
 import { APP_ENGINE_TAG } from '@/config/version';
+import { ipcClient } from '@/ipc/client';
 import type { CommandDefinition } from '@/types/models';
 
 const router = useRouter();
@@ -254,7 +306,8 @@ const { groups, fetchGroups } = useGroups();
 const { getProcessStatus } = useRunSession();
 
 const searchQuery = ref('');
-const filterMode = ref<'all' | 'argv' | 'shell'>('all');
+const filterMode = ref<'all' | 'argv' | 'shell' | 'quick'>('all');
+const togglingQuickId = ref<number | null>(null);
 
 const showEditorModal = ref(false);
 const editingCommand = ref<CommandDefinition | null>(null);
@@ -298,6 +351,7 @@ onMounted(async () => {
 const filteredCommands = computed(() => {
   return commands.value.filter(cmd => {
     // Mode filter
+    if (filterMode.value === 'quick' && !cmd.quick_access) return false;
     if (filterMode.value === 'argv' && cmd.is_shell) return false;
     if (filterMode.value === 'shell' && !cmd.is_shell) return false;
 
@@ -313,6 +367,30 @@ const filteredCommands = computed(() => {
 
 const shellCount = computed(() => commands.value.filter(c => c.is_shell).length);
 const argvCount = computed(() => commands.value.filter(c => !c.is_shell).length);
+const quickAccessCount = computed(() => commands.value.filter(c => Boolean(c.quick_access)).length);
+
+const toggleQuickAccess = async (cmd: CommandDefinition) => {
+  if (togglingQuickId.value !== null) return;
+  togglingQuickId.value = cmd.id;
+  const targetState = !cmd.quick_access;
+  try {
+    await ipcClient.setCommandQuickAccess(cmd.id, targetState);
+    cmd.quick_access = targetState;
+    showToast(
+      targetState
+        ? `Đã thêm '${cmd.name}' vào thanh Quick Access.`
+        : `Đã loại bỏ '${cmd.name}' khỏi thanh Quick Access.`,
+      'success'
+    );
+  } catch (err) {
+    showToast(
+      'Không thể cập nhật Quick Access: ' + (err instanceof Error ? err.message : String(err)),
+      'error'
+    );
+  } finally {
+    togglingQuickId.value = null;
+  }
+};
 
 const unassignedCount = computed(() => {
   const assignedIds = new Set<number>();
@@ -337,6 +415,7 @@ const duplicateCommand = async (cmd: CommandDefinition) => {
     name: `${cmd.name} (Copy)`,
     execution_string: cmd.execution_string,
     is_shell: cmd.is_shell,
+    quick_access: Boolean(cmd.quick_access),
   });
   if (saved) showToast('Đã nhân bản câu lệnh.', 'success');
 };
@@ -430,6 +509,7 @@ const handleImportFile = async (event: Event) => {
         execution_string: executionString,
         is_shell: Boolean(item.is_shell ?? item.isShell),
         cwd: typeof item.cwd === 'string' ? item.cwd : undefined,
+        quick_access: Boolean(item.quick_access ?? item.quickAccess),
       });
       if (saved) imported++;
     }
@@ -554,13 +634,39 @@ const handleImportFile = async (event: Event) => {
   background: rgba(255, 255, 255, 0.12);
 }
 
-/* 4 Quick Stats Cards (from Stitch SCR-02) */
+/* 5 Quick Stats Cards (from Stitch SCR-02) */
 .stats-ribbon {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 14px;
   padding: 14px 20px 0;
   flex-shrink: 0;
+}
+
+@media (max-width: 1024px) {
+  .stats-ribbon {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  }
+}
+
+.quick-stat-card {
+  cursor: pointer;
+  border-color: rgba(116, 71, 145, 0.25);
+}
+
+.quick-stat-card:hover {
+  border-color: rgba(116, 71, 145, 0.6);
+  background-color: rgba(116, 71, 145, 0.05);
+}
+
+.quick-stat-card.stat-active {
+  border-color: var(--primary);
+  background-color: rgba(116, 71, 145, 0.12);
+  box-shadow: 0 0 10px rgba(116, 71, 145, 0.2);
+}
+
+.text-accent {
+  color: #c084fc;
 }
 
 .stat-card {
@@ -647,6 +753,55 @@ const handleImportFile = async (event: Event) => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.filter-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 5px 11px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.filter-tab-btn:hover {
+  background-color: var(--bg-surface-hover);
+  color: var(--text-primary);
+  border-color: var(--border-medium);
+}
+
+.filter-tab-btn.active {
+  background-color: var(--primary-subtle);
+  color: var(--primary-accent);
+  border-color: var(--primary);
+}
+
+.quick-tab-btn.active {
+  color: #c084fc;
+  border-color: #a855f7;
+}
+
+.quick-tab-icon {
+  color: #fbbf24;
+}
+
+.filter-count-badge {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 1px 5px;
+  border-radius: 9px;
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.filter-tab-btn.active .filter-count-badge {
+  background-color: rgba(168, 85, 247, 0.25);
+  color: #f3e8ff;
 }
 
 .filter-select {
@@ -884,5 +1039,52 @@ const handleImportFile = async (event: Event) => {
 
 .text-success {
   color: var(--status-running);
+}
+
+/* Quick Toggle Switch in Table */
+.quick-toggle {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border-radius: 9px;
+  background-color: var(--bg-app-base);
+  border: 1px solid var(--border-medium);
+  cursor: pointer;
+  display: inline-block;
+  vertical-align: middle;
+  transition: background-color 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+  padding: 0;
+}
+
+.quick-toggle.active {
+  background-color: #744791;
+  border-color: #9333ea;
+}
+
+.quick-toggle.toggling {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: #94a3b8;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s ease;
+}
+
+.quick-toggle.active .toggle-thumb {
+  transform: translateX(16px);
+  background-color: #ffffff;
+}
+
+.quick-footer-stat {
+  color: #c084fc;
+  font-weight: 600;
+  font-family: var(--font-mono);
 }
 </style>

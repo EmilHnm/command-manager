@@ -9,6 +9,7 @@ export const IPC_EVENTS = {
   SINGLE_INSTANCE: 'app://instance',
   HISTORY_ADDED: 'history://added',
   CLOSE_REQUESTED: 'app://close-requested',
+  COMMANDS_CHANGED: 'commands://changed',
 } as const;
 
 export interface PtyDataEvent {

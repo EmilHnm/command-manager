@@ -236,6 +236,7 @@
                 @restart-process="handleRestartProcess"
                 @cwd-change="tab.cwd = $event"
                 @title-change="tab.title = $event"
+                @phase-change="tab.phase = $event"
               />
             </div>
           </template>
@@ -417,6 +418,7 @@
                 @restart-process="handleRestartProcess"
                 @cwd-change="tab.cwd = $event"
                 @title-change="tab.title = $event"
+                @phase-change="tab.phase = $event"
               />
             </div>
           </template>
@@ -614,6 +616,7 @@ import { useRunSession } from '@/composables/useRunSession';
 import { ipcClient, isTauriRuntime } from '@/ipc/client';
 import { useSplitLayout, type OpenTabItem, type ActivePane } from '@/composables/useSplitLayout';
 import { formatDroppedPaths } from '@/composables/useTerminalDrop';
+import type { ProcessLifecycleStatus } from '@/types/models';
 
 export type { OpenTabItem };
 
@@ -668,9 +671,22 @@ const activeTabB = computed(() => paneBTabs.value.find(t => t.id === activeTabId
 const hoverDropPane = ref<'paneA' | 'paneB' | null>(null);
 let unlistenDragDrop: (() => void) | null = null;
 
+export interface QuickAccessTarget {
+  tabId: string;
+  label: string;
+  pane: 'paneA' | 'paneB';
+  status: ProcessLifecycleStatus;
+  busy: boolean;
+  shellKind?: string | null;
+}
+
+export type SendResult = 'sent' | 'stopped' | 'input-not-at-end';
+
 export interface XtermPaneInstance {
   focusTerminal: () => void;
   pasteText: (text: string) => boolean;
+  sendCommand: (text: string, execute: boolean) => SendResult;
+  inputState: () => { phase: 'prompt' | 'input' | 'running'; hasInput: boolean; cursorAtEnd: boolean };
 }
 
 const dropToast = ref<{ message: string; type: 'warning' | 'error' } | null>(null);
@@ -722,6 +738,40 @@ const handleFileDrop = (pane: 'paneA' | 'paneB', paths: string[]) => {
       showDropToast('Không thể dán đường dẫn vào terminal.', 'warning');
     }
   }
+};
+
+const quickAccessTarget = computed<QuickAccessTarget | null>(() => {
+  const pane = activePane.value;
+  const targetTab = pane === 'paneB' ? activeTabB.value : activeTabA.value;
+  if (!targetTab) return null;
+  const status = getProcessStatus(targetTab.commandId);
+  const busy = targetTab.phase === 'running';
+  return {
+    tabId: targetTab.id,
+    label: tabLabel(targetTab),
+    pane,
+    status,
+    busy,
+    shellKind: targetTab.shellKind,
+  };
+});
+
+const sendToFocusedTerminal = (
+  text: string,
+  options: { execute: boolean }
+): SendResult | 'no-target' => {
+  const target = quickAccessTarget.value;
+  if (!target) return 'no-target';
+  const paneInstance = xtermPaneRefs.get(target.tabId);
+  if (!paneInstance) return 'no-target';
+
+  const result = paneInstance.sendCommand(text, options.execute);
+  if (result === 'input-not-at-end') {
+    showDropToast('Đưa con trỏ về cuối dòng hoặc xoá dòng đang gõ trước khi Run', 'warning');
+  } else if (result === 'stopped') {
+    showDropToast(`Tiến trình trên tab "${target.label}" đã dừng`, 'warning');
+  }
+  return result;
 };
 
 // Compute CSS grid/flex styles for split layout
@@ -1684,6 +1734,8 @@ defineExpose({
   moveTabToOppositePane,
   splitWithTab,
   transferTab,
+  quickAccessTarget,
+  sendToFocusedTerminal,
 });
 </script>
 

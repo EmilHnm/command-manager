@@ -1,6 +1,7 @@
 use super::schema::{
     INIT_SQL, MIGRATION_002_SQL, MIGRATION_003_SQL, MIGRATION_004_SQL, MIGRATION_005_SQL,
-    MIGRATION_006_SQL, MIGRATION_007_SQL, MIGRATION_008_SQL, MIGRATION_009_SQL, SCHEMA_VERSION,
+    MIGRATION_006_SQL, MIGRATION_007_SQL, MIGRATION_008_SQL, MIGRATION_009_SQL, MIGRATION_010_SQL,
+    SCHEMA_VERSION,
 };
 use crate::error::{Error, Result};
 use rusqlite::{Connection, OpenFlags};
@@ -114,7 +115,7 @@ impl Db {
     }
 }
 
-fn migrate(conn: &Connection) -> Result<()> {
+pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let exists: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_version'",
@@ -145,6 +146,7 @@ fn migrate(conn: &Connection) -> Result<()> {
             7 => MIGRATION_007_SQL,
             8 => MIGRATION_008_SQL,
             9 => MIGRATION_009_SQL,
+            10 => MIGRATION_010_SQL,
             _ => return Err(Error::msg(format!("missing migration for schema {next}"))),
         };
         conn.execute_batch(sql)?;
@@ -317,5 +319,110 @@ mod tests {
             )
             .expect("shell kind should be readable");
         assert_eq!(shell_kind.as_deref(), Some("pwsh"));
+    }
+
+    #[test]
+    fn quick_access_migration_defaults_to_off() {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys");
+
+        // Set up schema at version 9 (pre-quick_access)
+        conn.execute_batch(INIT_SQL).expect("init sql");
+        conn.execute_batch(MIGRATION_002_SQL).expect("migration 2");
+        conn.execute_batch(MIGRATION_003_SQL).expect("migration 3");
+        conn.execute_batch(MIGRATION_004_SQL).expect("migration 4");
+        conn.execute_batch(MIGRATION_005_SQL).expect("migration 5");
+        conn.execute_batch(MIGRATION_006_SQL).expect("migration 6");
+        conn.execute_batch(MIGRATION_007_SQL).expect("migration 7");
+        conn.execute_batch(MIGRATION_008_SQL).expect("migration 8");
+        conn.execute_batch(MIGRATION_009_SQL).expect("migration 9");
+
+        let initial_version: i64 = conn
+            .query_row("SELECT version FROM schema_version", [], |row| row.get(0))
+            .expect("schema version should be 9");
+        assert_eq!(initial_version, 9);
+
+        // Insert existing commands in version 9 DB
+        conn.execute(
+            "INSERT INTO command_definition
+             (id, name, execution_string, is_shell, shell_kind)
+             VALUES ('cmd-existing-1', 'Git Status', 'git status -sb', 1, 'bash')",
+            [],
+        )
+        .expect("command 1 insertion in v9");
+
+        conn.execute(
+            "INSERT INTO command_definition
+             (id, name, execution_string, is_shell, shell_kind)
+             VALUES ('cmd-existing-2', 'Direct Argv Tool', 'cargo test', 0, NULL)",
+            [],
+        )
+        .expect("command 2 insertion in v9");
+
+        // Migrate to version 10 (quick_access added)
+        migrate(&conn).expect("schema migration 9 to 10");
+
+        let migrated_version: i64 = conn
+            .query_row("SELECT version FROM schema_version", [], |row| row.get(0))
+            .expect("schema version should be 10");
+        assert_eq!(migrated_version, 10);
+
+        // Verify existing commands preserve all columns and quick_access defaults to 0
+        let (name1, exec1, is_shell1, shell_kind1, qa1): (
+            String,
+            String,
+            i64,
+            Option<String>,
+            i64,
+        ) = conn
+            .query_row(
+                "SELECT name, execution_string, is_shell, shell_kind, quick_access
+                 FROM command_definition WHERE id = 'cmd-existing-1'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("cmd-existing-1 should be readable");
+        assert_eq!(name1, "Git Status");
+        assert_eq!(exec1, "git status -sb");
+        assert_eq!(is_shell1, 1);
+        assert_eq!(shell_kind1.as_deref(), Some("bash"));
+        assert_eq!(qa1, 0);
+
+        let (name2, exec2, is_shell2, shell_kind2, qa2): (
+            String,
+            String,
+            i64,
+            Option<String>,
+            i64,
+        ) = conn
+            .query_row(
+                "SELECT name, execution_string, is_shell, shell_kind, quick_access
+                 FROM command_definition WHERE id = 'cmd-existing-2'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("cmd-existing-2 should be readable");
+        assert_eq!(name2, "Direct Argv Tool");
+        assert_eq!(exec2, "cargo test");
+        assert_eq!(is_shell2, 0);
+        assert_eq!(shell_kind2, None);
+        assert_eq!(qa2, 0);
     }
 }

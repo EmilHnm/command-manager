@@ -1,4 +1,4 @@
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 pub const INIT_SQL: &str = include_str!("../../migrations/001_init.sql");
 pub const MIGRATION_002_SQL: &str = include_str!("../../migrations/002_templates.sql");
 pub const MIGRATION_003_SQL: &str = include_str!("../../migrations/003_template_history.sql");
@@ -9,3 +9,4 @@ pub const MIGRATION_007_SQL: &str =
     include_str!("../../migrations/007_history_privacy_patterns.sql");
 pub const MIGRATION_008_SQL: &str = include_str!("../../migrations/008_command_shell_kind.sql");
 pub const MIGRATION_009_SQL: &str = include_str!("../../migrations/009_group_execution_mode.sql");
+pub const MIGRATION_010_SQL: &str = include_str!("../../migrations/010_command_quick_access.sql");

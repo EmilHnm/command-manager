@@ -89,6 +89,31 @@
             <span>{{ errors.execution_string }}</span>
           </span>
         </div>
+
+        <!-- Quick Access Toggle Card (SCR-01 Integration) -->
+        <div class="form-group">
+          <div class="quick-access-card" :class="{ active: form.quick_access }">
+            <div class="quick-access-info">
+              <div class="quick-access-header">
+                <Zap :size="15" class="quick-access-icon" />
+                <span class="quick-access-title">Hiển thị trong Quick Access (SCR-01)</span>
+              </div>
+              <span class="quick-access-desc">
+                Ghim lệnh này vào thanh tác vụ nhanh bên dưới danh sách nhóm. Cho phép gửi trực tiếp vào Terminal đang active bằng nút Run [▷] hoặc Paste [⎘].
+              </span>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              :aria-checked="Boolean(form.quick_access)"
+              class="quick-toggle"
+              :class="{ active: Boolean(form.quick_access) }"
+              @click="form.quick_access = !form.quick_access"
+            >
+              <span class="toggle-thumb" />
+            </button>
+          </div>
+        </div>
       </div>
 
       <div class="modal-footer">
@@ -138,6 +163,7 @@ const form = ref<Partial<CommandDefinition>>({
   name: '',
   execution_string: '',
   is_shell: false,
+  quick_access: false,
 });
 
 const touched = ref<Record<string, boolean>>({});
@@ -173,12 +199,16 @@ watch(
     touched.value = {};
     if (visible) {
       if (val) {
-        form.value = { ...val };
+        form.value = {
+          ...val,
+          quick_access: Boolean(val.quick_access),
+        };
       } else {
         form.value = {
           name: '',
           execution_string: '',
           is_shell: false,
+          quick_access: false,
         };
       }
     } else {
@@ -186,6 +216,7 @@ watch(
         name: '',
         execution_string: '',
         is_shell: false,
+        quick_access: false,
       };
     }
   },
@@ -363,5 +394,84 @@ const handleSave = () => {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Quick Access Toggle Card */
+.quick-access-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  background-color: var(--bg-app-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  transition: all 0.15s ease;
+}
+
+.quick-access-card.active {
+  border-color: rgba(116, 71, 145, 0.45);
+  background-color: rgba(116, 71, 145, 0.08);
+}
+
+.quick-access-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.quick-access-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.quick-access-icon {
+  color: #fbbf24;
+}
+
+.quick-access-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.quick-access-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.quick-toggle {
+  position: relative;
+  width: 38px;
+  height: 20px;
+  border-radius: 10px;
+  background-color: var(--bg-surface-hover);
+  border: 1px solid var(--border-medium);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+  padding: 0;
+}
+
+.quick-toggle.active {
+  background-color: var(--primary);
+  border-color: var(--primary);
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background-color: #ffffff;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.quick-toggle.active .toggle-thumb {
+  transform: translateX(18px);
 }
 </style>

@@ -10,6 +10,7 @@ export interface CommandDefinition {
   is_shell: boolean;
   shell_kind?: string;
   cwd?: string;
+  quick_access?: boolean;
 }
 
 export interface CommandGroup {

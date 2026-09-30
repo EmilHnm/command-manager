@@ -188,19 +188,53 @@ Màn hình trung tâm hàng ngày của người dùng. Cho phép kích hoạt c
 +----------------------------------------------------------------------------------------------------+
 ```
 
+##### 2.4. Wireframe Bố Cục Thanh Bên Kèm Section Quick Access (Dual-Section Sidebar Wireframe)
+
+```
++---------------------------+
+| ≡ NHÓM LỆNH & PHIÊN   [⟳] |   <- header danh mục nhóm lệnh
+|---------------------------|
+| v Web Platform            |
+|   [▷] [⏹] [Aut]           |
+|   ● 01. db-init           |   Section 1: GroupTree (cuộn riêng)
+|   ● 02. backend           |
+| > Microservices           |
+| > Standalone              |
+|===========================|   <- sash kéo được (row-resize), nháy đúp = 50:50
+| ⚡ QUICK ACCESS  (5)   [⌄] |   <- header section 2, [⌄] thu gọn / mở rộng
+| → Terminal 2 · Khung A     |   <- chỉ báo terminal đích (§3.5)
+| [🔍 Lọc...]               |   <- chỉ hiện khi có > 8 item
+|---------------------------|
+| Git Status        [▷][⎘]  |
+|   git status -sb          |
+| Docker PS         [▷][⎘]  |   Section 2: danh sách Quick Access (cuộn riêng)
+|   docker ps --format ...  |
+| Tail API log  ⚠   [▷][⎘]  |
+|   tail -f logs/api.log    |
++---------------------------+
+```
+
 #### 3. Các Thành phần Giao diện & Data Binding
-* **Left Sub-Sidebar: Execution Explorer (Tree View):**
-  * Danh sách phân cấp: `command_group` -> `group_membership` -> `command_definition`.
-  * Hiển thị số thứ tự `execution_order` (ví dụ: `01.`, `02.`).
-  * Trạng thái trực tiếp của từng node:
-    * ⚪ **Idle (Xám):** Chưa chạy trong phiên hiện tại.
-    * 🟡 **Starting (Vàng nhấp nháy):** Backend đang fork tiến trình và phân bổ PTY.
-    * 🟢 **Running (Xanh lá sáng kèm spinner):** Đang chạy, hiển thị tooltip PID hiện hành.
-    * 🔵 **Completed (Xanh dương):** Tiến trình đã hoàn thành với exit code = 0.
-    * 🔴 **Failed (Đỏ):** Tiến trình dừng với exit code != 0.
-  * Nút tác vụ nhanh trên đầu nhóm:
-    * **Play Button (`▷`):** Kích hoạt `run_session` mới, khởi chạy các lệnh theo `execution_order`. Tự động thêm tab tương ứng (`dockview.api.addPanel()`).
-    * **Stop Button (`⏹`):** Gửi tín hiệu dừng cho toàn bộ các lệnh đang chạy thuộc nhóm đó.
+* **Left Sub-Sidebar: Execution Explorer (Tree View) & Quick Access Panel:**
+  * **Cấu trúc 2 Section Dọc:** Thanh bên được chia dọc thành 2 section độc lập bằng thanh phân cách co giãn (Resizable Sash):
+    * **Section 1 (Top - GroupTree):** Cây phân cấp nhóm lệnh (`command_group` -> `group_membership` -> `command_definition`), số thứ tự `execution_order` (`01.`, `02.`), trạng thái tiến trình (Idle, Starting, Running, Completed, Failed) và nút điều khiển nhanh nhóm (`[▷]` Play, `[⏹]` Stop).
+    * **Thanh Phân Cách Sash Ngang (Row Splitter):** Cho phép kéo thả chuột để điều chỉnh tỉ lệ chiều cao giữa GroupTree và QuickAccessPanel (`cursor: row-resize`). Ràng buộc tối thiểu `min-height: 120px` cho mỗi section. Thao tác nháy đúp (`dblclick`) lập tức khôi phục tỉ lệ cân bằng chuẩn **50:50**. Trạng thái tỉ lệ và thu gọn được lưu vào `localStorage` (`cm_quick_access_ratio_v1`, `cm_quick_access_collapsed_v1`).
+    * **Section 2 (Bottom - Quick Access Panel):** Danh sách các lệnh đã được bật cờ `quick_access`, hỗ trợ gửi chuỗi thực thi trực tiếp vào terminal đang focus mà không cần mở tab PTY riêng.
+  * **Các Thành Phần Của Quick Access Panel:**
+    * **Header Panel:** Tiêu đề `⚡ QUICK ACCESS`, huy hiệu đếm số lượng lệnh `(N)`, và nút toggle thu gọn/mở rộng `[⌄]`. Khi thu gọn, Section 2 co lại thành header thanh mảnh (28px), Section 1 chiếm trọn không gian còn lại.
+    * **Chỉ Báo Terminal Đích (Target Terminal Indicator):** Hiển thị nhãn realtime `→ <tên tab> · Khung A/B` (sử dụng `tabLabel()`, phản ánh tiêu đề chương trình như `→ ✳ Claude Code · Khung A`). Khi tab đích đang bận chạy chương trình (`shellPhase = running`), hiển thị thêm `· đang bận`. Khi tab đích đã kết thúc tiến trình, hiển thị màu cảnh báo `(đã dừng)`.
+    * **Thanh Lọc Nhanh (Filter Input):** Ô tìm kiếm `[🔍 Lọc...]` tự động kích hoạt hiển thị khi số lượng lệnh ghim Quick Access vượt quá 8 item.
+    * **Quick Access Item Card:**
+      * **Dòng 1:** Tên lệnh (`name`, chống tràn `text-overflow: ellipsis`), huy hiệu cảnh báo `⚠` nếu có độ lệch môi trường shell hoặc lệnh đa dòng trên shell thiếu bracketed paste, và 2 nút icon hành động:
+        - `[▷]` **Run (`Play`):** Dán chuỗi lệnh vào terminal đích và gửi Enter thực thi ngay. Nếu dòng lệnh đang có chữ dở và con trỏ ở cuối dòng, hệ thống tự xóa dòng cũ bằng ký tự DEL rồi dán và chạy; nếu con trỏ ở giữa dòng, hệ thống chặn gửi và hiện toast nhắc nhở an toàn.
+        - `[⎘]` **Paste (`ClipboardPaste`):** Chỉ dán chuỗi lệnh vào vị trí con trỏ của terminal đích mà không gửi Enter, cho phép người dùng kiểm tra và chỉnh sửa trước khi chạy.
+      * **Dòng 2:** Chuỗi thực thi (`execution_string`) hiển thị dạng code monospace thu nhỏ 1 dòng; nếu lệnh có nhiều dòng, hiển thị dòng đầu kèm badge `↵ +N`.
+      * **Tương tác Nháy Đúp (`dblclick`):** Nháy đúp vào item tương đương thao tác **Paste** an toàn.
+      * **Tooltip & Khả Năng Tiếp Cận (`aria-label`):** Nêu rõ hành động và tên terminal đích, ví dụ: *"Run: Chạy 'Git Status' trong Terminal 1 · Khung A"*.
+  * **Quy Tắc Hiển Thị Động Của Quick Access Panel:**
+    * **Khi không có terminal đích:** (Workspace chưa mở tab nào, hoặc ở chế độ Split mà khung active đang trống): Section 2 và thanh phân cách sash **ẩn hoàn toàn**, GroupTree tự động giãn 100% chiều cao thanh bên.
+    * **Empty State:** Khi chưa có lệnh nào được bật Quick Access, hiển thị giao diện rỗng gồm icon `Zap`, thông điệp *"Chưa có lệnh Quick Access. Bật switch ⚡ trong màn Lệnh"* và nút bấm `[Mở màn Lệnh]` điều hướng sang `/commands`.
+    * **Trạng thái Tiến trình Đích Dừng:** Nếu tab đích đã dừng tiến trình, section vẫn hiển thị để theo dõi nhưng 2 nút Run và Paste chuyển sang trạng thái disabled kèm tooltip lý do.
 * **Top Status Strip & Background Processes Button:**
   * Thẻ chỉ báo **`[⚡ 2 Ngầm]` / `[Active Daemons]`**: Cho biết số lượng tiến trình PTY đang chạy ngầm trong kernel backend Rust.
   * Click vào nút để bật/tắt **Menu Quản lý Tiến trình Chạy ngầm (Background Processes Manager Panel / Popover)**.
@@ -291,21 +325,17 @@ Nơi định nghĩa, cấu hình và quản trị toàn bộ các câu lệnh đ
 #### 2. Wireframe Chi tiết
 
 ```
-+----------------------------------------------------------------------------------------------------+
-| [=] Command Library      [🔍 Search commands by name, string...]   [Filter: All / Shell / Argv]   |
-|                          [+ Tạo Lệnh Mới]  [Import Command]                                        |
-+----------------------------------------------------------------------------------------------------+
-| TÊN LỆNH          | KIỂU THỰC THI | CHUỖI LỆNH (EXECUTION STRING)           | NHÓM THUỘC VỀ | HÀNH ĐỘNG    |
-|-------------------+---------------+-----------------------------------------+---------------+--------------|
-| Vite Frontend Dev | [Shell: bash] | pnpm --filter web dev --port 3000       | Web Platform  | [▷] [✎] [⧉] [🗑] |
-| NestJS Backend API| [Direct Argv] | node dist/main.js --env=local           | Web Platform  | [▷] [✎] [⧉] [🗑] |
-| Docker PostgreSQL | [Shell: sh]   | docker compose up -d postgres           | Infrastructure| [▷] [✎] [⧉] [🗑] |
-| Cloudflare Tunnel | [Direct Argv] | cloudflared tunnel run dev-tunnel       | Standalone    | [▷] [✎] [⧉] [🗑] |
-| Redis Cache Server| [Direct Argv] | redis-server --port 6379                | Microservices | [▷] [✎] [⧉] [🗑] |
-| Prune Docker Data | [Shell: bash] | docker system prune -af --volumes       | (Chưa gán)    | [▷] [✎] [⧉] [🗑] |
-+----------------------------------------------------------------------------------------------------+
-| Tổng cộng: 14 lệnh | 8 Shell commands | 6 Direct Argv commands               | Trang: [<] 1 [>]    |
-+----------------------------------------------------------------------------------------------------+
++----------------------------------------------------------------------------------------------------------+
+| [=] Command Library   [🔍 Search...]   [Filter: All / Shell / Argv / ⚡ Quick Access]   [+ Tạo Lệnh Mới]   |
++----------------------------------------------------------------------------------------------------------+
+| TÊN LỆNH           | KIỂU THỰC THI | CHUỖI LỆNH                        | NHÓM         | ⚡ QUICK | HÀNH ĐỘNG     |
+|--------------------+---------------+-----------------------------------+--------------+----------+---------------|
+| Git Status         | [Shell: zsh]  | git status -sb                    | (Chưa gán)   |  [●━]    | [▷] [✎] [⧉] [🗑] |
+| Vite Frontend Dev  | [Shell: bash] | pnpm --filter web dev --port 3000 | Web Platform |  [━○]    | [▷] [✎] [⧉] [🗑] |
+| Docker PS          | [Direct Argv] | docker ps --format "{{.Names}}"   | Infra        |  [●━]    | [▷] [✎] [⧉] [🗑] |
++----------------------------------------------------------------------------------------------------------+
+| Tổng cộng: 14 lệnh | 8 Shell | 6 Argv | ⚡ 5 Quick Access                                                   |
++----------------------------------------------------------------------------------------------------------+
 ```
 
 #### 3. Bảng Dữ liệu & Quy cách Thao tác
@@ -316,11 +346,18 @@ Nơi định nghĩa, cấu hình và quản trị toàn bộ các câu lệnh đ
      * 🟨 `Shell (bash/sh)`: Chạy qua shell hệ thống để hỗ trợ piping (`|`), redirect (`>`), biến môi trường (`$VAR`).
   3. **Chuỗi Lệnh (`execution_string`):** Hiển thị dạng code mono block có truncate kèm nút "Copy".
   4. **Nhóm thuộc về:** Liệt kê các nhóm lệnh đang chứa command này (từ bảng `group_membership`).
-  5. **Hành động (Action Buttons):**
+  5. **Quick Access (`quick_access`):**
+     * Switch toggle bật/tắt trực tiếp trên từng dòng table row, có hiệu lực ngay lập tức qua IPC `commands_set_quick_access(id, enabled, confirmed: true)`.
+     * Switch hiển thị trạng thái loading spinner / disabled trong lúc chờ backend xác nhận; nếu gặp sự cố sẽ tự động hoàn nguyên (rollback) về trạng thái cũ và kích hoạt Toast cảnh báo lỗi.
+     * Tooltip switch: *"Hiện lệnh này trong mục Quick Access ở màn Terminal"*.
+  6. **Hành động (Action Buttons):**
      * `[▷]` Chạy ngay lập tức (mở sang Workspace).
      * `[✎]` Chỉnh sửa (mở Modal MOD-02).
      * `[⧉]` Nhân bản lệnh (Duplicate).
      * `[🗑]` Xóa lệnh (Yêu cầu xác nhận an toàn MOD-03).
+* **Bộ Lọc Nhanh & Thống Kê Thanh Điều Hướng:**
+  * **Bộ lọc `⚡ Quick Access`:** Bổ sung tab filter nhanh `⚡ Quick Access` vào cụm tab `All` / `Shell` / `Argv`, cho phép lọc ngay lập tức các lệnh đang được gắn cờ.
+  * **Chỉ số Telemetry Footer:** Hiển thị số lượng lệnh Quick Access (ví dụ `⚡ 5 Quick Access`) bên cạnh tổng số lệnh và phân loại thực thi.
 
 ---
 
@@ -534,6 +571,10 @@ Quản lý các mẫu lệnh tái sử dụng chứa các tham số linh hoạt 
 |                                                                             |
 |  Gán vào Nhóm lệnh                                                          |
 |  [x] Web Platform Development    [ ] Infrastructure    [ ] Microservices     |
+|                                                                             |
+|  ⚡ Quick Access                                                   [●━]      |
+|  Hiện trong mục Quick Access ở màn Terminal để dán hoặc chạy nhanh           |
+|  vào terminal đang focus.                                                   |
 +-----------------------------------------------------------------------------+
 |  [Hủy Bỏ]                                          [💾 Lưu Định Nghĩa Lệnh]  |
 +-----------------------------------------------------------------------------+
@@ -543,6 +584,7 @@ Quản lý các mẫu lệnh tái sử dụng chứa các tham số linh hoạt 
   * `name`: Bắt buộc, độ dài từ 2 đến 100 ký tự, không chứa ký tự điều khiển.
   * `execution_string`: Bắt buộc, không được để trống.
   * `is_shell`: Radio button rõ ràng. Nếu người dùng chọn Shell, hiển thị cảnh báo nhỏ: *"Lưu ý: Lệnh chạy trong Shell có thể chịu ảnh hưởng bởi biến môi trường của hệ thống host"*.
+  * `quick_access`: Switch toggle "⚡ Quick Access". Mặc định tắt (`false`) khi tạo mới lệnh. Khi nhân bản lệnh (Duplicate `[⧉]`), giữ nguyên giá trị của lệnh gốc. Giá trị được lưu đồng bộ cùng form qua IPC `commands_create` / `commands_update`.
 
 ---
 

@@ -133,6 +133,7 @@ mod desktop {
                 ipc::commands::commands_create,
                 ipc::commands::commands_update,
                 ipc::commands::commands_delete,
+                ipc::commands::commands_set_quick_access,
                 ipc::commands::templates_list,
                 ipc::commands::templates_create,
                 ipc::commands::templates_update,

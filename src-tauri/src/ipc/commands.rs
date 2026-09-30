@@ -56,11 +56,13 @@ pub fn commands_list(state: State<AppState>) -> Result<Vec<CommandDef>> {
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn commands_create(
+    app: AppHandle,
     state: State<AppState>,
     name: String,
     execution_string: String,
     is_shell: bool,
     shell_kind: Option<String>,
+    quick_access: Option<bool>,
     confirmed: bool,
 ) -> Result<CommandDef> {
     require(confirmed)?;
@@ -70,21 +72,53 @@ pub fn commands_create(
         execution_string,
         is_shell,
         shell_kind,
+        quick_access: quick_access.unwrap_or(false),
     };
     state.db.write(|c| cmd_repo::insert(c, &cmd))?;
+    let _ = app.emit(events::COMMANDS_CHANGED, ());
     Ok(cmd)
 }
 
 #[tauri::command]
-pub fn commands_update(state: State<AppState>, cmd: CommandDef, confirmed: bool) -> Result<()> {
+pub fn commands_update(
+    app: AppHandle,
+    state: State<AppState>,
+    cmd: CommandDef,
+    confirmed: bool,
+) -> Result<()> {
     require(confirmed)?;
-    state.db.write(|c| cmd_repo::update(c, &cmd))
+    state.db.write(|c| cmd_repo::update(c, &cmd))?;
+    let _ = app.emit(events::COMMANDS_CHANGED, ());
+    Ok(())
 }
 
 #[tauri::command]
-pub fn commands_delete(state: State<AppState>, id: String, confirmed: bool) -> Result<()> {
+pub fn commands_delete(
+    app: AppHandle,
+    state: State<AppState>,
+    id: String,
+    confirmed: bool,
+) -> Result<()> {
     require(confirmed)?;
-    state.db.write(|c| cmd_repo::delete(c, &id))
+    state.db.write(|c| cmd_repo::delete(c, &id))?;
+    let _ = app.emit(events::COMMANDS_CHANGED, ());
+    Ok(())
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn commands_set_quick_access(
+    app: AppHandle,
+    state: State<AppState>,
+    id: String,
+    enabled: bool,
+    confirmed: bool,
+) -> Result<()> {
+    require(confirmed)?;
+    state
+        .db
+        .write(|c| cmd_repo::set_quick_access(c, &id, enabled))?;
+    let _ = app.emit(events::COMMANDS_CHANGED, ());
+    Ok(())
 }
 
 fn template_record_from_payload(

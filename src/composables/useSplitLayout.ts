@@ -14,6 +14,8 @@ export interface OpenTabItem {
   cwd?: string;
   // Latest title set by the program running in the terminal (OSC 0/2).
   title?: string;
+  // Current shell phase reported by shell integration or command execution.
+  phase?: 'prompt' | 'input' | 'running';
 }
 
 const SPLIT_MODE_KEY = 'cm_split_mode_v1';

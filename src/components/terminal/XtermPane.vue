@@ -164,6 +164,7 @@ const emit = defineEmits<{
   (e: 'restart-process', id: number): void;
   (e: 'cwd-change', cwd: string): void;
   (e: 'title-change', title: string): void;
+  (e: 'phase-change', phase: 'prompt' | 'input' | 'running'): void;
 }>();
 
 const terminalElement = ref<HTMLDivElement | null>(null);
@@ -198,6 +199,12 @@ let promptColumn = 0;
 let rightPromptStartColumn: number | undefined;
 let currentCwd: string | undefined;
 let shellPhase: 'prompt' | 'input' | 'running' = 'prompt';
+
+function setShellPhase(next: 'prompt' | 'input' | 'running') {
+  if (shellPhase === next) return;
+  shellPhase = next;
+  emit('phase-change', next);
+}
 let bracketedPaste = false;
 let isPasting = false;
 let composing = false;
@@ -302,6 +309,7 @@ const handleWindowKeyUp = (e: KeyboardEvent) => {
 };
 
 onMounted(async () => {
+  emit('phase-change', shellPhase);
   if (!terminalElement.value) return;
 
   await loadTerminalFonts();
@@ -417,7 +425,7 @@ onMounted(async () => {
     const kind = separator === -1 ? data : data.slice(0, separator);
     const payload = separator === -1 ? '' : data.slice(separator + 1);
     if (kind === 'A') {
-      shellPhase = 'prompt';
+      setShellPhase('prompt');
       inputShadow = '';
       rightPromptStartColumn = undefined;
       resetHistoryNavigation();
@@ -431,14 +439,14 @@ onMounted(async () => {
       rightPromptStartColumn = findRightPromptStartColumn(promptMarker?.line, promptColumn);
       inputShadow = '';
       resetHistoryNavigation();
-      shellPhase = 'input';
+      setShellPhase('input');
       term?.write('\x1b[?25h');
     } else if (kind === 'C') {
-      shellPhase = 'running';
+      setShellPhase('running');
       suggestionText.value = '';
       suggestionPopup.value = false;
     } else if (kind === 'D') {
-      shellPhase = 'prompt';
+      setShellPhase('prompt');
     } else if (kind === 'P' && payload.startsWith('Cwd=')) {
       currentCwd = decodeOsc(payload.slice(4));
       emit('cwd-change', currentCwd);
@@ -560,7 +568,7 @@ onMounted(async () => {
       // Level 2 has no shell-side C marker. Once Enter is sent, suspend
       // recording until the next prompt boundary; this avoids saving every
       // Enter pressed inside a running REPL or password prompt as a command.
-      shellPhase = 'running';
+      setShellPhase('running');
       window.setTimeout(() => {
         // The shell may have emitted D/A/B and replaced promptMarker before
         // this delayed callback runs. Prefer the line captured before Enter;
@@ -954,9 +962,73 @@ const pasteText = (text: string): boolean => {
   return true;
 };
 
+export type SendResult = 'sent' | 'stopped' | 'input-not-at-end';
+
+function normalizeCommandText(text: string): string {
+  // Convert \r\n and \r to \n
+  let normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  // Strip control characters except \t (\x09) and \n (\x0A)
+  normalized = normalized.replace(/[\x00-\x08\x0B-\x1F\x7F\x80-\x9F]/g, '');
+  return normalized;
+}
+
+const inputState = () => {
+  const input = currentInput();
+  return {
+    phase: shellPhase,
+    hasInput: input.trim().length > 0,
+    cursorAtEnd: cursorIsAtInputEnd(),
+  };
+};
+
+const sendCommand = (text: string, execute: boolean): SendResult => {
+  if (!term || props.processStatus !== 'running') {
+    return 'stopped';
+  }
+  const normalized = normalizeCommandText(text);
+
+  if (!execute) {
+    pasteText(normalized);
+    return 'sent';
+  }
+
+  // Execute mode (Run)
+  // Trim trailing newlines and whitespace to prevent sending an extra empty Enter
+  const textToSend = normalized.replace(/(?:[\r\n][ \t]*)+$/, '').replace(/[\r\n]+$/, '');
+  if (!textToSend.trim()) {
+    return 'sent';
+  }
+
+  if (shellPhase === 'input') {
+    const current = currentInput();
+    if (current.length > 0) {
+      if (!cursorIsAtInputEnd()) {
+        return 'input-not-at-end';
+      }
+      // Erase current input line by sending DEL * character count
+      const erase = '\x7f'.repeat(Array.from(current).length);
+      void sendInput(props.commandId, erase, props.runEventId);
+      if (props.historyLevel === 2) inputShadow = '';
+    }
+  }
+
+  isPasting = true;
+  try {
+    term.paste(textToSend);
+  } finally {
+    isPasting = false;
+  }
+  term.input('\r', true);
+  setShellPhase('running');
+  focusTerminal();
+  return 'sent';
+};
+
 defineExpose({
   focusTerminal,
   pasteText,
+  sendCommand,
+  inputState,
 });
 </script>
 

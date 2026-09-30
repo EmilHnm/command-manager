@@ -27,6 +27,7 @@ type BackendCommand = {
   execution_string: string;
   is_shell: boolean;
   shell_kind?: string | null;
+  quick_access?: boolean | number;
 };
 
 type BackendGroup = {
@@ -337,12 +338,12 @@ async function invokeTauri<T>(cmd: string, args?: Record<string, unknown>): Prom
 // Initial seed data for Mock Store
 // ----------------------------------------------------
 let mockCommands: CommandDefinition[] = [
-  { id: 1, name: 'Vite Frontend Dev', execution_string: 'pnpm --filter web dev --port 3000', is_shell: true },
-  { id: 2, name: 'NestJS Backend API', execution_string: 'node dist/main.js --env=local', is_shell: false },
-  { id: 3, name: 'Docker PostgreSQL', execution_string: 'docker compose up -d postgres', is_shell: true },
-  { id: 4, name: 'Cloudflare Tunnel', execution_string: 'cloudflared tunnel run dev-tunnel', is_shell: false },
-  { id: 5, name: 'Redis Cache Server', execution_string: 'redis-server --port 6379', is_shell: false },
-  { id: 6, name: 'Prune Docker Data', execution_string: 'docker system prune -af --volumes', is_shell: true },
+  { id: 1, name: 'Vite Frontend Dev', execution_string: 'pnpm --filter web dev --port 3000', is_shell: true, quick_access: true },
+  { id: 2, name: 'NestJS Backend API', execution_string: 'node dist/main.js --env=local', is_shell: false, quick_access: true },
+  { id: 3, name: 'Docker PostgreSQL', execution_string: 'docker compose up -d postgres', is_shell: true, quick_access: true },
+  { id: 4, name: 'Cloudflare Tunnel', execution_string: 'cloudflared tunnel run dev-tunnel', is_shell: false, quick_access: true },
+  { id: 5, name: 'Redis Cache Server', execution_string: 'redis-server --port 6379', is_shell: false, quick_access: true },
+  { id: 6, name: 'Prune Docker Data', execution_string: 'docker system prune -af --volumes', is_shell: true, quick_access: false },
 ];
 
 let mockGroups: CommandGroup[] = [
@@ -389,6 +390,7 @@ const mockLogBuffers = new Map<number, string>();
 const mockTerminalInput = new Map<number, string>();
 const mockPtyDataListeners = new Set<(commandId: number, data: string) => void>();
 const mockHistoryAddedListeners = new Set<() => void>();
+const mockCommandsChangedListeners = new Set<() => void>();
 let mockCommandHistories: CommandHistory[] = [];
 const mockOsHistory = ['git status', 'git log --oneline -10', 'pnpm run build', 'cargo test --lib'];
 mockLogBuffers.set(1, '\x1b[35m[vite]\x1b[0m connecting...\n\x1b[32m  ➜  Local:   http://localhost:3000/\x1b[0m\n\x1b[32m  ➜  Network: http://192.168.1.15:3000/\x1b[0m\n\x1b[90m  ➜  press h + enter to show help\x1b[0m\n');
@@ -412,6 +414,15 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
         const newId = Math.max(...mockCommands.map(c => c.id), 0) + 1;
         mockCommands.push({ ...payload, id: newId });
       }
+      mockCommandsChangedListeners.forEach(listener => listener());
+      return true as unknown as T;
+    }
+
+    case 'commands_set_quick_access': {
+      const id = args?.id as number;
+      const enabled = Boolean(args?.enabled);
+      mockCommands = mockCommands.map(c => c.id === id ? { ...c, quick_access: enabled } : c);
+      mockCommandsChangedListeners.forEach(listener => listener());
       return true as unknown as T;
     }
 
@@ -419,6 +430,7 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
       const id = args?.id as number;
       mockCommands = mockCommands.filter(c => c.id !== id);
       mockMemberships = mockMemberships.filter(m => m.command_id !== id);
+      mockCommandsChangedListeners.forEach(listener => listener());
       return true as unknown as T;
     }
 
@@ -715,6 +727,7 @@ export const ipcClient = {
       execution_string: row.execution_string,
       is_shell: row.is_shell,
       shell_kind: row.shell_kind ?? undefined,
+      quick_access: Boolean(row.quick_access),
     }));
   },
 
@@ -733,6 +746,7 @@ export const ipcClient = {
           execution_string: command.execution_string,
           is_shell: Boolean(command.is_shell),
           shell_kind: command.shell_kind ?? null,
+          quick_access: Boolean(command.quick_access),
         },
         confirmed: true,
       });
@@ -743,10 +757,23 @@ export const ipcClient = {
         execution_string: command.execution_string,
         is_shell: Boolean(command.is_shell),
         shell_kind: command.shell_kind ?? null,
+        quick_access: Boolean(command.quick_access),
         confirmed: true,
       });
       rememberCommand(created);
     }
+    return true;
+  },
+
+  setCommandQuickAccess: async (id: number, enabled: boolean): Promise<boolean> => {
+    if (!usingNativeIpc()) {
+      return invokeTauri<boolean>('commands_set_quick_access', { id, enabled });
+    }
+    await invokeTauri<void>('commands_set_quick_access', {
+      id: backendIdFor(commandUiToBackend, id, 'Lệnh'),
+      enabled,
+      confirmed: true,
+    });
     return true;
   },
 
@@ -1414,6 +1441,15 @@ export const ipcClient = {
     }
     const { listen } = await import('@tauri-apps/api/event');
     return listen(IPC_EVENTS.HISTORY_ADDED, () => callback());
+  },
+
+  onCommandsChanged: async (callback: () => void) => {
+    if (!usingNativeIpc()) {
+      mockCommandsChangedListeners.add(callback);
+      return () => mockCommandsChangedListeners.delete(callback);
+    }
+    const { listen } = await import('@tauri-apps/api/event');
+    return listen(IPC_EVENTS.COMMANDS_CHANGED, () => callback());
   },
 
   openUrl: async (url: string): Promise<void> => {

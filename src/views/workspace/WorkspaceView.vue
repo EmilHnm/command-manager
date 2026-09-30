@@ -12,17 +12,52 @@
         </button>
       </div>
 
-      <div class="sidebar-content">
-        <GroupTree
-          :groups="groups"
-          :selected-group-id="selectedGroupId"
-          :stopping-group-id="stoppingGroupId"
-          :running-group-id="runningGroup ? selectedGroupId : null"
-          @select-command="handleSelectCommand"
-          @select-group="selectedGroupId = $event"
-          @run-group="handleRunGroup"
-          @stop-group="handleStopGroup"
-        />
+      <div
+        ref="sidebarContentRef"
+        class="sidebar-content"
+        :class="{ 'has-quick-access': Boolean(quickAccessTarget) }"
+      >
+        <div class="sidebar-section-tree" :style="treeSectionStyle">
+          <GroupTree
+            :groups="groups"
+            :selected-group-id="selectedGroupId"
+            :stopping-group-id="stoppingGroupId"
+            :running-group-id="runningGroup ? selectedGroupId : null"
+            @select-command="handleSelectCommand"
+            @select-group="selectedGroupId = $event"
+            @run-group="handleRunGroup"
+            @stop-group="handleStopGroup"
+          />
+        </div>
+
+        <template v-if="quickAccessTarget">
+          <!-- Horizontal resizable sash divider -->
+          <div
+            v-if="!quickAccessCollapsed"
+            class="sidebar-sash"
+            :class="{ dragging: isDraggingSash }"
+            title="Kéo để chỉnh tỉ lệ (Nháy đúp để về 50:50)"
+            @pointerdown="handleSashPointerDown"
+            @dblclick="resetQuickAccessRatio"
+          >
+            <div class="sash-grip" />
+          </div>
+
+          <!-- Section 2: Quick Access Panel -->
+          <div
+            class="sidebar-section-qa"
+            :class="{ collapsed: quickAccessCollapsed }"
+            :style="qaSectionStyle"
+          >
+            <QuickAccessPanel
+              :target="quickAccessTarget"
+              :collapsed="quickAccessCollapsed"
+              @toggle-collapse="toggleQuickAccessCollapsed"
+              @run="handleQuickAccessRun"
+              @paste="handleQuickAccessPaste"
+            />
+          </div>
+        </template>
       </div>
     </aside>
 
@@ -143,13 +178,14 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router';
 import { RefreshCw, Play, Square, Layers, Zap, X, LoaderCircle } from 'lucide-vue-next';
 import GroupTree from '@/components/explorer/GroupTree.vue';
+import QuickAccessPanel from '@/components/explorer/QuickAccessPanel.vue';
 import DockHost from '@/components/terminal/DockHost.vue';
 import StopProcessModal from '@/components/dialogs/StopProcessModal.vue';
 import BackgroundProcessesModal from '@/components/dialogs/BackgroundProcessesModal.vue';
 import { useGroups } from '@/composables/useGroups';
 import { useRunSession } from '@/composables/useRunSession';
 import { ipcClient } from '@/ipc/client';
-import type { CommandGroupWithCommands } from '@/types/models';
+import type { CommandGroupWithCommands, CommandDefinition } from '@/types/models';
 
 const dockHostRef = ref<InstanceType<typeof DockHost> | null>(null);
 const route = useRoute();
@@ -168,6 +204,78 @@ const stopFeedback = ref<{ type: 'success' | 'error'; message: string } | null>(
 const stopInProgress = ref(false);
 let stopFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
 const workspaceReady = ref(false);
+
+// Quick Access section sizing & state
+const QA_RATIO_KEY = 'cm_quick_access_ratio_v1';
+const QA_COLLAPSED_KEY = 'cm_quick_access_collapsed_v1';
+
+const savedQaRatio = typeof window !== 'undefined' ? Number(localStorage.getItem(QA_RATIO_KEY)) : 50;
+const savedQaCollapsed = typeof window !== 'undefined' ? localStorage.getItem(QA_COLLAPSED_KEY) === 'true' : false;
+
+const quickAccessRatio = ref<number>(!isNaN(savedQaRatio) && savedQaRatio >= 20 && savedQaRatio <= 80 ? savedQaRatio : 50);
+const quickAccessCollapsed = ref<boolean>(savedQaCollapsed);
+const isDraggingSash = ref(false);
+const sidebarContentRef = ref<HTMLElement | null>(null);
+
+const quickAccessTarget = computed(() => dockHostRef.value?.quickAccessTarget ?? null);
+
+const treeSectionStyle = computed(() => {
+  if (!quickAccessTarget.value) return { flex: '1', height: '100%' };
+  if (quickAccessCollapsed.value) return { height: 'calc(100% - 28px)', flex: 'none' };
+  return { height: `calc(${quickAccessRatio.value}% - 3px)`, flex: 'none' };
+});
+
+const qaSectionStyle = computed(() => {
+  if (!quickAccessTarget.value) return {};
+  if (quickAccessCollapsed.value) return { height: '28px', flex: 'none' };
+  return { height: `calc(${100 - quickAccessRatio.value}% - 2px)`, flex: 'none' };
+});
+
+const toggleQuickAccessCollapsed = () => {
+  quickAccessCollapsed.value = !quickAccessCollapsed.value;
+  localStorage.setItem(QA_COLLAPSED_KEY, String(quickAccessCollapsed.value));
+};
+
+const resetQuickAccessRatio = () => {
+  quickAccessRatio.value = 50;
+  localStorage.setItem(QA_RATIO_KEY, '50');
+};
+
+const handleSashPointerDown = (e: PointerEvent) => {
+  if (!sidebarContentRef.value) return;
+  e.preventDefault();
+  isDraggingSash.value = true;
+  const containerRect = sidebarContentRef.value.getBoundingClientRect();
+  const totalHeight = containerRect.height;
+  const topOffset = containerRect.top;
+
+  const onPointerMove = (ev: PointerEvent) => {
+    const currentY = ev.clientY - topOffset;
+    const clampedY = Math.max(120, Math.min(totalHeight - 120, currentY));
+    const newRatio = Math.round((clampedY / totalHeight) * 100);
+    quickAccessRatio.value = Math.max(20, Math.min(80, newRatio));
+  };
+
+  const onPointerUp = () => {
+    isDraggingSash.value = false;
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', onPointerUp);
+    window.removeEventListener('pointercancel', onPointerUp);
+    localStorage.setItem(QA_RATIO_KEY, String(quickAccessRatio.value));
+  };
+
+  window.addEventListener('pointermove', onPointerMove);
+  window.addEventListener('pointerup', onPointerUp);
+  window.addEventListener('pointercancel', onPointerUp);
+};
+
+const handleQuickAccessRun = (cmd: CommandDefinition) => {
+  dockHostRef.value?.sendToFocusedTerminal(cmd.execution_string, { execute: true });
+};
+
+const handleQuickAccessPaste = (cmd: CommandDefinition) => {
+  dockHostRef.value?.sendToFocusedTerminal(cmd.execution_string, { execute: false });
+};
 const launchingCommand = ref(false);
 const selectedGroupId = ref<number | undefined>(undefined);
 
@@ -422,6 +530,62 @@ onBeforeUnmount(() => {
   flex: 1;
   padding: 8px;
   overflow-y: auto;
+}
+
+.sidebar-content.has-quick-access {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-section-tree {
+  overflow-y: auto;
+  padding: 8px;
+  min-height: 120px;
+}
+
+.sidebar-sash {
+  height: 5px;
+  background-color: var(--border-subtle);
+  cursor: row-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  z-index: 10;
+  transition: background-color 0.15s ease;
+  user-select: none;
+}
+
+.sidebar-sash:hover,
+.sidebar-sash.dragging {
+  background-color: var(--primary-accent, #744791);
+}
+
+.sash-grip {
+  width: 32px;
+  height: 2px;
+  border-radius: 2px;
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.sidebar-sash:hover .sash-grip,
+.sidebar-sash.dragging .sash-grip {
+  background-color: #fff;
+}
+
+.sidebar-section-qa {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 120px;
+}
+
+.sidebar-section-qa.collapsed {
+  min-height: 28px !important;
+  max-height: 28px !important;
+  height: 28px !important;
 }
 
 .workspace-main {
