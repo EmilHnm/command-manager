@@ -3,7 +3,7 @@
     <!-- Pane Toolbar -->
     <div class="pane-toolbar">
       <div class="toolbar-left">
-        <span class="cmd-badge" :class="processStatus">
+        <span class="cmd-badge" :class="processStatus" :title="commandName">
           <span class="status-dot" :class="{ active: processStatus === 'running' }" />
           {{ commandName }}<span v-if="commandId > 0"> (ID: #{{ commandId }})</span>
         </span>

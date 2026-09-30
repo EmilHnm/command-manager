@@ -122,6 +122,7 @@
                 'is-manual': !item.isPlaceholder && isManualTab(item.tab),
               }"
               :style="item.isPlaceholder && item.width ? { width: `${item.width}px` } : undefined"
+              :title="!item.isPlaceholder && item.tab ? tabTooltip(item.tab) : undefined"
               @pointerdown="!item.isPlaceholder && item.tab ? handleTabPointerDown($event, item.tab, 'paneA') : undefined"
               @dblclick="!item.isPlaceholder && item.tab ? handleTabDblClick(item.tab) : undefined"
               @contextmenu.prevent="!item.isPlaceholder && item.tab ? openTabContextMenu($event, item.tab, 'paneA') : undefined"
@@ -291,6 +292,7 @@
                 'is-manual': !item.isPlaceholder && isManualTab(item.tab),
               }"
               :style="item.isPlaceholder && item.width ? { width: `${item.width}px` } : undefined"
+              :title="!item.isPlaceholder && item.tab ? tabTooltip(item.tab) : undefined"
               @pointerdown="!item.isPlaceholder && item.tab ? handleTabPointerDown($event, item.tab, 'paneB') : undefined"
               @dblclick="!item.isPlaceholder && item.tab ? handleTabDblClick(item.tab) : undefined"
               @contextmenu.prevent="!item.isPlaceholder && item.tab ? openTabContextMenu($event, item.tab, 'paneB') : undefined"

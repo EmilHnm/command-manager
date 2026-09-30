@@ -43,7 +43,7 @@
                   class="status-dot"
                   :class="{ active: getProcessStatus(tab.commandId) === 'running' }"
                 />
-                <span class="tab-name">{{ tab.name }}</span>
+                <span class="tab-name" :title="tab.name">{{ tab.name }}</span>
                 <span v-if="getProcessInfo(tab.commandId)?.pid" class="pid-badge">
                   PID: {{ getProcessInfo(tab.commandId)?.pid }}
                 </span>
