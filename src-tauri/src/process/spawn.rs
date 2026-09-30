@@ -19,6 +19,7 @@ pub struct Spawned {
 pub fn spawn(
     is_shell: bool,
     execution_string: &str,
+    shell_kind: Option<&str>,
     cols: u16,
     rows: u16,
     buffer_bytes: usize,
@@ -27,11 +28,18 @@ pub fn spawn(
     on_exit: impl FnOnce(Option<i32>) + Send + 'static,
 ) -> Result<Spawned> {
     let (pty, slave) = PtySession::open(cols, rows, buffer_bytes)?;
-    let mut child = session::spawn_on_slave(slave, is_shell, execution_string)?;
+    let mut child = if is_shell {
+        session::spawn_shell_on_slave(slave, shell_kind, execution_string)?
+    } else {
+        session::spawn_on_slave(slave, false, execution_string)?
+    };
     let killer = child.clone_killer();
     // ponytail: portable-pty 0.8 has no pre_exec hook; PR_SET_PDEATHSIG lives in platform::unix
     // and should be wired when we spawn via std::process::Command on Linux.
     let pid = child.process_id().unwrap_or(0);
+    if let Err(error) = crate::process::platform::register_process(pid) {
+        eprintln!("Command Manager: could not bind child {pid} to app job: {error}");
+    }
     let reader = pty.clone_reader()?;
     let buffer = Arc::clone(&pty.buffer);
     std::thread::spawn(move || {
@@ -68,6 +76,9 @@ pub fn spawn_argv(
     let mut child = session::spawn_argv_on_slave(slave, argv)?;
     let killer = child.clone_killer();
     let pid = child.process_id().unwrap_or(0);
+    if let Err(error) = crate::process::platform::register_process(pid) {
+        eprintln!("Command Manager: could not bind child {pid} to app job: {error}");
+    }
     let reader = pty.clone_reader()?;
     let buffer = Arc::clone(&pty.buffer);
     std::thread::spawn(move || session::pump_reader(reader, buffer, run_event_id, ipc));
@@ -97,6 +108,7 @@ pub fn spawn_interactive(
     integration_root: Option<std::path::PathBuf>,
     preferred_shell: Option<String>,
     load_powershell_profile: bool,
+    cwd: Option<std::path::PathBuf>,
     on_exit: impl FnOnce(Option<i32>) + Send + 'static,
     on_history: impl FnMut(ShellHistoryRecord) + Send + 'static,
 ) -> Result<Spawned> {
@@ -106,10 +118,14 @@ pub fn spawn_interactive(
         integration_root,
         preferred_shell,
         load_powershell_profile,
+        cwd.as_deref(),
     )?;
     let mut child = metadata.child;
     let killer = child.clone_killer();
     let pid = child.process_id().unwrap_or(0);
+    if let Err(error) = crate::process::platform::register_process(pid) {
+        eprintln!("Command Manager: could not bind child {pid} to app job: {error}");
+    }
     let reader = pty.clone_reader()?;
     let buffer = Arc::clone(&pty.buffer);
     let tracker = metadata.nonce.clone().map(|nonce| {

@@ -37,9 +37,10 @@
       </div>
 
       <div class="footer-actions">
-        <button class="btn btn-danger btn-sm" @click="$emit('force-kill')">
-          <Square :size="12" />
-          <span>Cưỡng Chế Thoát Ngay (Force Kill)</span>
+        <button class="btn btn-danger btn-sm" :disabled="phase === 'forcing'" @click="$emit('force-kill')">
+          <LoaderCircle v-if="phase === 'forcing'" :size="12" class="spin" />
+          <Square v-else :size="12" />
+          <span>{{ phase === 'forcing' ? 'Đang Cưỡng Chế Thoát...' : 'Cưỡng Chế Thoát Ngay (Force Kill)' }}</span>
         </button>
       </div>
     </div>
@@ -48,7 +49,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { RotateCw, Square } from 'lucide-vue-next';
+import { RotateCw, Square, LoaderCircle } from 'lucide-vue-next';
 import type { ActiveProcessInfo } from '@/types/models';
 
 const props = defineProps<{
@@ -213,5 +214,18 @@ const processesList = computed(() => {
 
 .footer-actions {
   margin-top: 6px;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

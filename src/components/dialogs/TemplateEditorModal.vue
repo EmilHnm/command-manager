@@ -253,12 +253,13 @@
 
       <!-- Modal Footer -->
       <div class="modal-footer">
-        <button class="btn-ghost" @click="$emit('close')">
+        <button class="btn-ghost" :disabled="loading" @click="!loading && $emit('close')">
           Hủy Bỏ (Esc)
         </button>
-        <button class="btn-primary" @click="handleSave">
-          <Save :size="15" />
-          <span>💾 Lưu Mẫu Lệnh</span>
+        <button class="btn-primary" :disabled="loading" @click="handleSave">
+          <LoaderCircle v-if="loading" :size="15" class="spin" />
+          <Save v-else :size="15" />
+          <span>{{ loading ? loadingText : '💾 Lưu Mẫu Lệnh' }}</span>
         </button>
       </div>
     </div>
@@ -267,14 +268,22 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import { Edit3, X, Wand2, Plus, Trash2, Save, AlertCircle } from 'lucide-vue-next';
+import { Edit3, X, Wand2, Plus, Trash2, Save, AlertCircle, LoaderCircle } from 'lucide-vue-next';
 import { useTemplates } from '@/composables/useTemplates';
 import type { CommandTemplate, TemplateParam, TemplateParamKind } from '@/types/models';
 
-const props = defineProps<{
-  visible: boolean;
-  templateId: number | null;
-}>();
+const props = withDefaults(
+  defineProps<{
+    visible: boolean;
+    templateId: number | null;
+    loading?: boolean;
+    loadingText?: string;
+  }>(),
+  {
+    loading: false,
+    loadingText: 'Đang Lưu...',
+  }
+);
 
 const emit = defineEmits<{
   (e: 'close'): void;
@@ -1011,5 +1020,18 @@ const handleSave = async () => {
   font-size: 12px;
   font-weight: 500;
   margin-bottom: 12px;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

@@ -35,8 +35,8 @@ Lược đồ cơ sở dữ liệu bao gồm 5 bảng chính để biểu diễn
 | Bảng Cơ sở Dữ liệu | Trực quan hóa Cấu trúc và Trường thông tin | Ràng buộc và Vai trò |
 | :---- | :---- | :---- |
 | command\_definition | id (PK), name, execution\_string, is\_shell. | Định nghĩa lõi của lệnh. Lựa chọn chạy thẳng qua argv hay bọc qua shell phải rõ ràng. |
-| command\_group | id (PK), group\_name, autostart (BOOLEAN). | Nhóm các lệnh. Cờ autostart áp dụng ở cấp độ nhóm để kích hoạt toàn nhóm khi app chạy. |
-| group\_membership | group\_id (FK), command\_id (FK), execution\_order. | Bảng trung gian định nghĩa các lệnh thuộc nhóm nào và thứ tự khởi chạy. |
+| command\_group | id (PK), group\_name, autostart (BOOLEAN), execution\_mode (`startup`/`sequential`). | Nhóm các lệnh. Cờ autostart áp dụng ở cấp độ nhóm để kích hoạt toàn nhóm khi app chạy; `startup` là mặc định để các daemon khởi động theo thứ tự mà không chờ nhau, còn `sequential` chờ từng lệnh kết thúc và dừng khi lỗi. |
+| group\_membership | group\_id (FK), command\_id (FK), execution\_order. | Bảng trung gian định nghĩa các lệnh thuộc nhóm nào và thứ tự khởi chạy. `execution_order` chỉ quy định thứ tự spawn ở `startup`, hoặc thứ tự chờ-kết thúc ở `sequential`. |
 | run\_session | id (PK), group\_id (FK), started\_at, status. | Đại diện cho một lần bấm "Play" tổng thể của một nhóm. |
 | run\_event | id (PK), session\_id (FK), command\_id, started\_at, ended\_at, status, exit\_code, pid. | Bản ghi sự kiện chi tiết cho mỗi lần thực thi lệnh. pid chỉ lưu để chẩn đoán tạm thời; không dùng để định danh tiến trình sau khi khởi động lại app. |
 
@@ -60,11 +60,19 @@ Khi backend phân bổ PTY thông qua plugin (như tauri-plugin-pty), luồng by
 * **Resize Terminal:** Kích thước xterm.js trên UI (cols/rows) phải được đồng bộ liên tục với PTY ở kernel thông qua các lệnh resize cụ thể mỗi khi người dùng thay đổi kích thước thẻ (tab) hoặc cửa sổ ứng dụng.  
 * **Gắn lại (Reattaching):** Khi người dùng chuyển qua lại giữa các thẻ, hoặc đóng một thẻ UI nhưng tiến trình vẫn chạy ngầm, backend tiếp tục lưu luồng byte vào buffer memory. Khi thẻ được mở lại, backend xả buffer này xuống xterm.js để **xem lại đầu ra gần đây (recent output)**. Cần lưu ý, việc xả buffer thô không thể khôi phục chính xác trạng thái màn hình của các chương trình terminal toàn màn hình (như vim, htop).  
 * **Lọc Bí mật (Secrets):** Cần lưu ý rằng luồng dữ liệu PTY chứa mọi ký tự, bao gồm cả mật khẩu người dùng gõ. Việc không ghi log PTY bừa bãi vào đĩa cứng là bắt buộc.
-* **Terminal shell độc lập:** Nút `Terminal mới` tạo một PTY chạy shell tương tác (Windows: `pwsh` → `powershell.exe` → `cmd.exe`; Linux: `$SHELL` → `/bin/bash` → `/bin/sh`), kèm shell integration để ghi lịch sử và gợi ý lệnh (xem 4.3). Phiên này chỉ nằm trong Process Manager/Ring Buffer memory, không tạo `command_definition`, `run_session` hoặc `run_event` trong SQLite.
+* **Terminal shell độc lập:** Nút `Terminal mới` tạo một PTY chạy shell tương tác (Windows: `pwsh` → `powershell.exe` → `cmd.exe`; Linux: `$SHELL` → `/bin/bash` → `/bin/sh`), kèm shell integration để ghi lịch sử và gợi ý lệnh (xem 4.3). Phiên này chỉ nằm trong Process Manager/Ring Buffer memory, không tạo `command_definition`, `run_session` hoặc `run_event` trong SQLite. Người dùng có thể nháy đúp chuột vào tên tab để mở modal đổi tên hiển thị tùy chỉnh ([MOD-14: Rename Manual Terminal Modal](./screens.md#mod-14-hộp-thoại-đổi-tên-terminal-thủ-công-rename-manual-terminal-modal)), giúp quản lý nhiều phiên PTY thuận tiện.
 
-### **4.2. Quản lý Bố cục (Layout Manager)**
+### **4.2. Quản lý Bố cục (Layout Manager) và Chế độ Chia Đôi Màn Hình (Split View Terminal Mode)**
 
-UI sử dụng dockview (thông qua dockview-react) để hỗ trợ thẻ (tabs)7. Khi một run\_session kích hoạt, frontend gọi api.addPanel() để sinh ra các tab tương ứng7. Việc tổ chức dạng lưới (grid) phức tạp sẽ được đánh giá ở giai đoạn sau nếu nhu cầu đa nhiệm tăng cao10. Chi tiết thiết kế toàn diện các màn hình và trạng thái xem tại [screens.md](./screens.md).
+Thay vì đưa vào hệ thống lưới đa ô (complex grid) tự do quá sớm gây phức tạp hóa việc quản lý trạng thái và tính toán lại canvas, ứng dụng áp dụng mô hình **Dual-Pane Tabbed Split Layout (Split View Terminal Mode)** tại màn hình SCR-01 Workspace:
+
+* **Kiến trúc Khung Đôi Đa Tab (Dual-Pane Multi-Tab):** Cho phép phân chia không gian hiển thị thành 2 khung độc lập (Pane A và Pane B) theo chiều dọc (Horizontal Split: Trái | Phải) hoặc chiều ngang (Vertical Split: Trên / Dưới). Mỗi Pane quản lý một mảng $n$ tab PTY riêng biệt với active tab độc lập, giúp lập trình viên quan sát đồng thời 2 tiến trình song song (ví dụ: Backend API bên trái và Frontend Dev bên phải; hoặc Docker Compose logs ở trên và Bash interactive test ở dưới).
+* **Điều chuyển Tab Linh Hoạt (Cross-Pane Transfer & Auto-Collapse):** Hỗ trợ kéo thả tab qua lại giữa Tab Strip của Pane A và Pane B. Khi tất cả các tab trong một Pane bị đóng/ẩn, hệ thống tự động thu gọn (auto-collapse) về chế độ Single View Mode 100% diện tích, không để lại khung rỗng thừa.
+* **Thanh Phân Cách Tương Tác (Resizable Sash / Splitter):** Thanh ngăn cách giữa 2 khung cho phép người dùng kéo chuột realtime để điều chỉnh tỉ lệ hiển thị (20% – 80%, mặc định 50:50; nháy đúp để reset về 50:50). Hệ thống áp đặt giới hạn kích thước an toàn tối thiểu (min-width: 220px, min-height: 150px) để ngăn chặn việc xterm.js bị co rúm gây lỗi hiển thị ký tự dòng lệnh.
+* **Đồng bộ Kernel PTY & FitAddon Độc Lập:** Mỗi khung terminal được giám sát bởi một instance `ResizeObserver` độc lập. Khi tỉ lệ khung thay đổi hoặc khi cửa sổ desktop co giãn, `FitAddon` trên từng terminal sẽ tính toán lại chính xác số lượng cột (`cols`) và số dòng (`rows`) thực tế của từng nửa màn hình, sau đó debounce 50ms và phát tín hiệu IPC `pty_resize` tương ứng tới Rust backend. Điều này bảo đảm các công cụ TUI (như `htop`, `vim`) và logic bẻ dòng log hiển thị chuẩn xác mà không bị vỡ bố cục.
+* **Tính Bất Biến Vòng Đời:** Thao tác chia đôi, hoán đổi khung, hoặc gộp màn hình chỉ là logic hiển thị giao diện (Presentation Layout); hoàn toàn không ngắt kết nối PTY, không làm restart tiến trình con ở backend Rust và không làm xáo trộn dữ liệu Ring Buffer in-memory.
+
+Chi tiết thiết kế toàn diện các wireframe, phím tắt và trạng thái xem tại [screens.md](./screens.md#màn-hình-1-scr-01--terminal-workspace--execution-dashboard).
 
 ### **4.3. Shell Integration, Lịch sử Lệnh và Gợi ý (Autosuggestion / Autocomplete)**
 
@@ -72,7 +80,7 @@ Terminal tương tác của ứng dụng có **hệ thống gợi ý riêng**, h
 
 **Nguyên tắc thiết kế:**
 
-* **Không phụ thuộc shell:** nguồn dữ liệu duy nhất là bảng `command_history` của ứng dụng; không đọc lịch sử của PSReadLine, bash hay zsh, không dùng cơ chế gợi ý/completion của shell. Ứng dụng tự vẽ gợi ý trên xterm.js và tự xử lý phím nhận gợi ý; shell chỉ cung cấp **ranh giới prompt**.
+* **Không phụ thuộc shell:** nguồn dữ liệu duy nhất là bảng `command_history` của ứng dụng; không tự động đọc lịch sử của PSReadLine, bash hay zsh, không dùng cơ chế gợi ý/completion của shell. Người dùng có thể chủ động bấm **Nhập từ OS** ở SCR-05 (tab Terminal) để sao chép một lần `~/.zsh_history`, `~/.bash_history` và file lịch sử PSReadLine vào `command_history` (`source = 'shell'`); file gốc chỉ được đọc, mẫu chặn privacy vẫn áp dụng, nhập lại không làm tăng `run_count`, bỏ qua lệnh nhiều dòng. Ứng dụng tự vẽ gợi ý trên xterm.js và tự xử lý phím nhận gợi ý; shell chỉ cung cấp **ranh giới prompt**.
 * **Không đụng cấu hình người dùng:** script integration chỉ có hiệu lực trong process shell do ứng dụng mở. Gợi ý có sẵn của shell (PSReadLine prediction, zsh-autosuggestions, ble.sh) bị tắt **chỉ trong phiên đó**; không ghi vào `$PROFILE`, `.bashrc`, `.zshrc`.
 * **Shell là nguồn sự thật:** khi người dùng nhận gợi ý, phần còn lại được gửi vào PTY như phím gõ; ứng dụng không tự sửa buffer của shell.
 

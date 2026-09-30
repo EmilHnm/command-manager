@@ -1,12 +1,12 @@
 <template>
-  <div v-if="visible" class="modal-backdrop" @click.self="$emit('cancel')">
+  <div v-if="visible" class="modal-backdrop" @click.self="!loading && $emit('cancel')">
     <div class="modal-content stop-modal">
       <div class="modal-header">
         <div class="modal-title">
           <Square class="text-danger" :size="16" />
           <span>Dừng Tiến Trình Lệnh (MOD-01)</span>
         </div>
-        <button class="btn btn-ghost btn-icon" @click="$emit('cancel')">
+        <button class="btn btn-ghost btn-icon" :disabled="loading" @click="$emit('cancel')">
           <X :size="15" />
         </button>
       </div>
@@ -36,15 +36,17 @@
       </div>
 
       <div class="modal-footer">
-        <button class="btn btn-secondary" @click="$emit('cancel')">
+        <button class="btn btn-secondary" :disabled="loading" @click="$emit('cancel')">
           Hủy bỏ
         </button>
         <button
           class="btn btn-danger"
+          :disabled="loading"
           @click="$emit('confirm', commandId, stopMode === 'force')"
         >
-          <Square :size="13" />
-          <span>{{ stopMode === 'force' ? 'Cưỡng Chế Dừng' : 'Dừng Tiến Trình' }}</span>
+          <LoaderCircle v-if="loading" :size="13" class="spin" />
+          <Square v-else :size="13" />
+          <span>{{ loading ? 'Đang xác nhận dừng...' : (stopMode === 'force' ? 'Cưỡng Chế Dừng' : 'Dừng Tiến Trình') }}</span>
         </button>
       </div>
     </div>
@@ -53,13 +55,14 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue';
-import { Square, X } from 'lucide-vue-next';
+import { LoaderCircle, Square, X } from 'lucide-vue-next';
 
 const props = defineProps<{
   visible: boolean;
   commandId: number;
   commandName: string;
   pid?: number;
+  loading?: boolean;
 }>();
 
 defineEmits<{
@@ -137,5 +140,13 @@ watch(
   font-size: 11px;
   color: var(--text-muted);
   line-height: 1.4;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 </style>

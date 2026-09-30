@@ -64,8 +64,8 @@ src/
 │   ├── statusbar/
 │   │   └── StatusBar.vue         # running count, ring buffer, WAL, lock
 │   ├── terminal/
-│   │   ├── DockHost.vue          # dockview tabs; đóng tab ≠ stop
-│   │   ├── XtermPane.vue         # xterm.js, resize → PTY, reattach buffer; OSC 633 → ghost text gợi ý
+│   │   ├── DockHost.vue          # tabs container; hỗ trợ Split View Mode (Dual-Pane: Single / Split Dọc / Split Ngang, Resizable Sash, Dual Tab Strips; đóng tab ≠ stop)
+│   │   ├── XtermPane.vue         # xterm.js, ResizeObserver debounce → PTY resize, reattach buffer; OSC 633 → ghost text gợi ý
 │   │   └── SuggestionPopup.vue   # Ctrl+Space: fuzzy list lịch sử + command + template
 │   ├── explorer/
 │   │   └── GroupTree.vue         # workspace sidebar
@@ -77,6 +77,7 @@ src/
 │       ├── CommandEditorModal.vue
 │       ├── TemplateEditorModal.vue # soạn template + khai báo param (kiểu, mặc định, bắt buộc, secret)
 │       ├── TemplateRunModal.vue  # MOD-10: form params → preview → chạy
+│       ├── RenameTerminalModal.vue # MOD-14: đổi tên tab terminal thủ công khi nháy đúp
 │       ├── RestoreWizard.vue     # MOD-08
 │       └── ShutdownOverlay.vue   # MOD-09
 ├── composables/
@@ -84,9 +85,12 @@ src/
 │   ├── useGroups.ts
 │   ├── useTemplates.ts           # CRUD template/preset, preview, run
 │   ├── useSuggestions.ts         # lịch sử in-memory, khớp tiền tố + frecency (không IPC mỗi phím)
+│   ├── useSplitLayout.ts         # trạng thái Split View: splitMode (none/horizontal/vertical), ratio (20-80%), paneA/paneB tabs, cross-pane drag
 │   ├── useRunSession.ts
 │   ├── usePtyStream.ts           # IPC events → xterm; backpressure phía Rust
 │   └── useAppLifecycle.ts        # close window, single-instance toast
+├── config/
+│   └── version.ts                # Single Source of Truth cho version UI (đồng bộ từ package.json)
 ├── ipc/
 │   ├── client.ts                 # invoke wrappers, một chỗ duy nhất
 │   └── events.ts                 # listen: pty-data, process-status, …
@@ -199,7 +203,7 @@ Events: `pty://data`, `process://status`, `history://added`, `app://shutdown-pro
 - `src-tauri/src/rjsf/` / `adapters/ffmpeg` — Post-MVP
 - `src-tauri/src/drive/` / `keyring` — Post-MVP
 - `src-tauri/src/systemd/` — Post-MVP
-- layout grid dockview riêng — cùng `DockHost.vue` khi tới lúc
+- layout grid đa ô tự do N-chiều phức tạp — Post-MVP; MVP dùng Dual-Pane Split View (Single / Split Dọc / Split Ngang) trực tiếp trong `DockHost.vue` + `useSplitLayout.ts`
 - test framework nặng — một self-check nhỏ cạnh `process/shutdown.rs` hoặc `backup/import.rs` khi logic đó có
 
 ---

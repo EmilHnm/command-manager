@@ -15,7 +15,11 @@
       <div class="sidebar-content">
         <GroupTree
           :groups="groups"
+          :selected-group-id="selectedGroupId"
+          :stopping-group-id="stoppingGroupId"
+          :running-group-id="runningGroup ? selectedGroupId : null"
           @select-command="handleSelectCommand"
+          @select-group="selectedGroupId = $event"
           @run-group="handleRunGroup"
           @stop-group="handleStopGroup"
         />
@@ -44,11 +48,6 @@
           </div>
 
           <div class="strip-stat">
-            <span class="stat-label">RAM:</span>
-            <span class="stat-val font-mono">{{ estimatedMemoryMb }} MB</span>
-          </div>
-
-          <div class="strip-stat">
             <span class="stat-label">Subprocesses:</span>
             <span class="stat-val font-mono">{{ runningProcessesCount }} / {{ totalCommandsCount }}</span>
           </div>
@@ -67,20 +66,23 @@
           <button
             class="btn btn-success btn-sm"
             title="Chạy toàn bộ nhóm đang chọn"
-            :disabled="!groups[0]"
-            @click="groups[0] && handleRunGroup(groups[0])"
+            :disabled="!selectedGroup || runningGroup"
+            @click="selectedGroup && handleRunGroup(selectedGroup)"
           >
-            <Play :size="12" />
-            <span>Chạy Nhóm</span>
+            <LoaderCircle v-if="runningGroup" :size="12" class="spin" />
+            <Play v-else :size="12" />
+            <span>{{ runningGroup ? 'Đang Khởi Chạy...' : 'Chạy Nhóm' }}</span>
           </button>
           <button
             v-if="runningProcessesCount > 1"
             class="btn btn-danger btn-sm"
             title="Dừng toàn bộ tiến trình đang chạy"
+            :disabled="stoppingAll"
             @click="handleStopAll"
           >
-            <Square :size="11" />
-            <span>Dừng Tất Cả</span>
+            <LoaderCircle v-if="stoppingAll" :size="11" class="spin" />
+            <Square v-else :size="11" />
+            <span>{{ stoppingAll ? 'Đang Dừng...' : 'Dừng Tất Cả' }}</span>
           </button>
         </div>
       </div>
@@ -90,6 +92,24 @@
         <div v-if="launchError" class="workspace-error" role="alert">
           Không thể chạy lệnh: {{ launchError }}
         </div>
+        <div
+          v-if="stopFeedback"
+          class="workspace-feedback"
+          :class="stopFeedback.type"
+          role="status"
+          aria-live="polite"
+        >
+          <span>{{ stopFeedback.message }}</span>
+          <button
+            class="feedback-close"
+            type="button"
+            aria-label="Đóng thông báo"
+            title="Đóng thông báo"
+            @click="dismissStopFeedback"
+          >
+            <X :size="13" />
+          </button>
+        </div>
         <DockHost
           ref="dockHostRef"
           @request-stop-process="handleRequestStop"
@@ -97,19 +117,21 @@
       </div>
     </main>
 
-    <!-- Modal Dừng Tiến Trình MOD-01 -->
+    <!-- Stop Process Modal (MOD-01) -->
     <StopProcessModal
       :visible="showStopModal"
       :command-id="stoppingCmdId"
       :command-name="stoppingCmdName"
       :pid="stoppingCmdPid"
+      :loading="stopInProgress"
       @confirm="confirmStopProcess"
       @cancel="showStopModal = false"
     />
-    <!-- Modal Quản Lý Tiến Trình Chạy Ngầm (Active Daemons Manager) -->
+    <!-- Active Daemons Manager Modal -->
     <BackgroundProcessesModal
       :visible="showBgModal"
       :open-tab-command-ids="dockHostRef?.openTabCommandIds"
+      :open-tabs="dockHostRef?.openTabs"
       @close="showBgModal = false"
       @open-tab="handleOpenBgTab"
     />
@@ -117,9 +139,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { RefreshCw, Play, Square, Layers, Zap } from 'lucide-vue-next';
+import { RefreshCw, Play, Square, Layers, Zap, X, LoaderCircle } from 'lucide-vue-next';
 import GroupTree from '@/components/explorer/GroupTree.vue';
 import DockHost from '@/components/terminal/DockHost.vue';
 import StopProcessModal from '@/components/dialogs/StopProcessModal.vue';
@@ -134,7 +156,7 @@ const route = useRoute();
 const router = useRouter();
 
 const { groups, fetchGroups } = useGroups();
-const { startGroupSession, stopGroupSession, stopCommandProcess, getProcessInfo, refreshProcesses, activeProcesses } = useRunSession();
+const { activeSession, startGroupSession, stopGroupById, stopAllProcesses, stopCommandProcess, getProcessInfo, refreshProcesses, activeProcesses } = useRunSession();
 
 const showStopModal = ref(false);
 const showBgModal = ref(false);
@@ -142,11 +164,16 @@ const stoppingCmdId = ref(0);
 const stoppingCmdName = ref('');
 const stoppingCmdPid = ref<number | undefined>(undefined);
 const launchError = ref('');
+const stopFeedback = ref<{ type: 'success' | 'error'; message: string } | null>(null);
+const stopInProgress = ref(false);
+let stopFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
 const workspaceReady = ref(false);
 const launchingCommand = ref(false);
+const selectedGroupId = ref<number | undefined>(undefined);
 
 onMounted(async () => {
   await fetchGroups();
+  selectedGroupId.value ??= groups.value[0]?.id;
   workspaceReady.value = true;
   await openRequestedCommand();
 });
@@ -219,12 +246,16 @@ const refreshData = async () => {
 };
 
 const currentSessionName = computed(() => {
-  return groups.value[0]?.group_name || 'Web Platform Dev';
+  return activeSession.value?.group_name
+    || groups.value.find(group => group.id === selectedGroupId.value)?.group_name
+    || 'Chưa chọn nhóm';
 });
 
 const currentSessionId = computed(() => {
-  return 'sess-91a';
+  return activeSession.value?.id ?? '—';
 });
+
+const selectedGroup = computed(() => groups.value.find(group => group.id === selectedGroupId.value));
 
 const runningProcessesCount = computed(() => {
   let count = 0;
@@ -239,36 +270,57 @@ const totalCommandsCount = computed(() => {
   groups.value.forEach(g => {
     total += g.commands.length;
   });
-  return total || 7;
-});
-
-const estimatedMemoryMb = computed(() => {
-  // Ước lượng ~192MB cho mỗi daemon đang chạy hoặc base 64MB
-  return runningProcessesCount.value > 0 ? 192 * runningProcessesCount.value : 64;
+  return total;
 });
 
 const handleSelectCommand = (commandId: number, commandName: string) => {
   dockHostRef.value?.openCommandTab(commandId, commandName, getProcessInfo(commandId)?.runEventId);
 };
 
-const handleOpenBgTab = (proc: { commandId: number; commandName: string; runEventId?: string }) => {
-  dockHostRef.value?.openCommandTab(proc.commandId, proc.commandName, proc.runEventId);
+const handleOpenBgTab = (proc: { commandId: number; commandName: string; runEventId?: string; shellKind?: string }) => {
+  dockHostRef.value?.openCommandTab(proc.commandId, proc.commandName, proc.runEventId, proc.shellKind);
 };
 
+const runningGroup = ref(false);
+const stoppingAll = ref(false);
+const stoppingGroupId = ref<number | null>(null);
+
 const handleRunGroup = async (group: CommandGroupWithCommands) => {
-  await startGroupSession(group.id, group.group_name, group.commands);
-  // Tự động mở tab cho từng lệnh trong nhóm
-  group.commands.forEach(cmd => {
-    dockHostRef.value?.openCommandTab(cmd.id, cmd.name, getProcessInfo(cmd.id)?.runEventId);
-  });
+  if (runningGroup.value) return;
+  runningGroup.value = true;
+  try {
+    selectedGroupId.value = group.id;
+    await startGroupSession(group.id, group.group_name, group.commands);
+    group.commands.forEach(cmd => {
+      dockHostRef.value?.openCommandTab(cmd.id, cmd.name, getProcessInfo(cmd.id)?.runEventId);
+    });
+  } finally {
+    runningGroup.value = false;
+  }
 };
 
 const handleStopGroup = async (groupId: number) => {
-  await stopGroupSession();
+  if (stoppingGroupId.value !== null) return;
+  stoppingGroupId.value = groupId;
+  await nextTick();
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  try {
+    await stopGroupById(groupId);
+  } finally {
+    stoppingGroupId.value = null;
+  }
 };
 
 const handleStopAll = async () => {
-  await stopGroupSession();
+  if (stoppingAll.value) return;
+  stoppingAll.value = true;
+  await nextTick();
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  try {
+    await stopAllProcesses();
+  } finally {
+    stoppingAll.value = false;
+  }
 };
 
 const handleRequestStop = (commandId: number) => {
@@ -279,10 +331,46 @@ const handleRequestStop = (commandId: number) => {
   showStopModal.value = true;
 };
 
-const confirmStopProcess = async (commandId: number, force: boolean) => {
-  await stopCommandProcess(commandId, force);
-  showStopModal.value = false;
+const dismissStopFeedback = () => {
+  stopFeedback.value = null;
+  if (stopFeedbackTimer) clearTimeout(stopFeedbackTimer);
+  stopFeedbackTimer = undefined;
 };
+
+const showStopFeedback = (feedback: { type: 'success' | 'error'; message: string }) => {
+  if (stopFeedbackTimer) clearTimeout(stopFeedbackTimer);
+  stopFeedback.value = feedback;
+  stopFeedbackTimer = setTimeout(() => {
+    stopFeedback.value = null;
+    stopFeedbackTimer = undefined;
+  }, 4000);
+};
+
+const confirmStopProcess = async (commandId: number, force: boolean) => {
+  dismissStopFeedback();
+  stopInProgress.value = true;
+  await nextTick();
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  try {
+    await stopCommandProcess(commandId, force);
+    showStopFeedback({
+      type: 'success',
+      message: `Đã xác nhận process của "${stoppingCmdName.value}" đã dừng hoàn toàn.`,
+    });
+    showStopModal.value = false;
+  } catch (error) {
+    showStopFeedback({
+      type: 'error',
+      message: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    stopInProgress.value = false;
+  }
+};
+
+onBeforeUnmount(() => {
+  if (stopFeedbackTimer) clearTimeout(stopFeedbackTimer);
+});
 </script>
 
 <style scoped>
@@ -447,6 +535,52 @@ const confirmStopProcess = async (commandId: number, force: boolean) => {
   font-size: 12px;
 }
 
+.workspace-feedback {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 8px;
+  max-width: min(520px, calc(100% - 16px));
+  padding: 8px 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.feedback-close {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: -2px -3px 0 auto;
+  color: currentColor;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.feedback-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.workspace-feedback.success {
+  color: #bbf7d0;
+  background: rgba(18, 53, 34, 0.95);
+  border: 1px solid rgba(74, 222, 128, 0.55);
+}
+
+.workspace-feedback.error {
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.95);
+  border: 1px solid rgba(248, 113, 113, 0.55);
+}
+
 .cursor-pointer {
   cursor: pointer;
 }
@@ -469,5 +603,18 @@ const confirmStopProcess = async (commandId: number, force: boolean) => {
 
 .zap-icon {
   color: #f59e0b;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

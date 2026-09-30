@@ -2,9 +2,10 @@ import { ref } from 'vue';
 import { ipcClient } from '@/ipc/client';
 import type { RunSession, ActiveProcessInfo, ProcessLifecycleStatus } from '@/types/models';
 
-// State chia sẻ toàn app
+// Shared app-level state
 const activeSession = ref<RunSession | null>(null);
 const activeProcesses = ref<Map<number, ActiveProcessInfo>>(new Map());
+const sessionByGroup = new Map<number, number>();
 
 let statusListenerSetup: Promise<void> | null = null;
 
@@ -48,6 +49,7 @@ export function useRunSession() {
         ...session,
         group_name: groupName || session.group_name,
       };
+      sessionByGroup.set(groupId, session.id);
       await refreshProcesses();
       return session;
     } finally {
@@ -65,13 +67,13 @@ export function useRunSession() {
       const runningList = Array.from(activeProcesses.value.entries()).filter(
         ([, proc]) => proc.status === 'running' && (!sessionId || proc.sessionId === sessionId)
       );
-      for (const [cmdId] of runningList) {
+      await Promise.all(runningList.map(async ([cmdId]) => {
         try {
           await ipcClient.stopProcess(cmdId, false);
         } catch (e) {
           console.warn(`[useRunSession] Failed to stop process #${cmdId}:`, e);
         }
-      }
+      }));
       const next = new Map(activeProcesses.value);
       next.forEach((proc, commandId) => {
         if (!sessionId || proc.sessionId === sessionId) {
@@ -95,12 +97,61 @@ export function useRunSession() {
     }
   };
 
+  const stopAllProcesses = async (force = false) => {
+    loading.value = true;
+    try {
+      const runningIds = Array.from(activeProcesses.value.entries())
+        .filter(([, process]) => process.status === 'running')
+        .map(([commandId]) => commandId);
+      await Promise.all(runningIds.map(async (commandId) => {
+        try {
+          await ipcClient.stopProcess(commandId, force);
+        } catch (error) {
+          console.warn(`[useRunSession] Không thể dừng process #${commandId}:`, error);
+        }
+      }));
+      const next = new Map(activeProcesses.value);
+      next.forEach((process, commandId) => {
+        if (process.status === 'running') {
+          next.set(commandId, { ...process, status: 'stopped' });
+        }
+      });
+      activeProcesses.value = next;
+      activeSession.value = null;
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  const stopGroupById = async (groupId: number) => {
+    const sessionId = sessionByGroup.get(groupId);
+    if (sessionId !== undefined) {
+      await stopGroupSession(sessionId);
+      sessionByGroup.delete(groupId);
+      return;
+    }
+    const processIds = Array.from(activeProcesses.value.entries())
+      .filter(([, process]) => process.status === 'running' && process.groupId === groupId)
+      .map(([commandId]) => commandId);
+    await Promise.all(processIds.map(commandId => ipcClient.stopProcess(commandId).catch(() => undefined)));
+  };
+
   const getProcessStatus = (commandId: number): ProcessLifecycleStatus => {
     return activeProcesses.value.get(commandId)?.status || 'idle';
   };
 
   const getProcessInfo = (commandId: number): ActiveProcessInfo | undefined => {
     return activeProcesses.value.get(commandId);
+  };
+
+  const updateProcessName = (commandId: number, name: string) => {
+    const existing = activeProcesses.value.get(commandId);
+    if (existing) {
+      const next = new Map(activeProcesses.value);
+      next.set(commandId, { ...existing, commandName: name });
+      activeProcesses.value = next;
+    }
+    ipcClient.setTerminalName?.(commandId, name);
   };
 
   return {
@@ -110,8 +161,11 @@ export function useRunSession() {
     startGroupSession,
     stopGroupSession,
     stopCommandProcess,
+    stopAllProcesses,
+    stopGroupById,
     refreshProcesses,
     getProcessStatus,
     getProcessInfo,
+    updateProcessName,
   };
 }

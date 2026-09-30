@@ -8,9 +8,9 @@
       </div>
 
       <!-- Ring Buffer Size in Memory -->
-      <div class="status-item" title="Kích thước Ring Buffer in-memory tối đa 2MB mỗi PTY">
+      <div class="status-item" title="Dung lượng dữ liệu hiện có trong Ring Buffer của các PTY đang chạy">
         <Cpu :size="12" class="status-icon" />
-        <span>Buffer: {{ formattedBufferSize }} / 2MB</span>
+        <span>Buffer: {{ formattedBufferSize }} / {{ formattedBufferLimit }}</span>
       </div>
 
       <!-- SQLite Mode -->
@@ -22,26 +22,29 @@
 
     <div class="status-right">
       <!-- Single Instance Status -->
-      <div class="status-item" title="Khóa Single-Instance cấp ứng dụng đã được thiết lập">
+      <div class="status-item" title="Trạng thái khóa Single-Instance của ứng dụng">
         <Lock :size="12" class="status-icon" />
-        <span>Single-Instance: Locked</span>
+        <span>Single-Instance: {{ singleInstanceStatus }}</span>
       </div>
 
       <!-- Autostart App status -->
       <div class="status-item">
         <span>Tự khởi động: </span>
-        <span class="highlight-text">Bật</span>
+        <span class="highlight-text">{{ autostartEnabled ? 'Bật' : 'Tắt' }}</span>
       </div>
     </div>
   </footer>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { Cpu, Database, Lock } from 'lucide-vue-next';
 import { useRunSession } from '@/composables/useRunSession';
+import { ipcClient, isTauriRuntime } from '@/ipc/client';
 
 const { activeProcesses } = useRunSession();
+const ringBufferLimit = ref(2 * 1024 * 1024);
+const autostartEnabled = ref(false);
 
 const activeRunningCount = computed(() => {
   let count = 0;
@@ -52,9 +55,23 @@ const activeRunningCount = computed(() => {
 });
 
 const formattedBufferSize = computed(() => {
-  // Ước tính bộ nhớ buffer in-memory đang chiếm
-  const totalKb = activeRunningCount.value * 210;
-  return `${totalKb}KB`;
+  const totalBytes = Array.from(activeProcesses.value.values())
+    .reduce((total, process) => total + (process.bufferBytes || 0), 0);
+  if (totalBytes < 1024) return `${totalBytes}B`;
+  return `${Math.round(totalBytes / 1024)}KB`;
+});
+
+const formattedBufferLimit = computed(() => `${Math.round(ringBufferLimit.value / (1024 * 1024))}MB × PTY`);
+const singleInstanceStatus = computed(() => isTauriRuntime() ? 'Active' : 'Preview');
+
+onMounted(async () => {
+  try {
+    const settings = await ipcClient.getSettings();
+    ringBufferLimit.value = settings.ringBufferSizeBytes;
+    autostartEnabled.value = settings.autostartApp;
+  } catch {
+    // Browser preview remains usable without native settings IPC.
+  }
 });
 </script>
 

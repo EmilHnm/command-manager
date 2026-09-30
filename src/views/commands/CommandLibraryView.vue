@@ -5,7 +5,7 @@
       <div class="header-left">
         <div class="title-row">
           <h2 class="view-title">Thư Viện Lệnh (SCR-02)</h2>
-          <span class="engine-badge">v2.1 Engine</span>
+          <span class="engine-badge">{{ APP_ENGINE_TAG }}</span>
         </div>
         <span class="view-subtitle">Định nghĩa các câu lệnh, phân định argv vs shell tường minh, kiểm soát môi trường thực thi</span>
       </div>
@@ -105,17 +105,16 @@
             <th style="width: 110px;">TRẠNG THÁI</th>
             <th style="width: 220px;">TÊN LỆNH</th>
             <th style="width: 140px;">KIỂU THỰC THI</th>
-            <th style="width: 160px;">THƯ MỤC (CWD)</th>
             <th>CHUỖI LỆNH (COMMAND / ARGS)</th>
             <th style="width: 140px; text-align: right;">THAO TÁC</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="loading">
-            <td colspan="6" class="empty-cell">Đang đồng bộ thư viện lệnh...</td>
+            <td colspan="5" class="empty-cell">Đang đồng bộ thư viện lệnh...</td>
           </tr>
           <tr v-else-if="filteredCommands.length === 0">
-            <td colspan="6" class="empty-cell">
+            <td colspan="5" class="empty-cell">
               Không tìm thấy lệnh nào phù hợp với bộ lọc tìm kiếm
             </td>
           </tr>
@@ -146,10 +145,6 @@
               <span v-else class="type-badge shell" title="Chạy qua vỏ lệnh shell (bash/sh/cmd)">
                 Shell (bash/sh)
               </span>
-            </td>
-
-            <td class="cwd-cell">
-              <span class="cwd-text font-mono" :title="cmd.cwd || './'">{{ cmd.cwd || './' }}</span>
             </td>
 
             <td class="code-cell">
@@ -218,6 +213,7 @@
     <CommandEditorModal
       :visible="showEditorModal"
       :command="editingCommand"
+      :loading="isSavingCommand"
       @save="handleSaveCommand"
       @close="showEditorModal = false"
     />
@@ -228,7 +224,9 @@
       title="Xóa Câu Lệnh"
       :message="`Bạn có chắc chắn muốn xóa lệnh '${deletingCommand?.name}'? Các nhóm chứa lệnh này cũng sẽ tự động loại bỏ liên kết.`"
       confirm-text="Xóa Lệnh"
+      loading-text="Đang Xóa..."
       :danger="true"
+      :loading="isDeletingCommand"
       @confirm="confirmDelete"
       @cancel="showDeleteDialog = false"
     />
@@ -247,6 +245,7 @@ import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import { useCommands } from '@/composables/useCommands';
 import { useGroups } from '@/composables/useGroups';
 import { useRunSession } from '@/composables/useRunSession';
+import { APP_ENGINE_TAG } from '@/config/version';
 import type { CommandDefinition } from '@/types/models';
 
 const router = useRouter();
@@ -307,8 +306,7 @@ const filteredCommands = computed(() => {
     const q = searchQuery.value.toLowerCase();
     return (
       cmd.name.toLowerCase().includes(q) ||
-      cmd.execution_string.toLowerCase().includes(q) ||
-      (cmd.cwd && cmd.cwd.toLowerCase().includes(q))
+      cmd.execution_string.toLowerCase().includes(q)
     );
   });
 });
@@ -339,15 +337,22 @@ const duplicateCommand = async (cmd: CommandDefinition) => {
     name: `${cmd.name} (Copy)`,
     execution_string: cmd.execution_string,
     is_shell: cmd.is_shell,
-    cwd: cmd.cwd,
   });
   if (saved) showToast('Đã nhân bản câu lệnh.', 'success');
 };
 
+const isSavingCommand = ref(false);
+const isDeletingCommand = ref(false);
+
 const handleSaveCommand = async (cmd: Partial<CommandDefinition>) => {
-  if (await saveCommand(cmd)) {
-    showEditorModal.value = false;
-    showToast(cmd.id ? 'Đã cập nhật câu lệnh.' : 'Đã tạo câu lệnh mới.', 'success');
+  isSavingCommand.value = true;
+  try {
+    if (await saveCommand(cmd)) {
+      showEditorModal.value = false;
+      showToast(cmd.id ? 'Đã cập nhật câu lệnh.' : 'Đã tạo câu lệnh mới.', 'success');
+    }
+  } finally {
+    isSavingCommand.value = false;
   }
 };
 
@@ -358,10 +363,15 @@ const requestDelete = (cmd: CommandDefinition) => {
 
 const confirmDelete = async () => {
   if (deletingCommand.value) {
-    if (await deleteCommand(deletingCommand.value.id)) {
-      showDeleteDialog.value = false;
-      deletingCommand.value = null;
-      showToast('Đã xóa câu lệnh.', 'success');
+    isDeletingCommand.value = true;
+    try {
+      if (await deleteCommand(deletingCommand.value.id)) {
+        showDeleteDialog.value = false;
+        deletingCommand.value = null;
+        showToast('Đã xóa câu lệnh.', 'success');
+      }
+    } finally {
+      isDeletingCommand.value = false;
     }
   }
 };

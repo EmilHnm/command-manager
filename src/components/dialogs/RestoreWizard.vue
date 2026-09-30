@@ -21,9 +21,9 @@
         <div class="check-results-card">
           <div class="card-title">Kết quả kiểm tra tính toàn vẹn (Pre-flight Check):</div>
           <ul class="checks-list">
-            <li class="check-item ok">
+            <li class="check-item" :class="backupInfo?.integrityOk ? 'ok' : 'error'">
               <CheckCircle2 :size="14" />
-              <span>Cấu trúc SQLite hợp lệ (PRAGMA integrity_check: {{ backupInfo?.integrityOk ? 'ok' : 'chưa kiểm tra' }})</span>
+              <span>File được chọn (PRAGMA integrity_check: {{ backupInfo?.integrityOk ? 'ok' : 'chưa kiểm tra' }})</span>
             </li>
             <li class="check-item ok">
               <CheckCircle2 :size="14" />
@@ -31,20 +31,20 @@
             </li>
             <li class="check-item ok">
               <CheckCircle2 :size="14" />
-              <span>Dữ liệu hiện tại: {{ backupInfo?.commandCount ?? '—' }} commands, {{ backupInfo?.groupCount ?? '—' }} groups, {{ backupInfo?.historyCount ?? '—' }} history records</span>
+              <span>Dữ liệu trong file: {{ backupInfo?.commandCount ?? '—' }} commands, {{ backupInfo?.groupCount ?? '—' }} groups, {{ backupInfo?.historyCount ?? '—' }} history records</span>
             </li>
           </ul>
         </div>
 
         <!-- Safety Pipeline Explanation -->
         <div class="pipeline-card">
-          <div class="card-title">Quy trình an toàn 7 bước được thực hiện:</div>
+          <div class="card-title">Quy trình an toàn khi khôi phục:</div>
           <ol class="pipeline-steps">
-            <li>Tạo bản snapshot dự phòng <code>app.db.bak</code> của dữ liệu hiện tại</li>
-            <li>Dừng an toàn mọi tiến trình & phiên chạy đang active</li>
-            <li>Đóng toàn bộ connection pool, dọn sạch <code>app.db-wal</code> và <code>app.db-shm</code></li>
-            <li>Thay thế tệp SQLite mới vào vị trí và mở lại kết nối</li>
-            <li><strong>Tự động Rollback:</strong> Hoàn trả bản snapshot cũ nếu có bất kỳ lỗi nào xảy ra</li>
+            <li>Kiểm tra integrity và migrate file staging về schema hiện tại</li>
+            <li>Tạo snapshot rollback của database hiện tại</li>
+            <li>Dừng tiến trình, checkpoint WAL và đóng connection pool</li>
+            <li>Thay thế database staging rồi mở lại connection pool</li>
+            <li><strong>Tự động Rollback:</strong> khôi phục snapshot nếu thay thế hoặc mở lại thất bại</li>
           </ol>
         </div>
 
@@ -58,16 +58,17 @@
       </div>
 
       <div class="modal-footer">
-        <button class="btn btn-secondary" @click="$emit('close')">
+        <button class="btn btn-secondary" :disabled="effectiveRestoring" @click="!effectiveRestoring && $emit('close')">
           Hủy bỏ
         </button>
         <button
           class="btn btn-danger"
-          :disabled="!userConfirmed || isRestoring"
+          :disabled="!userConfirmed || effectiveRestoring"
           @click="handleRestore"
         >
-          <RotateCcw v-if="!isRestoring" :size="14" />
-          <span>{{ isRestoring ? 'Đang khôi phục...' : 'Bắt Đầu Khôi Phục & Tải Lại' }}</span>
+          <LoaderCircle v-if="effectiveRestoring" :size="14" class="spin" />
+          <RotateCcw v-else :size="14" />
+          <span>{{ effectiveRestoring ? 'Đang khôi phục...' : 'Bắt Đầu Khôi Phục & Tải Lại' }}</span>
         </button>
       </div>
     </div>
@@ -75,14 +76,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
-import { ShieldAlert, CheckCircle2, RotateCcw, X } from 'lucide-vue-next';
+import { ref, computed, watch } from 'vue';
+import { ShieldAlert, CheckCircle2, RotateCcw, X, LoaderCircle } from 'lucide-vue-next';
 import type { BackupIntegrityResult } from '@/types/models';
 
 const props = defineProps<{
   visible: boolean;
   filePath?: string;
   backupInfo?: BackupIntegrityResult | null;
+  loading?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -92,6 +94,8 @@ const emit = defineEmits<{
 
 const userConfirmed = ref(false);
 const isRestoring = ref(false);
+
+const effectiveRestoring = computed(() => props.loading ?? isRestoring.value);
 
 watch(
   () => props.visible,
@@ -103,7 +107,7 @@ watch(
 );
 
 const handleRestore = () => {
-  if (!userConfirmed.value) return;
+  if (!userConfirmed.value || effectiveRestoring.value) return;
   isRestoring.value = true;
   emit('confirm-restore');
 };
@@ -208,5 +212,18 @@ const handleRestore = () => {
   font-size: 12px;
   color: var(--text-primary);
   line-height: 1.5;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

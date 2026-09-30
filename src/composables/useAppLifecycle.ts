@@ -1,6 +1,6 @@
 import { ref } from 'vue';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { IPC_EVENTS, type ShutdownProgressEvent } from '@/ipc/events';
+import { IPC_EVENTS, type ShutdownProgressEvent, type SingleInstanceEvent } from '@/ipc/events';
 
 const isShuttingDown = ref(false);
 const showCloseConfirm = ref(false);
@@ -11,6 +11,7 @@ const shutdownError = ref('');
 const showSingleInstanceAlert = ref(false);
 let progressListener: Promise<UnlistenFn> | undefined;
 let closeRequestListener: Promise<UnlistenFn> | undefined;
+let singleInstanceListener: Promise<UnlistenFn> | undefined;
 let requestPending = false;
 const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -52,7 +53,17 @@ const initLifecycleListener = async () => {
     throw error;
   });
 
-  await Promise.all([progressListener, closeRequestListener]);
+  singleInstanceListener ??= import('@tauri-apps/api/event').then(({ listen }) =>
+    listen<SingleInstanceEvent>(IPC_EVENTS.SINGLE_INSTANCE, () => {
+      showSingleInstanceAlert.value = true;
+      window.setTimeout(() => { showSingleInstanceAlert.value = false; }, 3500);
+    }),
+  ).catch((error) => {
+    singleInstanceListener = undefined;
+    throw error;
+  });
+
+  await Promise.all([progressListener, closeRequestListener, singleInstanceListener]);
 };
 
 const disposeLifecycleListener = () => {
@@ -63,6 +74,10 @@ const disposeLifecycleListener = () => {
   const cListener = closeRequestListener;
   closeRequestListener = undefined;
   void cListener?.then((unlisten) => unlisten()).catch(console.error);
+
+  const iListener = singleInstanceListener;
+  singleInstanceListener = undefined;
+  void iListener?.then((unlisten) => unlisten()).catch(console.error);
 };
 
 const requestShutdown = async (force: boolean) => {

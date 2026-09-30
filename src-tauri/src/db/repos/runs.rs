@@ -42,6 +42,16 @@ pub fn set_session_status(conn: &Connection, id: &str, status: &str) -> Result<(
     Ok(())
 }
 
+pub fn session_status(conn: &Connection, id: &str) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT status FROM run_session WHERE id = ?1",
+        [id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
 pub fn finalize_session(conn: &Connection, id: &str) -> Result<()> {
     let current_status: String = conn.query_row(
         "SELECT status FROM run_session WHERE id = ?1",
@@ -62,6 +72,9 @@ pub fn finalize_session(conn: &Connection, id: &str) -> Result<()> {
         },
     )?;
     if pending > 0 {
+        return Ok(());
+    }
+    if current_status == "stopped" {
         return Ok(());
     }
     set_session_status(

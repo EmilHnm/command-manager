@@ -10,6 +10,8 @@ import type {
   RunSession,
   RunEvent,
   CommandHistory,
+  OsHistorySource,
+  OsHistoryImportResult,
   RunSessionStatus,
   SystemSettings,
   BackupIntegrityResult,
@@ -24,12 +26,14 @@ type BackendCommand = {
   name: string;
   execution_string: string;
   is_shell: boolean;
+  shell_kind?: string | null;
 };
 
 type BackendGroup = {
   id: string;
   group_name: string;
   autostart: boolean;
+  execution_mode: 'startup' | 'sequential';
 };
 
 type BackendMembership = {
@@ -68,6 +72,7 @@ type BackendProcess = {
   group_id: string;
   pid: number;
   buffer_bytes: number;
+  shell_kind?: string;
 };
 
 type BackendProcessStatus = {
@@ -131,7 +136,36 @@ const runEventBackendToUi = new Map<string, number>();
 const runEventToCommand = new Map<string, number>();
 const runEventToSession = new Map<string, number>();
 const terminalBackendToUi = new Map<string, number>();
-const terminalNames = new Map<number, string>();
+
+const TERMINAL_NAMES_STORAGE_KEY = 'cm_terminal_names_v1';
+
+function loadStoredTerminalNames(): Map<number, string> {
+  const map = new Map<number, string>();
+  if (typeof window === 'undefined') return map;
+  try {
+    const raw = localStorage.getItem(TERMINAL_NAMES_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === 'string') map.set(Number(k), v);
+      }
+    }
+  } catch {}
+  return map;
+}
+
+function persistStoredTerminalNames(map: Map<number, string>) {
+  if (typeof window === 'undefined') return;
+  try {
+    const obj: Record<string, string> = {};
+    map.forEach((v, k) => {
+      obj[String(k)] = v;
+    });
+    localStorage.setItem(TERMINAL_NAMES_STORAGE_KEY, JSON.stringify(obj));
+  } catch {}
+}
+
+const terminalNames = loadStoredTerminalNames();
 const templateNames = new Map<string, string>();
 const templateUiToBackend = new Map<number, string>();
 const templateBackendToUi = new Map<string, number>();
@@ -171,7 +205,9 @@ function terminalUiIdFor(backendId: string) {
   if (existing !== undefined) return existing;
   const id = nextTerminalUiId--;
   terminalBackendToUi.set(backendId, id);
-  terminalNames.set(id, 'Terminal');
+  if (!terminalNames.has(id)) {
+    terminalNames.set(id, 'Terminal');
+  }
   return id;
 }
 
@@ -186,7 +222,7 @@ function commandNameForUi(commandId: number) {
 }
 
 function runEventIdForCommand(commandId: number) {
-  // Map giữ insertion order; phần tử cuối là lần chạy gần nhất của command.
+  // Map preserves insertion order; the last entry represents the most recent command run.
   return [...runEventToCommand.entries()]
     .reverse()
     .find(([, id]) => id === commandId)?.[0];
@@ -298,7 +334,7 @@ async function invokeTauri<T>(cmd: string, args?: Record<string, unknown>): Prom
 }
 
 // ----------------------------------------------------
-// Dữ liệu mẫu khởi tạo cho Mock Store
+// Initial seed data for Mock Store
 // ----------------------------------------------------
 let mockCommands: CommandDefinition[] = [
   { id: 1, name: 'Vite Frontend Dev', execution_string: 'pnpm --filter web dev --port 3000', is_shell: true },
@@ -310,9 +346,9 @@ let mockCommands: CommandDefinition[] = [
 ];
 
 let mockGroups: CommandGroup[] = [
-  { id: 1, group_name: 'Web Platform Development', autostart: true },
-  { id: 2, group_name: 'Cloudflare Remote Tunnel', autostart: false },
-  { id: 3, group_name: 'Database Migration & Seed', autostart: false },
+  { id: 1, group_name: 'Web Platform Development', autostart: true, execution_mode: 'startup' },
+  { id: 2, group_name: 'Cloudflare Remote Tunnel', autostart: false, execution_mode: 'startup' },
+  { id: 3, group_name: 'Database Migration & Seed', autostart: false, execution_mode: 'sequential' },
 ];
 
 let mockMemberships: { group_id: number; command_id: number; execution_order: number }[] = [
@@ -348,18 +384,19 @@ let mockSettings: SystemSettings = {
   terminalLoadProfile: true,
 };
 
-// Mock buffer logs cho terminal
+// Mock terminal buffer logs
 const mockLogBuffers = new Map<number, string>();
 const mockTerminalInput = new Map<number, string>();
 const mockPtyDataListeners = new Set<(commandId: number, data: string) => void>();
 const mockHistoryAddedListeners = new Set<() => void>();
 let mockCommandHistories: CommandHistory[] = [];
+const mockOsHistory = ['git status', 'git log --oneline -10', 'pnpm run build', 'cargo test --lib'];
 mockLogBuffers.set(1, '\x1b[35m[vite]\x1b[0m connecting...\n\x1b[32m  ➜  Local:   http://localhost:3000/\x1b[0m\n\x1b[32m  ➜  Network: http://192.168.1.15:3000/\x1b[0m\n\x1b[90m  ➜  press h + enter to show help\x1b[0m\n');
 mockLogBuffers.set(2, '\x1b[32m[Nest]\x1b[0m 2845  - 09/25/2026, 2:20:10 PM     LOG [NestFactory] Starting Nest application...\n\x1b[32m[Nest]\x1b[0m 2845  - 09/25/2026, 2:20:11 PM     LOG [RoutesResolver] AppController {/api}: +4ms\n\x1b[32m[Nest]\x1b[0m 2845  - 09/25/2026, 2:20:11 PM     LOG [NestApplication] Nest application successfully started on port 4000\n');
 mockLogBuffers.set(3, 'Starting postgresql container...\npostgres: Container postgresql running.\nExited with code 0\n');
 
 async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  // Giả lập network delay nhẹ
+  // Simulate slight network delay
   if (cmd !== 'pty_write') await new Promise(r => setTimeout(r, 60));
 
   switch (cmd) {
@@ -409,10 +446,20 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
       const payload = args?.group as CommandGroup & { commandIds?: number[] };
       let groupId = payload.id;
       if (groupId) {
-        mockGroups = mockGroups.map(g => g.id === groupId ? { id: g.id, group_name: payload.group_name, autostart: payload.autostart } : g);
+        mockGroups = mockGroups.map(g => g.id === groupId ? {
+          ...g,
+          group_name: payload.group_name,
+          autostart: payload.autostart,
+          execution_mode: payload.execution_mode || 'startup',
+        } : g);
       } else {
         groupId = Math.max(...mockGroups.map(g => g.id), 0) + 1;
-        mockGroups.push({ id: groupId, group_name: payload.group_name, autostart: payload.autostart });
+        mockGroups.push({
+          id: groupId,
+          group_name: payload.group_name,
+          autostart: payload.autostart,
+          execution_mode: payload.execution_mode || 'startup',
+        });
       }
       if (payload.commandIds) {
         mockMemberships = mockMemberships.filter(m => m.group_id !== groupId);
@@ -580,6 +627,40 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
       mockCommandHistories = [];
       return true as unknown as T;
 
+    case 'history_os_sources':
+      return [
+        { shell_kinds: ['mock'], path: '~/.zsh_history (mock)', entries: mockOsHistory.length, error: null },
+      ] as unknown as T;
+
+    case 'history_import_os': {
+      if (!mockSettings.historyEnabled) {
+        throw new Error('Ghi lịch sử lệnh đang tắt; bật lại trong Cài đặt trước khi nhập.');
+      }
+      const now = new Date().toISOString();
+      let imported = 0;
+      for (const commandLine of mockOsHistory) {
+        if (mockCommandHistories.some(row => row.command_line === commandLine && row.shell_kind === 'mock')) {
+          imported += 1;
+          continue;
+        }
+        mockCommandHistories.push({
+          id: `mock-os-history:${commandLine}`,
+          command_line: commandLine,
+          shell_kind: 'mock',
+          last_exit_code: null,
+          run_count: 1,
+          first_used_at: now,
+          last_used_at: now,
+          source: 'shell',
+        });
+        imported += 1;
+      }
+      mockHistoryAddedListeners.forEach(listener => listener());
+      return [
+        { shell_kind: 'mock', path: '~/.zsh_history (mock)', imported, skipped: 0 },
+      ] as unknown as T;
+    }
+
     // Backup & Restore
     case 'backup_export': {
       return {
@@ -633,6 +714,7 @@ export const ipcClient = {
       name: row.name,
       execution_string: row.execution_string,
       is_shell: row.is_shell,
+      shell_kind: row.shell_kind ?? undefined,
     }));
   },
 
@@ -650,6 +732,7 @@ export const ipcClient = {
           name: command.name,
           execution_string: command.execution_string,
           is_shell: Boolean(command.is_shell),
+          shell_kind: command.shell_kind ?? null,
         },
         confirmed: true,
       });
@@ -659,6 +742,7 @@ export const ipcClient = {
         name: command.name,
         execution_string: command.execution_string,
         is_shell: Boolean(command.is_shell),
+        shell_kind: command.shell_kind ?? null,
         confirmed: true,
       });
       rememberCommand(created);
@@ -860,6 +944,7 @@ export const ipcClient = {
         id: groupId,
         group_name: group.group_name,
         autostart: group.autostart,
+        execution_mode: group.execution_mode || 'startup',
         commands: groupCommands,
       };
     }));
@@ -875,12 +960,14 @@ export const ipcClient = {
         id: backendIdFor(groupUiToBackend, group.id, 'Nhóm'),
         group_name: group.group_name,
         autostart: Boolean(group.autostart),
+        execution_mode: group.execution_mode || 'startup',
       };
       await invokeTauri<void>('groups_update', { group: backendGroup, confirmed: true });
       groupNames.set(group.id, group.group_name);
     } else {
       backendGroup = await invokeTauri<BackendGroup>('groups_create', {
         group_name: group.group_name,
+        execution_mode: group.execution_mode || 'startup',
         confirmed: true,
       });
       rememberGroup(backendGroup);
@@ -940,7 +1027,7 @@ export const ipcClient = {
     };
   },
 
-  openTerminal: async (): Promise<{
+  openTerminal: async (cwd?: string): Promise<{
     commandId: number;
     runEventId: string;
     pid?: number;
@@ -953,14 +1040,15 @@ export const ipcClient = {
       terminalNames.set(commandId, 'Terminal');
       runEventToCommand.set(runEventId, commandId);
       mockTerminalInput.set(commandId, '');
+      const mockCwd = (cwd || 'C:\\Users\\HOA').replace(/\\/g, '\\\\').replace(/;/g, '\\x3b');
       mockLogBuffers.set(
         commandId,
-        '\x1b]633;D;0\x07\x1b]633;P;Cwd=C:\\\\Users\\\\HOA\x07\x1b]633;A\x07\x1b]633;B\x07',
+        `\x1b]633;D;0\x07\x1b]633;P;Cwd=${mockCwd}\x07\x1b]633;A\x07\x1b]633;B\x07`,
       );
       return { commandId, runEventId, shellKind: 'mock', historyLevel: 2 };
     }
 
-    const terminal = await invokeTauri<BackendTerminal>('terminal_open');
+    const terminal = await invokeTauri<BackendTerminal>('terminal_open', { cwd: cwd || null });
     const commandId = terminalUiIdFor(terminal.command_id);
     runEventToCommand.set(terminal.run_event_id, commandId);
     runEventToSession.set(
@@ -974,6 +1062,15 @@ export const ipcClient = {
       shellKind: terminal.shell_kind,
       historyLevel: terminal.history_level,
     };
+  },
+
+  setTerminalName: (commandId: number, name: string) => {
+    terminalNames.set(commandId, name);
+    persistStoredTerminalNames(terminalNames);
+  },
+
+  getTerminalName: (commandId: number): string | undefined => {
+    return terminalNames.get(commandId);
   },
 
   stopSession: async (sessionId: number) => {
@@ -1074,6 +1171,36 @@ export const ipcClient = {
     await invokeTauri<void>('history_clear', { confirmed: true });
   },
 
+  listOsHistorySources: async (): Promise<OsHistorySource[]> => {
+    const rows = await invokeTauri<Array<{
+      shell_kinds: string[];
+      path: string;
+      entries: number;
+      error: string | null;
+    }>>('history_os_sources');
+    return rows.map(row => ({
+      shellKinds: row.shell_kinds,
+      path: row.path,
+      entries: row.entries,
+      error: row.error ?? undefined,
+    }));
+  },
+
+  importOsHistory: async (): Promise<OsHistoryImportResult[]> => {
+    const rows = await invokeTauri<Array<{
+      shell_kind: string;
+      path: string;
+      imported: number;
+      skipped: number;
+    }>>('history_import_os', { confirmed: true });
+    return rows.map(row => ({
+      shellKind: row.shell_kind,
+      path: row.path,
+      imported: row.imported,
+      skipped: row.skipped,
+    }));
+  },
+
   listEvents: async (sessionId?: number): Promise<RunEvent[]> => {
     if (!usingNativeIpc()) return invokeTauri<RunEvent[]>('history_events', { sessionId });
     if (sessionId === undefined) return [];
@@ -1112,6 +1239,9 @@ export const ipcClient = {
     return rows.map((row) => {
       const commandId = commandUiIdForBackend(row.command_id);
       const sessionId = uiIdFor(sessionUiToBackend, sessionBackendToUi, row.session_id);
+      const groupId = row.group_id === 'terminal' || row.group_id === 'command'
+        ? undefined
+        : uiIdFor(groupUiToBackend, groupBackendToUi, row.group_id);
       runEventToCommand.set(row.run_event_id, commandId);
       runEventToSession.set(row.run_event_id, sessionId);
       return {
@@ -1121,6 +1251,9 @@ export const ipcClient = {
         pid: row.pid,
         status: 'running',
         sessionId,
+        groupId,
+        bufferBytes: row.buffer_bytes,
+        shellKind: row.shell_kind,
       };
     });
   },
@@ -1144,6 +1277,25 @@ export const ipcClient = {
     }>('backup_info');
     return {
       valid: true,
+      integrityOk: info.integrity_ok,
+      schemaVersion: String(info.schema_version),
+      commandCount: info.command_count,
+      groupCount: info.group_count,
+      historyCount: info.history_count,
+    };
+  },
+
+  verifyBackupBytes: async (b64: string): Promise<BackupIntegrityResult> => {
+    if (!usingNativeIpc()) return invokeTauri<BackupIntegrityResult>('backup_verify', { filePath: '' });
+    const info = await invokeTauri<{
+      schema_version: number;
+      command_count: number;
+      group_count: number;
+      history_count: number;
+      integrity_ok: boolean;
+    }>('backup_verify_bytes', { b64 });
+    return {
+      valid: info.integrity_ok,
       integrityOk: info.integrity_ok,
       schemaVersion: String(info.schema_version),
       commandCount: info.command_count,
@@ -1208,8 +1360,12 @@ export const ipcClient = {
       ['ghost_text_enabled', String(settings.ghostTextEnabled)],
       ['terminal_load_profile', String(settings.terminalLoadProfile)],
     ];
-    await Promise.all(values.map(([key, value]) => invokeTauri<void>('settings_set', { key, value })));
-    await invokeTauri<void>('autostart_os_set', { enabled: settings.autostartApp });
+    await Promise.all(values.map(([key, value]) => invokeTauri<void>('settings_set', {
+      key,
+      value,
+      confirmed: true,
+    })));
+    await invokeTauri<void>('autostart_os_set', { enabled: settings.autostartApp, confirmed: true });
     return true;
   },
 
@@ -1259,4 +1415,18 @@ export const ipcClient = {
     const { listen } = await import('@tauri-apps/api/event');
     return listen(IPC_EVENTS.HISTORY_ADDED, () => callback());
   },
+
+  openUrl: async (url: string): Promise<void> => {
+    if (!url) return;
+    try {
+      if (usingNativeIpc()) {
+        await invokeTauri('open_url', { url });
+        return;
+      }
+    } catch (e) {
+      console.warn('[IPC] open_url error, falling back to window.open:', e);
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+  },
 };
+

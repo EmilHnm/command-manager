@@ -1,10 +1,11 @@
 use super::schema::{
     INIT_SQL, MIGRATION_002_SQL, MIGRATION_003_SQL, MIGRATION_004_SQL, MIGRATION_005_SQL,
-    MIGRATION_006_SQL, MIGRATION_007_SQL, SCHEMA_VERSION,
+    MIGRATION_006_SQL, MIGRATION_007_SQL, MIGRATION_008_SQL, MIGRATION_009_SQL, SCHEMA_VERSION,
 };
 use crate::error::{Error, Result};
 use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 /// One writer + three readers on the same WAL file.
@@ -12,6 +13,7 @@ pub struct Db {
     pub path: PathBuf,
     writer: Mutex<Option<Connection>>,
     readers: [Mutex<Option<Connection>>; 3],
+    next_reader: AtomicUsize,
 }
 
 fn configure(conn: &Connection) -> Result<()> {
@@ -60,6 +62,7 @@ impl Db {
             path,
             writer: Mutex::new(Some(writer)),
             readers,
+            next_reader: AtomicUsize::new(0),
         })
     }
 
@@ -73,8 +76,8 @@ impl Db {
     }
 
     pub fn read<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-        // ponytail: round-robin skipped; reader[0] is enough until contention shows up
-        let guard = self.readers[0]
+        let reader_index = self.next_reader.fetch_add(1, Ordering::Relaxed) % self.readers.len();
+        let guard = self.readers[reader_index]
             .lock()
             .map_err(|_| Error::msg("db reader poisoned"))?;
         let conn = guard.as_ref().ok_or_else(|| Error::msg("db closed"))?;
@@ -140,6 +143,8 @@ fn migrate(conn: &Connection) -> Result<()> {
             5 => MIGRATION_005_SQL,
             6 => MIGRATION_006_SQL,
             7 => MIGRATION_007_SQL,
+            8 => MIGRATION_008_SQL,
+            9 => MIGRATION_009_SQL,
             _ => return Err(Error::msg(format!("missing migration for schema {next}"))),
         };
         conn.execute_batch(sql)?;
@@ -289,5 +294,28 @@ mod tests {
             [],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn command_definition_migration_preserves_shell_kind() {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys");
+        migrate(&conn).expect("schema migration");
+        conn.execute(
+            "INSERT INTO command_definition
+             (id, name, execution_string, is_shell, shell_kind)
+             VALUES ('command-1', 'PowerShell command', 'Get-Date', 1, 'pwsh')",
+            [],
+        )
+        .expect("shell kind column should exist");
+        let shell_kind: Option<String> = conn
+            .query_row(
+                "SELECT shell_kind FROM command_definition WHERE id = 'command-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("shell kind should be readable");
+        assert_eq!(shell_kind.as_deref(), Some("pwsh"));
     }
 }

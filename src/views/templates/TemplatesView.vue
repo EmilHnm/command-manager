@@ -229,6 +229,7 @@
     <TemplateRunModal
       :visible="runModalVisible"
       :template-id="selectedTemplateId"
+      :loading="isExecutingTemplate"
       @close="runModalVisible = false"
       @run="handleRunExecution"
     />
@@ -238,6 +239,20 @@
       :template-id="selectedTemplateId"
       @close="editorModalVisible = false"
       @save="fetchTemplates"
+    />
+
+    <!-- Confirm Dialog Delete Template (MOD-13) -->
+    <ConfirmDialog
+      :visible="showDeleteConfirm"
+      title="Xóa Mẫu Lệnh"
+      subtitle="MOD-13 • Template Removal Gate"
+      :message="`Bạn có chắc chắn muốn xóa Template '${deletingTemplate?.name}'? Toàn bộ các bộ tham số Preset liên kết cũng sẽ bị xóa vĩnh viễn khỏi SQLite.`"
+      confirm-text="Xóa Template"
+      loading-text="Đang Xóa Template..."
+      :danger="true"
+      :loading="isDeletingTemplate"
+      @confirm="confirmDeleteTemplate"
+      @cancel="showDeleteConfirm = false"
     />
   </div>
 </template>
@@ -264,6 +279,7 @@ import { useTemplates } from '@/composables/useTemplates';
 import { ipcClient } from '@/ipc/client';
 import TemplateRunModal from '@/components/dialogs/TemplateRunModal.vue';
 import TemplateEditorModal from '@/components/dialogs/TemplateEditorModal.vue';
+import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import type { CommandTemplate } from '@/types/models';
 
 const router = useRouter();
@@ -285,6 +301,8 @@ const runModalVisible = ref(false);
 const editorModalVisible = ref(false);
 const selectedTemplateId = ref<number | null>(null);
 const runError = ref('');
+const showDeleteConfirm = ref(false);
+const deletingTemplate = ref<{ id: number; name: string } | null>(null);
 
 onMounted(async () => {
   await fetchTemplates();
@@ -350,9 +368,23 @@ const handleDuplicate = async (tpl: CommandTemplate) => {
   await createTemplate(dup);
 };
 
-const handleDelete = async (id: number, name: string) => {
-  if (window.confirm(`Bạn có chắc chắn muốn xóa Template "${name}"?`)) {
-    await deleteTemplate(id);
+const handleDelete = (id: number, name: string) => {
+  deletingTemplate.value = { id, name };
+  showDeleteConfirm.value = true;
+};
+
+const isExecutingTemplate = ref(false);
+const isDeletingTemplate = ref(false);
+
+const confirmDeleteTemplate = async () => {
+  if (!deletingTemplate.value) return;
+  isDeletingTemplate.value = true;
+  try {
+    await deleteTemplate(deletingTemplate.value.id);
+    showDeleteConfirm.value = false;
+    deletingTemplate.value = null;
+  } finally {
+    isDeletingTemplate.value = false;
   }
 };
 
@@ -363,6 +395,7 @@ const handleRunExecution = async (payload: {
   isShell: boolean;
   paramValues: Record<string, string>;
 }) => {
+  isExecutingTemplate.value = true;
   runError.value = '';
   try {
     const terminal = await ipcClient.runTemplate(payload.templateId, payload.paramValues);
@@ -379,6 +412,8 @@ const handleRunExecution = async (payload: {
   } catch (error) {
     runError.value = error instanceof Error ? error.message : String(error);
     console.error('[Templates] Không thể chạy template:', error);
+  } finally {
+    isExecutingTemplate.value = false;
   }
 };
 </script>

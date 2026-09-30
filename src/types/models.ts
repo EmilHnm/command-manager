@@ -8,6 +8,7 @@ export interface CommandDefinition {
   name: string;
   execution_string: string;
   is_shell: boolean;
+  shell_kind?: string;
   cwd?: string;
 }
 
@@ -15,6 +16,7 @@ export interface CommandGroup {
   id: number;
   group_name: string;
   autostart: boolean;
+  execution_mode: 'startup' | 'sequential';
 }
 
 export interface GroupMembership {
@@ -66,6 +68,23 @@ export interface CommandHistory {
   source: 'command' | 'template' | 'shell' | 'typed' | string;
 }
 
+/** A history file of the user's own shell (zsh, bash, PSReadLine). */
+export interface OsHistorySource {
+  shellKinds: string[];
+  path: string;
+  /** Distinct commands found in the file. */
+  entries: number;
+  error?: string;
+}
+
+export interface OsHistoryImportResult {
+  shellKind: string;
+  path: string;
+  imported: number;
+  /** Rejected by the privacy patterns. */
+  skipped: number;
+}
+
 export interface ActiveProcessInfo {
   runEventId?: string;
   commandId: number;
@@ -75,6 +94,9 @@ export interface ActiveProcessInfo {
   startedAt?: string;
   exitCode?: number | null;
   sessionId?: number;
+  groupId?: number;
+  bufferBytes?: number;
+  shellKind?: string;
 }
 
 export interface SystemSettings {

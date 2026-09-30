@@ -512,7 +512,7 @@ dependencies = [
 
 [[package]]
 name = "command-manager"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "base64 0.22.1",
  "dashmap",
@@ -532,6 +532,8 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "uuid",
+ "windows",
+ "zbus",
 ]
 
 [[package]]

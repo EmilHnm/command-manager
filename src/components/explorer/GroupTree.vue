@@ -8,6 +8,7 @@
         type="text"
         placeholder="Lọc nhóm & lệnh... (Ctrl+F)"
         class="tree-search-input"
+        ref="searchInput"
       />
     </div>
 
@@ -32,18 +33,22 @@
         <button
           class="btn btn-success btn-sm target-btn"
           title="Chạy toàn bộ nhóm"
+          :disabled="runningGroupId === targetGroup.id || stoppingGroupId === targetGroup.id"
           @click="handleRunGroup(targetGroup)"
         >
-          <Play :size="11" />
-          <span>Chạy</span>
+          <LoaderCircle v-if="runningGroupId === targetGroup.id" :size="11" class="spin" />
+          <Play v-else :size="11" />
+          <span>{{ runningGroupId === targetGroup.id ? 'Đang chạy...' : 'Chạy' }}</span>
         </button>
         <button
           class="btn btn-danger btn-sm target-btn"
           title="Dừng toàn bộ nhóm"
+          :disabled="stoppingGroupId === targetGroup.id || runningGroupId === targetGroup.id"
           @click="handleStopGroup(targetGroup.id)"
         >
-          <Square :size="10" />
-          <span>Dừng</span>
+          <LoaderCircle v-if="stoppingGroupId === targetGroup.id" :size="10" class="spin" />
+          <Square v-else :size="10" />
+          <span>{{ stoppingGroupId === targetGroup.id ? 'Đang dừng...' : 'Dừng' }}</span>
         </button>
       </div>
     </div>
@@ -60,7 +65,7 @@
         class="group-node"
       >
         <!-- Group Header -->
-        <div class="group-header" @click="toggleExpand(group.id)">
+        <div class="group-header" @click="selectGroup(group.id); toggleExpand(group.id)">
           <div class="header-left">
             <component
               :is="expandedGroups.has(group.id) ? ChevronDown : ChevronRight"
@@ -77,16 +82,20 @@
             <button
               class="action-btn play-btn"
               title="Khởi chạy toàn bộ nhóm"
+              :disabled="runningGroupId === group.id || stoppingGroupId === group.id"
               @click="handleRunGroup(group)"
             >
-              <Play :size="12" />
+              <LoaderCircle v-if="runningGroupId === group.id" :size="12" class="spin" />
+              <Play v-else :size="12" />
             </button>
             <button
               class="action-btn stop-btn"
               title="Dừng toàn bộ nhóm"
+              :disabled="stoppingGroupId === group.id || runningGroupId === group.id"
               @click="handleStopGroup(group.id)"
             >
-              <Square :size="11" />
+              <LoaderCircle v-if="stoppingGroupId === group.id" :size="11" class="spin" />
+              <Square v-else :size="11" />
             </button>
           </div>
         </div>
@@ -104,7 +113,7 @@
             @click="$emit('select-command', cmd.id, cmd.name)"
           >
             <div class="cmd-item-left">
-              <span class="order-tag">0{{ idx + 1 }}.</span>
+              <span class="order-tag">{{ formatOrder(idx) }}.</span>
               <span
                 class="status-dot"
                 :class="{
@@ -131,29 +140,48 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import { Search, ChevronDown, ChevronRight, Play, Square, Folder } from 'lucide-vue-next';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { Search, ChevronDown, ChevronRight, Play, Square, Folder, LoaderCircle } from 'lucide-vue-next';
 import type { CommandGroupWithCommands } from '@/types/models';
 import { useRunSession } from '@/composables/useRunSession';
 
 const props = defineProps<{
   groups: CommandGroupWithCommands[];
+  selectedGroupId?: number;
+  stoppingGroupId?: number | null;
+  runningGroupId?: number | null;
 }>();
 
 const emit = defineEmits<{
   (e: 'select-command', commandId: number, commandName: string): void;
   (e: 'run-group', group: CommandGroupWithCommands): void;
   (e: 'stop-group', groupId: number): void;
+  (e: 'select-group', groupId: number): void;
 }>();
 
 const { getProcessStatus, getProcessInfo, activeProcesses } = useRunSession();
 
 const filterText = ref('');
-const expandedGroups = ref<Set<number>>(new Set([1, 2, 3])); // Mặc định mở các nhóm
+const searchInput = ref<HTMLInputElement | null>(null);
+const expandedGroups = ref<Set<number>>(new Set([1, 2, 3]));
 
 const targetGroup = computed(() => {
-  return props.groups[0] || null;
+  return props.groups.find(group => group.id === props.selectedGroupId) || props.groups[0] || null;
 });
+
+const formatOrder = (index: number) => String(index + 1).padStart(2, '0');
+const selectGroup = (groupId: number) => emit('select-group', groupId);
+const handleFindShortcut = (event: KeyboardEvent) => {
+  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'f') return;
+  const target = event.target as HTMLElement | null;
+  if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
+  event.preventDefault();
+  searchInput.value?.focus();
+  searchInput.value?.select();
+};
+
+onMounted(() => window.addEventListener('keydown', handleFindShortcut));
+onBeforeUnmount(() => window.removeEventListener('keydown', handleFindShortcut));
 
 const isTargetGroupRunning = computed(() => {
   if (!targetGroup.value) return false;
@@ -517,5 +545,18 @@ const handleStopGroup = (groupId: number) => {
   text-align: center;
   font-size: 11.5px;
   color: var(--text-muted);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

@@ -92,15 +92,17 @@
       </div>
 
       <div class="modal-footer">
-        <button class="btn btn-secondary" @click="$emit('close')">
+        <button class="btn btn-secondary" :disabled="loading" @click="!loading && $emit('close')">
           Hủy bỏ
         </button>
         <button
           class="btn btn-primary"
+          :disabled="loading"
           @click="handleSave"
         >
-          <Save :size="14" />
-          <span>{{ form.id ? 'Cập Nhật Lệnh' : 'Lưu Câu Lệnh' }}</span>
+          <LoaderCircle v-if="loading" :size="14" class="spin" />
+          <Save v-else :size="14" />
+          <span>{{ loading ? loadingText : (form.id ? 'Cập Nhật Lệnh' : 'Lưu Câu Lệnh') }}</span>
         </button>
       </div>
     </div>
@@ -109,14 +111,23 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
-import { Zap, Save, X, AlertCircle } from 'lucide-vue-next';
+import { Zap, Save, X, AlertCircle, LoaderCircle } from 'lucide-vue-next';
 import type { CommandDefinition } from '@/types/models';
 import { useSuggestions } from '@/composables/useSuggestions';
 
-const props = defineProps<{
-  visible: boolean;
-  command?: CommandDefinition | null;
-}>();
+const props = withDefaults(
+  defineProps<{
+    visible: boolean;
+    command?: CommandDefinition | null;
+    loading?: boolean;
+    loadingText?: string;
+  }>(),
+  {
+    command: null,
+    loading: false,
+    loadingText: 'Đang Lưu...',
+  }
+);
 
 const emit = defineEmits<{
   (e: 'save', command: Partial<CommandDefinition>): void;
@@ -339,5 +350,18 @@ const handleSave = () => {
   font-size: 12px;
   font-weight: 500;
   margin-bottom: 12px;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

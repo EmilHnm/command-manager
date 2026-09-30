@@ -250,15 +250,96 @@ fn prepare_conpty_sideload() {
 #[cfg(not(windows))]
 fn prepare_conpty_sideload() {}
 
+/// Describe the xterm.js front end to the child. An app started from a
+/// desktop launcher has no TERM of its own, and zsh/ZLE without one cannot
+/// clear to end of line, so every keystroke redraw leaves the old text behind.
+/// An inherited TERM (tmux, kitty, ...) would describe the wrong terminal.
+pub(crate) fn set_terminal_env(cmd: &mut CommandBuilder) {
+    // CommandBuilder::new() already captures the complete parent environment
+    // and, on Windows, merges the current User/Machine environment from the
+    // registry. Keep this layer generic: tool-specific variables must not be
+    // copied here one by one because new tools would otherwise require code
+    // changes.
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    #[cfg(windows)]
+    preserve_inherited_path(cmd);
+}
+
+#[cfg(windows)]
+fn preserve_inherited_path(cmd: &mut CommandBuilder) {
+    use std::env;
+
+    // portable-pty intentionally rebuilds PATH from the Windows environment
+    // registry. A desktop-launched app can nevertheless be opened from a
+    // process whose PATH contains session-local entries (for example a tool
+    // manager activated by a dev shell). Keep both sources, without knowing
+    // which tools own the entries.
+    let Some(inherited) = env::var_os("PATH") else {
+        return;
+    };
+    let Some(builder_path) = cmd.get_env("PATH").map(std::ffi::OsStr::to_owned) else {
+        return;
+    };
+
+    let mut paths: Vec<_> = env::split_paths(&inherited).collect();
+    for path in env::split_paths(&builder_path) {
+        if !paths.iter().any(|existing| {
+            existing
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&path.to_string_lossy())
+        }) {
+            paths.push(path);
+        }
+    }
+
+    if let Ok(path) = env::join_paths(paths) {
+        cmd.env("PATH", path);
+    }
+}
+
 pub fn spawn_on_slave(
     slave: Box<dyn portable_pty::SlavePty + Send>,
     is_shell: bool,
     execution_string: &str,
 ) -> Result<Box<dyn portable_pty::Child + Send + Sync>> {
-    let cmd = build_command(is_shell, execution_string)?;
+    let mut cmd = build_command(is_shell, execution_string)?;
+    set_terminal_env(&mut cmd);
     slave
         .spawn_command(cmd)
         .map_err(|e| Error::msg(e.to_string()))
+}
+
+/// Spawn a saved shell command using the shell that produced its history.
+/// This prevents a PowerShell command saved from HistoryView from being
+/// replayed through `cmd.exe` on Windows.
+pub fn spawn_shell_on_slave(
+    slave: Box<dyn portable_pty::SlavePty + Send>,
+    shell_kind: Option<&str>,
+    execution_string: &str,
+) -> Result<Box<dyn portable_pty::Child + Send + Sync>> {
+    let mut cmd = build_shell_command(shell_kind, execution_string)?;
+    set_terminal_env(&mut cmd);
+    match slave.spawn_command(cmd) {
+        Ok(child) => Ok(child),
+        Err(first_error) if cfg!(windows) && shell_kind == Some("pwsh") => {
+            // Microsoft Store/App Execution Alias entries can be visible on
+            // PATH while CreateProcessW rejects them. Retry with Windows
+            // PowerShell so a saved pwsh command remains runnable.
+            let mut fallback = build_shell_command(Some("powershell"), execution_string)?;
+            set_terminal_env(&mut fallback);
+            fallback.env(
+                "COMMAND_MANAGER_SHELL_FALLBACK_WARNING",
+                "[Command Manager] pwsh không khả dụng; đang chạy bằng Windows PowerShell 5.1. Một số cú pháp pwsh 7 có thể không tương thích.",
+            );
+            slave.spawn_command(fallback).map_err(|fallback_error| {
+                Error::msg(format!(
+                    "PowerShell spawn failed ({first_error}); fallback failed ({fallback_error})"
+                ))
+            })
+        }
+        Err(error) => Err(Error::msg(error.to_string())),
+    }
 }
 
 pub fn spawn_argv_on_slave(
@@ -268,7 +349,8 @@ pub fn spawn_argv_on_slave(
     if argv.is_empty() {
         return Err(Error::Argv("empty command".into()));
     }
-    let cmd = CommandBuilder::from_argv(argv.iter().map(Into::into).collect());
+    let mut cmd = CommandBuilder::from_argv(argv.iter().map(Into::into).collect());
+    set_terminal_env(&mut cmd);
     slave
         .spawn_command(cmd)
         .map_err(|e| Error::msg(e.to_string()))
@@ -280,7 +362,7 @@ pub fn spawn_argv_on_slave(
 pub fn spawn_interactive_on_slave(
     slave: Box<dyn portable_pty::SlavePty + Send>,
 ) -> Result<Box<dyn portable_pty::Child + Send + Sync>> {
-    Ok(spawn_interactive_with_metadata(slave, None, None, true)?.child)
+    Ok(spawn_interactive_with_metadata(slave, None, None, true, None)?.child)
 }
 
 pub fn spawn_interactive_with_metadata(
@@ -288,12 +370,14 @@ pub fn spawn_interactive_with_metadata(
     integration_root: Option<std::path::PathBuf>,
     preferred_shell: Option<String>,
     load_powershell_profile: bool,
+    cwd: Option<&std::path::Path>,
 ) -> Result<InteractiveShell> {
     shell_integration::spawn(
         slave,
         integration_root.as_deref(),
         preferred_shell.as_deref(),
         load_powershell_profile,
+        cwd,
     )
 }
 
@@ -330,6 +414,35 @@ pub fn build_command(is_shell: bool, execution_string: &str) -> Result<CommandBu
         }
         Ok(cmd)
     }
+}
+
+fn build_shell_command(shell_kind: Option<&str>, execution_string: &str) -> Result<CommandBuilder> {
+    #[cfg(not(windows))]
+    {
+        // Unix replays saved shell commands through `sh -c`. The recorded
+        // shell kind only selects PowerShell versus cmd.exe on Windows.
+        let _ = shell_kind;
+    }
+    #[cfg(windows)]
+    {
+        let kind = shell_kind.unwrap_or("cmd").to_ascii_lowercase();
+        if matches!(kind.as_str(), "pwsh" | "powershell" | "powershell.exe") {
+            let executable = if kind == "pwsh" {
+                "pwsh"
+            } else {
+                "powershell.exe"
+            };
+            let mut command = CommandBuilder::new(executable);
+            // Invoke the environment value as a script block. Passing the
+            // variable expression alone only prints the command text and
+            // incorrectly returns exit code 0.
+            let runner = "if ($env:COMMAND_MANAGER_SHELL_FALLBACK_WARNING) { Write-Output $env:COMMAND_MANAGER_SHELL_FALLBACK_WARNING }; $global:LASTEXITCODE = 0; $cmErrors = $Error.Count; & ([scriptblock]::Create($env:COMMAND_MANAGER_SHELL_COMMAND)); $cmOk = $?; if ($global:LASTEXITCODE) { exit $global:LASTEXITCODE }; if (-not $cmOk -or $Error.Count -gt $cmErrors) { exit 1 }; exit 0";
+            command.args(["-NoLogo", "-NoProfile", "-Command", runner]);
+            command.env("COMMAND_MANAGER_SHELL_COMMAND", execution_string);
+            return Ok(command);
+        }
+    }
+    build_command(true, execution_string)
 }
 
 pub fn pump_reader(
@@ -374,6 +487,72 @@ mod tests {
     use std::time::Duration;
 
     #[cfg(windows)]
+    #[test]
+    fn terminal_env_keeps_inherited_path_entries() {
+        let inherited = std::env::var_os("PATH").expect("test process has PATH");
+        let inherited_first = std::env::split_paths(&inherited)
+            .next()
+            .expect("PATH has an entry");
+        let registry_only = std::path::PathBuf::from(r"C:\command-manager-registry-path");
+        let mut cmd = CommandBuilder::new("cmd.exe");
+        cmd.env(
+            "PATH",
+            std::env::join_paths([registry_only.as_path()]).unwrap(),
+        );
+
+        preserve_inherited_path(&mut cmd);
+
+        let paths: Vec<_> = std::env::split_paths(cmd.get_env("PATH").unwrap()).collect();
+        assert!(paths.contains(&inherited_first));
+        assert!(paths.contains(&registry_only));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires a local pnpm installation and persisted VOLTA_HOME"]
+    fn persisted_volta_runs_pnpm_in_pty_without_inherited_home() {
+        let (pty, slave) = PtySession::open(100, 30, 64 * 1024).unwrap();
+        let mut cmd = CommandBuilder::new("cmd.exe");
+        cmd.args(["/D", "/C", "pnpm --version"]);
+        // Run in a test process without inherited tool homes to verify that
+        // CommandBuilder recovers the persisted settings before spawning.
+        set_terminal_env(&mut cmd);
+        assert!(cmd.get_env("VOLTA_HOME").is_some());
+        let child = slave.spawn_command(cmd).unwrap();
+        let mut guard = ChildGuard(Some(child));
+        let reader = pty.clone_reader().unwrap();
+        let buffer = Arc::clone(&pty.buffer);
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        std::thread::spawn(move || {
+            pump_reader(reader, buffer, "pnpm-env-probe".into(), IpcPipe::new(tx))
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some(status) = guard.0.as_mut().unwrap().try_wait().unwrap() {
+                assert!(
+                    status.success(),
+                    "pnpm failed: {}",
+                    String::from_utf8_lossy(&pty.snapshot().unwrap())
+                );
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "pnpm probe timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let version = regex::Regex::new(r"\b\d+\.\d+\.\d+\b").unwrap();
+        for _ in 0..40 {
+            if version.is_match(&String::from_utf8_lossy(&pty.snapshot().unwrap())) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!(
+            "pnpm produced no version: {}",
+            String::from_utf8_lossy(&pty.snapshot().unwrap())
+        );
+    }
+
+    #[cfg(windows)]
     struct ChildGuard(Option<Box<dyn portable_pty::Child + Send + Sync>>);
 
     #[cfg(windows)]
@@ -400,7 +579,9 @@ mod tests {
         let prompt = &text[content_start..content_start + end_relative];
         assert!(
             !prompt.is_empty()
-                && (prompt.contains('>') || prompt.contains('$') || prompt.contains("PS ")),
+                // zsh's default prompt ends in `%#`, drawn as `%` or `#`.
+                && (['>', '$', '%', '#'].iter().any(|c| prompt.contains(*c))
+                    || prompt.contains("PS ")),
             "{shell} A-B marker range did not contain the visible prompt: {prompt:?}"
         );
     }
@@ -477,7 +658,9 @@ mod tests {
         let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
         let run_event_id = "test-interactive-shell".to_string();
-        let mut child = spawn_interactive_on_slave(slave).expect("spawn shell");
+        let shell =
+            spawn_interactive_with_metadata(slave, None, None, false, None).expect("spawn shell");
+        let mut child = shell.child;
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
         std::thread::spawn(move || {
@@ -524,11 +707,51 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn interactive_shell_starts_in_the_requested_cwd() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().canonicalize().expect("canonical cwd");
+        let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
+        let mut shell = spawn_interactive_with_metadata(
+            slave,
+            None,
+            Some(String::from("bash")),
+            true,
+            Some(&cwd),
+        )
+        .expect("spawn shell");
+        let reader = pty.clone_reader().expect("clone pty reader");
+        let buffer = Arc::clone(&pty.buffer);
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        std::thread::spawn(move || {
+            pump_reader(reader, buffer, "test-cwd".into(), IpcPipe::new(tx));
+        });
+
+        let marker = format!("\x1b]633;P;Cwd={}", cwd.display());
+        let mut found = false;
+        for _ in 0..200 {
+            let snapshot = pty.snapshot().expect("read pty buffer");
+            if String::from_utf8_lossy(&snapshot).contains(&marker) {
+                found = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = shell.child.kill();
+        let _ = shell.child.wait();
+        assert!(
+            found,
+            "shell did not report {cwd:?}: {:?}",
+            String::from_utf8_lossy(&pty.snapshot().expect("snapshot"))
+        );
+    }
+
     #[test]
     fn interactive_shell_tracker_records_a_level_one_command() {
         let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
         let mut shell =
-            spawn_interactive_with_metadata(slave, None, None, true).expect("spawn shell");
+            spawn_interactive_with_metadata(slave, None, None, true, None).expect("spawn shell");
         let Some(nonce) = shell.nonce.clone() else {
             let _ = shell.child.kill();
             let _ = shell.child.wait();
@@ -646,6 +869,41 @@ mod tests {
 
     #[cfg(not(windows))]
     #[test]
+    fn children_see_an_xterm_term_even_when_the_app_has_none() {
+        let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
+        let mut child = spawn_on_slave(
+            slave,
+            true,
+            "printf 'CM_TERM=%s/%s\\n' \"$TERM\" \"$COLORTERM\"",
+        )
+        .expect("spawn shell command");
+        let reader = pty.clone_reader().expect("clone pty reader");
+        let buffer = Arc::clone(&pty.buffer);
+        std::thread::spawn(move || {
+            let (tx, _rx) = tokio::sync::mpsc::channel(8);
+            pump_reader(reader, buffer, "test-term-env".into(), IpcPipe::new(tx));
+        });
+        child.wait().expect("wait for shell command");
+        let expected = b"CM_TERM=xterm-256color/truecolor";
+        for _ in 0..40 {
+            if pty
+                .snapshot()
+                .expect("read pty buffer")
+                .windows(expected.len())
+                .any(|window| window == expected)
+            {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!(
+            "TERM was not set for the child: {:?}",
+            String::from_utf8_lossy(&pty.snapshot().expect("snapshot"))
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
     fn unix_shells_emit_integration_markers_and_accept_input() {
         let shells = [
             ("bash", shell_integration::ShellKind::Bash, 1),
@@ -667,7 +925,7 @@ mod tests {
             tested += 1;
             let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
             let mut shell =
-                spawn_interactive_with_metadata(slave, None, Some(name.to_string()), true)
+                spawn_interactive_with_metadata(slave, None, Some(name.to_string()), true, None)
                     .expect("spawn unix shell");
             let reader = pty.clone_reader().expect("clone pty reader");
             let buffer = Arc::clone(&pty.buffer);
@@ -695,7 +953,11 @@ mod tests {
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            assert!(found_prompt, "{name} did not emit the B prompt marker");
+            assert!(
+                found_prompt,
+                "{name} did not emit the B prompt marker: {:?}",
+                String::from_utf8_lossy(&pty.snapshot().expect("snapshot"))
+            );
             assert_prompt_marker_wraps_visible_prompt(&pty.snapshot().expect("snapshot"), name);
 
             pty.write(b"printf 'CM_UNIX_SHELL_TEST\\n'\n")
@@ -760,7 +1022,7 @@ mod tests {
     fn cmd_preference_emits_prompt_markers_and_uses_level_two_history() {
         let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
         let mut shell =
-            spawn_interactive_with_metadata(slave, None, Some(String::from("cmd")), true)
+            spawn_interactive_with_metadata(slave, None, Some(String::from("cmd")), true, None)
                 .expect("spawn cmd shell");
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
@@ -916,9 +1178,14 @@ mod tests {
             return;
         }
         let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
-        let mut shell =
-            spawn_interactive_with_metadata(slave, None, Some(String::from("powershell")), true)
-                .expect("spawn Windows PowerShell");
+        let mut shell = spawn_interactive_with_metadata(
+            slave,
+            None,
+            Some(String::from("powershell")),
+            true,
+            None,
+        )
+        .expect("spawn Windows PowerShell");
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
@@ -993,7 +1260,7 @@ mod tests {
         }
         let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
         let mut shell =
-            spawn_interactive_with_metadata(slave, None, Some(String::from("pwsh")), false)
+            spawn_interactive_with_metadata(slave, None, Some(String::from("pwsh")), false, None)
                 .expect("spawn pwsh without profile");
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
@@ -1022,8 +1289,57 @@ mod tests {
         let _ = shell.child.wait();
         let prompt = prompt.expect("pwsh without profile did not emit an A..B prompt");
         assert!(
-            prompt.contains("PS ") && prompt.trim_end().ends_with('>'),
-            "profile-free pwsh should use the built-in prompt: {prompt:?}"
+            prompt.trim_end().ends_with('>'),
+            "profile-free pwsh should emit a usable built-in prompt: {prompt:?}"
         );
+        assert!(
+            !prompt.to_ascii_lowercase().contains("oh-my-posh")
+                && !prompt.to_ascii_lowercase().contains("starship"),
+            "-NoProfile shell must not load a profile prompt theme: {prompt:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_saved_command_executes_and_propagates_exit_code() {
+        if std::process::Command::new("where.exe")
+            .arg("pwsh")
+            .status()
+            .map(|status| !status.success())
+            .unwrap_or(true)
+        {
+            return;
+        }
+        let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
+        let mut child = spawn_shell_on_slave(
+            slave,
+            Some("pwsh"),
+            r#"Write-Output ("RAN-" + (1+1)); exit 7"#,
+        )
+        .expect("spawn saved PowerShell command");
+        let reader = pty.clone_reader().expect("clone pty reader");
+        let buffer = Arc::clone(&pty.buffer);
+        std::thread::spawn(move || {
+            let (tx, _rx) = tokio::sync::mpsc::channel(8);
+            pump_reader(reader, buffer, "test-pwsh-command".into(), IpcPipe::new(tx));
+        });
+        let status = child.wait().expect("wait for saved PowerShell command");
+        let mut snapshot = Vec::new();
+        for _ in 0..40 {
+            snapshot = pty.snapshot().expect("snapshot output");
+            if snapshot
+                .windows(b"RAN-2".len())
+                .any(|window| window == b"RAN-2")
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let output = String::from_utf8_lossy(&snapshot);
+        assert!(
+            output.contains("RAN-2"),
+            "saved PowerShell command did not execute: {output:?}"
+        );
+        assert_eq!(status.exit_code(), 7);
     }
 }

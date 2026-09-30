@@ -22,7 +22,7 @@
             <p class="modal-subtitle">Command Manager Desktop</p>
           </div>
         </div>
-        <button class="close-icon-btn" title="Hủy bỏ (Esc)" @click="$emit('cancel')">
+        <button class="close-icon-btn" :disabled="loading" title="Hủy bỏ (Esc)" @click="!loading && $emit('cancel')">
           <X :size="16" />
         </button>
       </div>
@@ -72,14 +72,15 @@
 
       <!-- Footer Actions -->
       <div class="modal-footer">
-        <button class="btn btn-ghost" @click="$emit('cancel')">
+        <button class="btn btn-ghost" :disabled="loading" @click="!loading && $emit('cancel')">
           Hủy Bỏ (Esc)
         </button>
 
         <button
           class="btn btn-secondary tray-action-btn"
+          :disabled="loading"
           title="Thu nhỏ ứng dụng xuống System Tray và tiếp tục chạy nền"
-          @click="$emit('hide-tray')"
+          @click="!loading && $emit('hide-tray')"
         >
           <PanelTopClose :size="14" />
           <span>Ẩn Xuống Khay</span>
@@ -87,10 +88,12 @@
 
         <button
           class="btn btn-danger exit-action-btn"
-          @click="$emit('confirm')"
+          :disabled="loading"
+          @click="!loading && $emit('confirm')"
         >
-          <LogOut :size="14" />
-          <span>{{ runningList.length > 0 ? 'Dừng & Thoát' : 'Thoát Ứng Dụng' }}</span>
+          <LoaderCircle v-if="loading" :size="14" class="spin" />
+          <LogOut v-else :size="14" />
+          <span>{{ loading ? loadingText : (runningList.length > 0 ? 'Dừng & Thoát' : 'Thoát Ứng Dụng') }}</span>
         </button>
       </div>
     </div>
@@ -99,13 +102,21 @@
 
 <script setup lang="ts">
 import { computed, watch, onMounted, onUnmounted } from 'vue';
-import { AlertTriangle, AlertCircle, LogOut, PanelTopClose, X } from 'lucide-vue-next';
+import { AlertTriangle, AlertCircle, LogOut, PanelTopClose, X, LoaderCircle } from 'lucide-vue-next';
 import type { ActiveProcessInfo } from '@/types/models';
 
-const props = defineProps<{
-  visible: boolean;
-  activeProcesses?: Map<number, ActiveProcessInfo>;
-}>();
+const props = withDefaults(
+  defineProps<{
+    visible: boolean;
+    activeProcesses?: Map<number, ActiveProcessInfo>;
+    loading?: boolean;
+    loadingText?: string;
+  }>(),
+  {
+    loading: false,
+    loadingText: 'Đang thoát...',
+  }
+);
 
 const emit = defineEmits<{
   (e: 'confirm'): void;
@@ -121,7 +132,7 @@ const runningList = computed(() => {
 });
 
 const handleKeydown = (e: KeyboardEvent) => {
-  if (!props.visible) return;
+  if (!props.visible || props.loading) return;
   if (e.key === 'Escape') {
     e.preventDefault();
     emit('cancel');
@@ -409,6 +420,18 @@ onUnmounted(() => {
   to {
     opacity: 1;
     transform: scale(1) translateY(0);
+  }
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 </style>

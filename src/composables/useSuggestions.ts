@@ -13,7 +13,9 @@ export function useSuggestions(onChanged?: () => void) {
   const loadHistory = async () => {
     const generation = ++loadGeneration;
     const [rows, commands, templates] = await Promise.all([
-      ipcClient.listCommandHistory('', 500).catch(() => [] as CommandHistory[]),
+      // Match the backend clamp so imported OS history is not cut off at the
+      // newest few hundred rows.
+      ipcClient.listCommandHistory('', 10_000).catch(() => [] as CommandHistory[]),
       ipcClient.listCommands().catch(() => [] as CommandDefinition[]),
       isTauriRuntime()
         ? ipcClient.listTemplates().catch(() => [] as CommandTemplate[])
@@ -44,7 +46,9 @@ export function useSuggestions(onChanged?: () => void) {
       })),
     ];
     if (disposed || generation !== loadGeneration) return rows;
-    const merged = [...rows, ...staticRows];
+    // Lines typed with a non-breaking space for a word separator failed in the
+    // shell; suggesting them only repeats the error.
+    const merged = [...rows, ...staticRows].filter((row) => !row.command_line.includes('\u00a0'));
     const unique = new Map<string, CommandHistory>();
     for (const row of merged) unique.set(`${row.command_line}\n${row.shell_kind}`, row);
     history.value = [...unique.values()];

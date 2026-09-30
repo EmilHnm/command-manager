@@ -3,7 +3,7 @@
     <!-- Pane Toolbar -->
     <div class="pane-toolbar">
       <div class="toolbar-left">
-        <span class="cmd-badge" :class="processStatus">
+        <span class="cmd-badge" :class="processStatus" :title="commandName">
           <span class="status-dot" :class="{ active: processStatus === 'running' }" />
           {{ commandName }}<span v-if="commandId > 0"> (ID: #{{ commandId }})</span>
         </span>
@@ -34,10 +34,12 @@
           v-else
           class="btn btn-primary btn-sm"
           title="Khởi động lại lệnh"
+          :disabled="restarting"
           @click="$emit('restart-process', commandId)"
         >
-          <RotateCw :size="12" />
-          <span>Khởi Động Lại</span>
+          <LoaderCircle v-if="restarting" :size="12" class="spin" />
+          <RotateCw v-else :size="12" />
+          <span>{{ restarting ? 'Đang Khởi Động...' : 'Khởi Động Lại' }}</span>
         </button>
       </div>
     </div>
@@ -67,6 +69,27 @@
         <span v-if="suggestionItems.length === 0" class="suggestion-empty">Chưa có lịch sử phù hợp</span>
       </div>
     </div>
+
+    <!-- Link Hover Tooltip (Ctrl+Click hint) -->
+    <Teleport to="body">
+      <div
+        v-if="linkTooltip.visible"
+        class="terminal-link-tooltip"
+        :class="{ 'ctrl-needed': linkTooltip.ctrlNeeded, 'ctrl-active': isCtrlPressed }"
+        :style="tooltipStyle"
+      >
+        <ExternalLink :size="12" class="link-icon" />
+        <span v-if="linkTooltip.ctrlNeeded" class="link-hint-text">
+          Nhấn giữ <kbd class="key-badge warning">{{ isMac ? '⌘ Cmd' : 'Ctrl' }}</kbd> và click để mở
+        </span>
+        <span v-else-if="isCtrlPressed" class="link-hint-text">
+          Click để mở: <span class="link-url">{{ linkTooltip.url }}</span>
+        </span>
+        <span v-else class="link-hint-text">
+          <kbd class="key-badge">{{ isMac ? '⌘ Cmd' : 'Ctrl' }}</kbd> + click để mở liên kết
+        </span>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -74,7 +97,8 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { RefreshCw, Trash2, Square, RotateCw } from 'lucide-vue-next';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { RefreshCw, Trash2, Square, RotateCw, LoaderCircle, ExternalLink } from 'lucide-vue-next';
 import { usePtyStream } from '@/composables/usePtyStream';
 import type { ProcessLifecycleStatus } from '@/types/models';
 import type { CommandHistory } from '@/types/models';
@@ -93,11 +117,13 @@ const props = withDefaults(
     ghostTextEnabled?: boolean;
     fontFamily?: string;
     fontSize?: number;
+    restarting?: boolean;
   }>(),
   {
     processStatus: 'idle',
     fontFamily: 'JetBrains Mono',
     fontSize: 13,
+    restarting: false,
   }
 );
 
@@ -133,9 +159,11 @@ watch(() => [props.fontFamily, props.fontSize], async () => {
   updateSuggestionPosition();
 });
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'stop-process', id: number): void;
   (e: 'restart-process', id: number): void;
+  (e: 'cwd-change', cwd: string): void;
+  (e: 'title-change', title: string): void;
 }>();
 
 const terminalElement = ref<HTMLDivElement | null>(null);
@@ -172,9 +200,9 @@ let currentCwd: string | undefined;
 let shellPhase: 'prompt' | 'input' | 'running' = 'prompt';
 let bracketedPaste = false;
 let composing = false;
-// Fallback cho level 2: trong browser mock hoặc khi shell chưa kịp echo,
-// marker B có thể chưa chứa dòng vừa gõ lúc onData nhận Enter. Shadow này
-// chỉ dùng khi marker không đọc được; native backend vẫn validate lại lệnh.
+// Level 2 fallback: in browser mock or before the shell echoes back,
+// marker B might not yet contain the line just typed when onData receives Enter.
+// This shadow buffer is only used when the marker cannot be read; the native backend re-validates the command.
 let inputShadow = '';
 let inputScanTimer: number | undefined;
 let compositionTarget: HTMLTextAreaElement | null = null;
@@ -193,13 +221,91 @@ let historyNavigationOriginal = '';
 let historyNavigationSent = '';
 let historyNavigationRows: CommandHistory[] = [];
 
+const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+const linkTooltip = ref<{
+  visible: boolean;
+  url: string;
+  x: number;
+  y: number;
+  ctrlNeeded: boolean;
+}>({
+  visible: false,
+  url: '',
+  x: 0,
+  y: 0,
+  ctrlNeeded: false,
+});
+const isCtrlPressed = ref(false);
+let ctrlNoticeTimer: number | undefined;
+let webLinksAddon: WebLinksAddon | null = null;
+
+const tooltipStyle = computed(() => {
+  const x = Math.min(Math.max(linkTooltip.value.x, 120), window.innerWidth - 120);
+  const y = Math.max(linkTooltip.value.y - 12, 32);
+  return {
+    left: `${x}px`,
+    top: `${y}px`,
+  };
+});
+
+const showLinkTooltip = (event: MouseEvent, text: string) => {
+  if (ctrlNoticeTimer) clearTimeout(ctrlNoticeTimer);
+  isCtrlPressed.value = event.ctrlKey || event.metaKey;
+  linkTooltip.value = {
+    visible: true,
+    url: text,
+    x: event.clientX,
+    y: event.clientY,
+    ctrlNeeded: false,
+  };
+};
+
+const hideLinkTooltip = () => {
+  if (ctrlNoticeTimer) clearTimeout(ctrlNoticeTimer);
+  linkTooltip.value.visible = false;
+  linkTooltip.value.ctrlNeeded = false;
+};
+
+const handleLinkClick = (event: MouseEvent, uri: string) => {
+  if (event.ctrlKey || event.metaKey) {
+    hideLinkTooltip();
+    void ipcClient.openUrl(uri);
+  } else {
+    if (ctrlNoticeTimer) clearTimeout(ctrlNoticeTimer);
+    linkTooltip.value = {
+      visible: true,
+      url: uri,
+      x: event.clientX,
+      y: event.clientY,
+      ctrlNeeded: true,
+    };
+    ctrlNoticeTimer = window.setTimeout(() => {
+      if (linkTooltip.value.ctrlNeeded) {
+        linkTooltip.value.ctrlNeeded = false;
+      }
+    }, 2000);
+  }
+};
+
+const handleWindowKeyDown = (e: KeyboardEvent) => {
+  if (e.key === 'Control' || e.key === 'Meta') {
+    isCtrlPressed.value = true;
+  }
+};
+
+const handleWindowKeyUp = (e: KeyboardEvent) => {
+  if (e.key === 'Control' || e.key === 'Meta') {
+    isCtrlPressed.value = false;
+  }
+};
+
 onMounted(async () => {
   if (!terminalElement.value) return;
 
   await loadTerminalFonts();
   if (!terminalElement.value) return;
 
-  // Khởi tạo xterm.js với Dark Theme đồng bộ primary #744791
+  // Initialize xterm.js with dark theme matching brand palette
   term = new Terminal({
     fontFamily: terminalFontFamily.value,
     fontSize: props.fontSize,
@@ -235,9 +341,27 @@ onMounted(async () => {
 
   fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+
+  webLinksAddon = new WebLinksAddon(
+    (event: MouseEvent, uri: string) => {
+      handleLinkClick(event, uri);
+    },
+    {
+      hover: (event: MouseEvent, text: string) => {
+        showLinkTooltip(event, text);
+      },
+      leave: () => {
+        hideLinkTooltip();
+      },
+    },
+  );
+  term.loadAddon(webLinksAddon);
+
   term.open(terminalElement.value);
   fitAddon.fit();
   term.focus();
+  window.addEventListener('keydown', handleWindowKeyDown, { passive: true });
+  window.addEventListener('keyup', handleWindowKeyUp, { passive: true });
   window.setTimeout(() => {
     term?.focus();
   }, 50);
@@ -265,6 +389,11 @@ onMounted(async () => {
   // actually drew. Refreshing on a timer after a keystroke could read the
   // line before the shell echoed it and paint a stale suggestion over it.
   writeParsedDisposable = term.onWriteParsed(() => scheduleSuggestionRefresh());
+  // Programs (claude, vim, oh-my-zsh's termsupport…) set the window title
+  // with OSC 0/2; the tab shows it the way a desktop terminal would.
+  term.onTitleChange((title) => {
+    emit('title-change', title.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, 200));
+  });
 
   await loadHistory();
 
@@ -297,6 +426,7 @@ onMounted(async () => {
       shellPhase = 'prompt';
     } else if (kind === 'P' && payload.startsWith('Cwd=')) {
       currentCwd = decodeOsc(payload.slice(4));
+      emit('cwd-change', currentCwd);
     }
     return true;
   });
@@ -308,6 +438,12 @@ onMounted(async () => {
   // onKey for an event it is told not to process.
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true;
+    // Ctrl+N opens a new terminal (handled by DockHost on window); keep it
+    // from reaching the shell as ^N.
+    if (event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey
+      && event.key.toLowerCase() === 'n') {
+      return false;
+    }
     if (event.ctrlKey && (event.code === 'Space' || event.key === ' ')) {
       event.preventDefault();
       event.stopPropagation();
@@ -379,8 +515,14 @@ onMounted(async () => {
     return true;
   });
 
-  // Gửi input bàn phím tới Rust PTY
-  term.onData((data) => {
+  // Forward keyboard input to Rust PTY
+  term.onData((typed) => {
+    // WebKitGTK can hand over a space committed by an IME (ibus) as U+00A0.
+    // No shell splits words on it ("cd\u00a0/x" is one word), so typed input
+    // gets a plain space; pasted text is kept as is.
+    const data = bracketedPaste || typed.includes('\x1b[200~')
+      ? typed
+      : typed.replace(/\u00a0/g, ' ');
     // ConPTY focus reporting is terminal protocol traffic, not user editing.
     // Do not lose the ↑/↓ position when the app window is refocused.
     if (!isFocusReport(data)) resetHistoryNavigation();
@@ -422,17 +564,17 @@ onMounted(async () => {
     });
   });
 
-  // Đăng ký nhận luồng byte từ PTY
+  // Subscribe to PTY byte stream
   unsubscribePty = subscribePty(props.commandId, (chunk) => {
     term?.write(chunk);
   });
 
-  // Xả dữ liệu gần nhất từ Ring Buffer in-memory
+  // Replay recent output from in-memory ring buffer
   await handleReattach();
   if (!terminalElement.value || !term) return;
   focusTerminal();
 
-  // Tự động căn kích thước và đồng bộ cols/rows với PTY
+  // Auto-fit terminal and sync cols/rows with PTY
   resizeObserver = new ResizeObserver(() => {
     if (fitAddon && term) {
       fitAddon.fit();
@@ -446,6 +588,10 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleWindowKeyDown);
+  window.removeEventListener('keyup', handleWindowKeyUp);
+  if (ctrlNoticeTimer) clearTimeout(ctrlNoticeTimer);
+  webLinksAddon?.dispose();
   if (inputScanTimer) clearTimeout(inputScanTimer);
   if (compositionTarget) {
     if (onCompositionStart) compositionTarget.removeEventListener('compositionstart', onCompositionStart);
@@ -512,7 +658,12 @@ const readInputFromMarker = (readToLineEnd = false) => {
     const text = buffer.getLine(line)?.translateToString(true, startColumn, endColumn) || '';
     lines.push(text);
   }
-  return lines.join('').trimEnd();
+  // Up to the cursor every cell is typed input, trailing spaces included:
+  // trimming "cd " to "cd" made accepting the suggestion for "cd /x" send
+  // " /x" after the typed space. Reading to the line end picks up blank
+  // cells past the input, so only that form is trimmed.
+  const input = lines.join('');
+  return readToLineEnd ? input.trimEnd() : input;
 };
 
 const currentInput = () => {
@@ -907,4 +1058,85 @@ const handleReattach = async () => {
 .suggestion-item small { color: var(--text-muted); white-space: nowrap; }
 .suggestion-empty { display: block; padding: 8px; color: var(--text-muted); font-size: 12px; }
 
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.terminal-link-tooltip {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  background: #171b27;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  backdrop-filter: blur(10px);
+  color: #f1f5f9;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+  max-width: 450px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transform: translate(-50%, -100%);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+  user-select: none;
+}
+
+.terminal-link-tooltip.ctrl-active {
+  border-color: #a855f7;
+  background: #1e1932;
+}
+
+.terminal-link-tooltip.ctrl-needed {
+  border-color: #f59e0b;
+  background: #271f14;
+  animation: pulse-border 0.3s ease;
+}
+
+.key-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-family: inherit;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  color: #e2e8f0;
+}
+
+.key-badge.warning {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.link-url {
+  color: #38bdf8;
+  text-decoration: underline;
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+@keyframes pulse-border {
+  0% { transform: translate(-50%, -100%) scale(0.96); }
+  50% { transform: translate(-50%, -100%) scale(1.03); }
+  100% { transform: translate(-50%, -100%) scale(1); }
+}
 </style>

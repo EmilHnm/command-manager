@@ -4,7 +4,7 @@
     <div class="titlebar-brand" data-tauri-drag-region>
       <img src="/logo.svg" class="brand-logo" alt="Command Manager Logo" />
       <span class="brand-text">Command Manager</span>
-      <span class="version-tag">v2.1</span>
+      <span class="version-tag">{{ APP_VERSION_TAG }}</span>
       
       <!-- Daemon Running Status Indicator Pill (from Stitch) -->
       <div
@@ -53,6 +53,7 @@ import { useRouter } from 'vue-router';
 import { Search, Minus, PanelTopClose, Square, X } from 'lucide-vue-next';
 import { useAppLifecycle } from '@/composables/useAppLifecycle';
 import { useRunSession } from '@/composables/useRunSession';
+import { APP_VERSION_TAG } from '@/config/version';
 
 defineEmits<{
   (e: 'open-palette'): void;

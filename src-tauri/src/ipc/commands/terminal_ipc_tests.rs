@@ -150,6 +150,7 @@ fn frontend_snake_case_payload_creates_command() {
                 "name": "IPC create test",
                 "execution_string": "echo test",
                 "is_shell": false,
+                "shell_kind": null,
                 "confirmed": true
             })),
             headers: Default::default(),

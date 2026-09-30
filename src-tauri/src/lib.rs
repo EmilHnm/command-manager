@@ -3,9 +3,12 @@ pub mod backup;
 pub mod clock;
 pub mod db;
 pub mod error;
+pub mod os_history;
 pub mod process;
 pub mod pty;
 pub mod template;
+#[cfg(windows)]
+pub mod windows_launch;
 
 #[cfg(feature = "desktop")]
 mod app;
@@ -150,6 +153,8 @@ mod desktop {
                 ipc::commands::history_list,
                 ipc::commands::history_delete,
                 ipc::commands::history_clear,
+                ipc::commands::history_os_sources,
+                ipc::commands::history_import_os,
                 ipc::commands::history_record_typed,
                 ipc::commands::process_list,
                 ipc::commands::session_start,
@@ -162,6 +167,7 @@ mod desktop {
                 ipc::commands::pty_reattach,
                 ipc::commands::backup_export,
                 ipc::commands::backup_info,
+                ipc::commands::backup_verify_bytes,
                 ipc::commands::backup_import,
                 ipc::commands::backup_import_bytes,
                 ipc::commands::settings_get,
@@ -170,6 +176,7 @@ mod desktop {
                 ipc::commands::autostart_os_set,
                 ipc::commands::app_hide,
                 ipc::commands::app_shutdown,
+                ipc::commands::open_url,
             ])
             .run(tauri::generate_context!())
             .expect("error while running Command Manager");

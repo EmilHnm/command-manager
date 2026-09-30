@@ -92,6 +92,14 @@ pub fn import(db: &db::Db, processes: &ProcessManager, src: &Path, confirmed: bo
     }
 }
 
+pub fn inspect_integrity(path: &Path) -> Result<bool> {
+    db::pool::integrity_ok(path)
+}
+
+pub fn migrate_staged(path: &Path) -> Result<()> {
+    db::pool::migrate_file(path)
+}
+
 fn rollback_path(db_path: &Path) -> PathBuf {
     db_path.with_extension("db.rollback")
 }

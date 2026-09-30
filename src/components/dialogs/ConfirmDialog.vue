@@ -13,7 +13,7 @@
           </div>
           <div>
             <div class="modal-title">{{ title }}</div>
-            <div class="modal-subtitle">MOD-13 • Security Authorization Gate</div>
+            <div class="modal-subtitle">{{ subtitle }}</div>
           </div>
         </div>
         <button class="close-btn" title="Hủy bỏ (Esc)" @click="$emit('cancel')">
@@ -57,42 +57,57 @@
 
       <!-- Footer -->
       <div class="modal-footer">
-        <button class="btn-ghost" @click="$emit('cancel')">
-          Hủy Bỏ (Esc)
-        </button>
-        <button
-          class="btn-action"
-          :class="danger ? 'btn-danger' : 'btn-primary'"
-          :disabled="requireCheckbox && !confirmedCommitment"
-          @click="handleConfirm"
-        >
-          <Trash2 v-if="danger" :size="15" />
-          <Check v-else :size="15" />
-          <span>{{ confirmText }}</span>
-        </button>
+        <div class="keyboard-hints">
+          <span>⌨️</span>
+          <span>Esc: Hủy</span>
+          <span class="hint-divider">|</span>
+          <span>Enter: Xác nhận</span>
+        </div>
+        <div class="footer-actions">
+          <button class="btn-ghost" :disabled="loading" @click="!loading && $emit('cancel')">
+            Hủy Bỏ (Esc)
+          </button>
+          <button
+            class="btn-action"
+            :class="danger ? 'btn-danger' : 'btn-primary'"
+            :disabled="(requireCheckbox && !confirmedCommitment) || loading"
+            @click="handleConfirm"
+          >
+            <LoaderCircle v-if="loading" :size="15" class="spin" />
+            <Trash2 v-else-if="danger" :size="15" />
+            <Check v-else :size="15" />
+            <span>{{ loading ? loadingText : confirmText }}</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
-import { ShieldAlert, AlertTriangle, AlertOctagon, Lock, X, Trash2, Check } from 'lucide-vue-next';
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue';
+import { ShieldAlert, AlertTriangle, AlertOctagon, Lock, X, Trash2, Check, LoaderCircle } from 'lucide-vue-next';
 
 const props = withDefaults(
   defineProps<{
     visible: boolean;
     title?: string;
+    subtitle?: string;
     message: string;
     confirmText?: string;
+    loadingText?: string;
     danger?: boolean;
+    loading?: boolean;
     privilegedNotice?: boolean;
     requireCheckbox?: boolean;
   }>(),
   {
     title: 'Xác Nhận Thao Tác',
+    subtitle: 'MOD-13 • Security Authorization Gate',
     confirmText: 'Xác Nhận',
+    loadingText: 'Đang xử lý...',
     danger: false,
+    loading: false,
     privilegedNotice: false,
     requireCheckbox: false,
   }
@@ -115,9 +130,27 @@ watch(
 );
 
 const handleConfirm = () => {
+  if (props.loading) return;
   if (props.requireCheckbox && !confirmedCommitment.value) return;
   emit('confirm');
 };
+
+const handleGlobalKeydown = (event: KeyboardEvent) => {
+  if (!props.visible || props.loading) return;
+  if (event.key === 'Escape') {
+    emit('cancel');
+  } else if (event.key === 'Enter') {
+    handleConfirm();
+  }
+};
+
+onMounted(() => {
+  window.addEventListener('keydown', handleGlobalKeydown);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleGlobalKeydown);
+});
 </script>
 
 <style scoped>
@@ -310,6 +343,26 @@ const handleConfirm = () => {
   justify-content: space-between;
 }
 
+.keyboard-hints {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.hint-divider {
+  margin: 0 2px;
+  color: var(--border-subtle);
+}
+
+.footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .btn-action {
   padding: 8px 16px;
   font-size: 12px;
@@ -355,7 +408,31 @@ const handleConfirm = () => {
   cursor: pointer;
 }
 
-.btn-ghost:hover {
+.btn-ghost:hover:not(:disabled) {
   color: var(--text-primary);
+}
+
+.btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

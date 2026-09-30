@@ -8,8 +8,8 @@
 
 ## 0. Chốt Kiến Trúc & Quyết Định Kỹ Thuật (Pre-Code Decisions)
 
-- [~] **Chốt Frontend Stack:** Đã chọn **Vue 3 + TypeScript + Vite + dockview-vue** (kèm bộ tab host tuỳ chỉnh tại [DockHost.vue](../src/components/terminal/DockHost.vue) và [XtermPane.vue](../src/components/terminal/XtermPane.vue)). *— Soát 26/09: `dockview-vue` có trong package.json nhưng chưa được import; `DockHost.vue` là tab list tự viết, chỉ dùng CSS dockview.*
-- [x] **Chốt Stack PTY & Đa nền:** Sử dụng crate Rust `portable-pty` v0.8 tại [session.rs](../src-tauri/src/pty/session.rs), hỗ trợ Linux/Unix qua `nix` signals và Windows qua adapter taskkill/process group. *— Soát 26/09: Windows chỉ dùng `taskkill /T`, chưa có Job Object/process group.*
+- [x] **Chốt Frontend Stack:** Vue 3 + TypeScript + Vite; tab host PTY là implementation tùy chỉnh tại [DockHost.vue](../src/components/terminal/DockHost.vue) và [XtermPane.vue](../src/components/terminal/XtermPane.vue). `dockview-vue` vẫn là dependency dự phòng nhưng không phải runtime requirement.
+- [x] **Chốt Stack PTY & Đa nền:** Sử dụng crate Rust `portable-pty` v0.8 tại [session.rs](../src-tauri/src/pty/session.rs), hỗ trợ Linux/Unix qua `nix` signals và Windows qua adapter taskkill/process group kèm Job Object khi hệ điều hành cho phép.
 - [x] **Chốt Chính Sách Backpressure:** Đã triển khai tại [backpressure.rs](../src-tauri/src/pty/backpressure.rs): Ring Buffer in-memory luôn ghi trọn vẹn luồng dữ liệu; IPC pipe dùng kênh không khóa `try_send` với chunk 8KB (drop gói IPC khi UI quá tải, không chặn PTY reader; UI có thể gọi `pty_reattach` để lấy snapshot từ Ring Buffer). *— Soát 26/09: hằng `IPC_CHUNK` khai báo nhưng không dùng; kênh mpsc dung lượng 32.*
 - [x] **Chốt Kích Thước Ring Buffer & Timeout Shutdown:** Mặc định `ring_buffer_bytes = 2097152` (2MB) và `shutdown_timeout_secs = 8` (8 giây) trong SQLite `app_setting` ([001_init.sql](../src-tauri/migrations/001_init.sql)). Cho phép tinh chỉnh từ 1MB/2MB/4MB và 5–15s tại màn hình [SettingsView.vue](../src/views/settings/SettingsView.vue). *— Soát 26/09: `backup/import.rs` hardcode 8s thay vì đọc setting.*
 - [x] **Làm Rõ Trusted Zone:** Lệnh trong cơ sở dữ liệu được định nghĩa là **trusted**, không chạy sandbox. Đã đưa cảnh báo xác nhận vào [RestoreWizard.vue](../src/components/dialogs/RestoreWizard.vue) và cơ chế xác thực quyền thực thi. *— Soát 26/09: chỉ có cảnh báo UI, không có cơ chế xác thực quyền thực thi riêng.*
@@ -21,8 +21,8 @@
 - [x] **Khung ứng dụng Tauri v2:** Rust (Tokio Runtime) tại `src-tauri/` + Frontend TypeScript & Vite tại `src/` (Build & type-check sạch qua `vue-tsc` và `cargo check --features desktop`).
 - [x] **IPC & Capabilities tối thiểu:** Cấu hình quyền hạn tại [default.json](../src-tauri/capabilities/default.json), chỉ mở window, event và autostart; không mở shell hay filesystem tùy tiện ra ngoài WebView. *— Sửa 27/09: frontend gọi `app_shutdown`, backend dọn tiến trình và `app.exit(0)`; không còn gọi `window.destroy()` nên không cần quyền `allow-destroy`.*
 - [x] **Chính sách CSP:** Đã kích hoạt `"csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"` trong [tauri.conf.json](../src-tauri/tauri.conf.json). *— Sửa 27/09: `dangerousDisableAssetCspModification: ["style-src"]` ngăn Tauri tự thêm nonce/hash vào riêng CSS, để `'unsafe-inline'` cho phép xterm tạo CSS con trỏ, kích thước ô và theme lúc chạy trong bản build. CSP và cơ chế bảo vệ script vẫn bật. Đã tái hiện cơ chế chặn CSS bằng Edge headless; `pnpm tauri build --features desktop --no-bundle` đạt; còn QA trực tiếp cửa sổ release.*
-- [~] **SQLite WAL Connection Pool:** Đã triển khai tại [pool.rs](../src-tauri/src/db/pool.rs): 1 Mutex writer duy nhất + 3 Mutex readers, kích hoạt `PRAGMA journal_mode = WAL`, `foreign_keys = ON`, `busy_timeout = 5000ms`. *— Soát 26/09: pragma đúng, mở 3 reader nhưng `read()` chỉ dùng `readers[0]`.*
-- [x] **Kiểm tra Schema Version:** Bảng `schema_version` lưu phiên bản DB hiện hành (**v7** — `SCHEMA_VERSION = 7`, có migration privacy đến `007_history_privacy_patterns.sql`), phục vụ xác thực trước khi Import bản sao lưu.
+- [x] **SQLite WAL Connection Pool:** Đã triển khai tại [pool.rs](../src-tauri/src/db/pool.rs): 1 Mutex writer duy nhất + 3 Mutex readers, kích hoạt `PRAGMA journal_mode = WAL`, `foreign_keys = ON`, `busy_timeout = 5000ms`; `read()` phân phối round-robin qua ba reader.
+- [x] **Kiểm tra Schema Version:** Bảng `schema_version` lưu phiên bản DB hiện hành (**v9** — `SCHEMA_VERSION = 9`, gồm privacy `007`, `command_definition.shell_kind` `008` và `command_group.execution_mode` `009`), phục vụ xác thực trước khi Import bản sao lưu.
 
 ---
 
@@ -46,11 +46,12 @@
 ## 3. Process Manager (Trạng Thái Động In-Memory)
 
 - [x] **Bộ quản lý tiến trình in-memory:** [manager.rs](../src-tauri/src/process/manager.rs) sử dụng `DashMap<String, Arc<Live>>` lưu giữ `pid`, `pty` handle và `RingBuffer`. *— Soát 26/09: đã xử lý race tiến trình thoát trước khi `processes.insert` bằng pending-finished set.*
-- [ ] **Chạy nhóm tuần tự theo `execution_order`:** [commands.rs](../src-tauri/src/ipc/commands.rs) vẫn spawn song song theo thứ tự thành viên; spawn lỗi không còn kẹt session nhưng behavior tuần tự thật vẫn là việc riêng.
+- [x] **Chạy nhóm theo execution mode:** migration `009` thêm `startup` (mặc định: khởi động các member theo `execution_order` nhưng không chờ daemon trước thoát) và `sequential` (chờ exit từng member, dừng ở lỗi/dừng); coordinator kiểm tra session trước mỗi bước.
 - [x] **Điều khiển Start / Stop linh hoạt:**
   - Hỗ trợ dừng theo từng tiến trình (`process_stop`) và dừng theo phiên nhóm (`session_stop`).
+- [x] **Xác nhận dừng process:** sau graceful/force kill, backend kiểm tra liveness thật từ OS; nếu graceful không giải phóng process thì tự chuyển sang force-kill, chỉ trả thành công khi process đã biến mất. UI hiển thị thông báo thành công hoặc giữ process ở trạng thái đang chạy khi không xác nhận được.
 - [x] **Vai trò của trường `pid`:** `pid` chỉ được lưu tạm để chẩn đoán (hiển thị trên giao diện và kiểm toán lịch sử), không dùng để reattach sau khi ứng dụng khởi động lại.
-- [~] **Hợp đồng App-Bound:** Mọi tiến trình con gắn liền với vòng đời của ứng dụng; thoát ứng dụng sẽ dừng toàn bộ tiến trình. *— Soát 26/09: chỉ đúng khi đóng app bình thường; app crash/bị kill thì tiến trình con mồ côi (chưa có PDEATHSIG / Job Object).*
+- [x] **Hợp đồng App-Bound:** Windows gắn child vào Job Object có `KILL_ON_JOB_CLOSE`; các đường dừng bình thường vẫn dùng child killer/process manager. Nếu môi trường đã lồng Job Object và Windows từ chối assignment, app ghi cảnh báo và giữ cleanup thông thường. Assignment diễn ra ngay sau spawn nên vẫn có khe rất ngắn khiến process cháu tạo trước assignment lọt khỏi Job Object; đây là giới hạn đã ghi nhận.
 - [x] **Đóng tab UI ≠ Dừng tiến trình:** Đóng thẻ tab tại [DockHost.vue](../src/components/terminal/DockHost.vue) chỉ ẩn giao diện terminal, tiến trình ở Rust vẫn tiếp tục chạy ngầm và ghi nhận log vào Ring Buffer.
 - [~] **Chính sách dừng duyên dáng (Graceful Shutdown):** *— Sửa 27/09: nút Close và Alt+F4 dùng worker backend, chống shutdown trùng, gửi trạng thái thực qua `app://shutdown-progress`, rồi dừng process và thoát; nút ẩn tray chỉ gọi `app_hide`. Menu tray “Thoát hoàn toàn” cũng dùng worker backend. Windows `terminate_graceful` vẫn fallback `/F` ngay nếu taskkill thường lỗi. Cần QA native khi đóng có terminal/process đang chạy.*
 - [~] **Chạy nền và system tray:** Nút ẩn tray sẽ ẩn cửa sổ và giữ process; Close/Alt+F4 vẫn thoát ứng dụng. Menu tray có Mở lại và Thoát hoàn toàn, click đúp icon để mở lại. Khi bật OS Autostart, plugin truyền cờ `--command-manager-autostart` để app khởi động ẩn trong tray; mở thủ công vẫn hiện cửa sổ. Cần QA native trên Windows sau khi đăng nhập lại.
@@ -58,6 +59,7 @@
   - Giao diện người dùng chặn đóng cửa sổ và hiển thị [ShutdownOverlay.vue](../src/components/dialogs/ShutdownOverlay.vue) (MOD-09).
 - [x] **Adapter nền tảng Windows:** [windows.rs](../src-tauri/src/process/platform/windows.rs) dùng `taskkill` và cờ `/T` để tiêu diệt toàn bộ cây tiến trình con.
 - [~] **Linux `PR_SET_PDEATHSIG` trước `exec`:** Hàm `pdeathsig_pre_exec` đã được hiện thực trong [unix.rs](../src-tauri/src/process/platform/unix.rs). *(Ghi chú: portable-pty 0.8 chưa mở hook pre-exec công khai; cần chuyển hướng sang std::process::Command nếu cần ghim trực tiếp).*
+- [x] **Linux cô lập bộ nhớ theo tiến trình con:** `register_process` ([linux.rs](../src-tauri/src/process/platform/linux.rs)) chuyển mỗi child (terminal, lệnh) sang một transient scope riêng `app-command\x2dmanager-<uuid>.scope` qua D-Bus `StartTransientUnit` của systemd user manager (như `vte-spawn-*.scope` của GNOME Terminal), đặt cùng slice và `BindsTo` scope của app. Nhờ đó systemd-oomd kill riêng terminal ngốn RAM thay vì cả app. Child cũng được tăng `oom_score_adj` thêm 300 (tối đa 1000) để kernel OOM killer ưu tiên chọn child. Không có session bus/systemd user manager thì bỏ qua. Giới hạn: việc chuyển scope chạy nền ngay sau spawn, nên process cháu tạo trước đó vẫn ở lại scope của app.
 
 ---
 
@@ -69,6 +71,7 @@
 - [x] **Đồng bộ kích thước (Resize):** [XtermPane.vue](../src/components/terminal/XtermPane.vue) dùng `ResizeObserver` + `FitAddon` gửi invoke `pty_resize(cols, rows)` cập nhật trực tiếp đến kernel PTY.
 - [x] **Gắn lại Terminal (Reattach Buffer):** Khi mở lại tab đã ẩn, gọi invoke `pty_reattach` để lấy toàn bộ dữ liệu gần đây từ [RingBuffer](../src-tauri/src/pty/buffer.rs) và xả vào màn hình xterm.js.
 - [x] **Terminal shell trống:** Nút `Terminal mới` mở shell tương tác độc lập qua `terminal_open`, không cần tạo command/group và không ghi lịch sử SQLite; vẫn hỗ trợ input, resize, reattach và stop như terminal của command ([DockHost.vue](../src/components/terminal/DockHost.vue), [commands.rs](../src-tauri/src/ipc/commands.rs)).
+- [x] **Đổi tên Tab Terminal thủ công (MOD-14):** Hỗ trợ nháy đúp (`dblclick`) vào tên tab trên Tab Strip để mở modal đổi tên đối với terminal mở thủ công (`isManual: true`); không áp dụng cho terminal của command/group định sẵn. Cập nhật tên tab in-memory mà không làm gián đoạn PTY stream hay Ring Buffer ([DockHost.vue](../src/components/terminal/DockHost.vue), [screens.md](./screens.md#mod-14-hộp-thoại-đổi-tên-terminal-thủ-công-rename-manual-terminal-modal)).
 - [x] **Giới hạn phạm vi Reattach:** Ghi rõ tài liệu: cơ chế Ring Buffer thô hỗ trợ xem lại recent log, không khôi phục trạng thái toàn màn hình chuyên biệt (vim/htop).
 - [x] **Bảo mật bí mật trong PTY:** Tuyệt đối không ghi luồng stream PTY ra đĩa cứng để tránh lộ mật khẩu người dùng nhập vào terminal.
 
@@ -77,34 +80,35 @@
 ## 5. Giao Diện Người Dùng Chuẩn Stitch (Frontend UI - Project 14914224436748087443)
 
 - [x] **Hệ Thống Design Tokens & Typography:** Đồng bộ chuẩn màu tối kỹ thuật (Dark Technical Precision: `#0f1117` base, `#141721` sidebar, `#1a1e2b` surface, `#744791` primary plum/violet, `#4edea3` secondary, `#4cd7f6` tertiary). Tích hợp phông chữ `Inter` (UI Chrome) và `JetBrains Mono` (mọi mã code, tham số argv, PID, exit codes) tại [tokens.css](../src/styles/tokens.css) và [index.html](../index.html). *— Soát 26/09: màu base thực tế là `#0c0e14` (`#0f1117` chỉ là nền pre-boot trong `index.html`).*
-- [~] **SCR-01 Terminal Workspace & Execution Dashboard:** *— Soát 26/09: xem các dòng con.*
-  - [~] Dải ruy băng trạng thái phiên chạy trên đỉnh màn hình (Session Telemetry Ribbon): hiển thị tên phiên/nhóm, ID phiên `#sess-91a`, trạng thái daemon hoạt động, bộ nhớ RAM ước tính, số lượng tiến trình con `2 / 7 active`, nút chạy/dừng toàn bộ nhóm. *— Soát 26/09: ID phiên `sess-91a` hardcode, RAM giả (`192 × running`), tổng tiến trình fallback `7`, nút Chạy Nhóm luôn chạy `groups[0]`.*
-  - [~] Cột điều hướng Explorer bên trái tích hợp thẻ tóm tắt Target Group với nút bấm thao tác nhanh (`Chạy`, `Dừng`), cây tiến trình phân cấp tuần tự hiển thị số thứ tự `01.`, `02.`, thẻ kiểu `argv`/`shell`, chấm trạng thái có hoạt ảnh phát sáng (pulse) khi chạy, và nhãn chẩn đoán PID ([WorkspaceView.vue](../src/views/workspace/WorkspaceView.vue), [GroupTree.vue](../src/components/explorer/GroupTree.vue)). *— Soát 26/09: Target Group luôn là `groups[0]`; số thứ tự thành `010.` từ mục thứ 10; badge ghi `sh` thay vì `shell`; placeholder ghi Ctrl+F nhưng chưa có handler.*
-  - [~] Trình duyệt Terminal tabbed dockview với thanh công cụ điều khiển PTY: Reattach, Xóa màn hình (Clear), Khởi động lại (Restart), Dừng lệnh ([DockHost.vue](../src/components/terminal/DockHost.vue), [XtermPane.vue](../src/components/terminal/XtermPane.vue)). *— Soát 26/09: không dùng dockview; nút **Khởi động lại** chỉ `console.log` (DockHost.vue).*
-- [~] **SCR-02 Thư viện Lệnh (Command Registry):** *— Soát 26/09: xem các dòng con.*
+- [x] **SCR-01 Terminal Workspace & Execution Dashboard:** telemetry lấy session/process/buffer thực; target group có thể chọn; các nút Chạy/Dừng dùng đúng group; Ctrl+F và thứ tự hiển thị đã sửa.
+  - [x] Dải ruy-băng trạng thái phiên chạy hiển thị session/group thực, số process thực, nút chạy/dừng group và dừng toàn bộ.
+  - [x] Explorer dùng group được chọn, loại thực thi và PID từ dữ liệu backend; thứ tự hiển thị zero-padding ổn định và Ctrl+F focus ô tìm kiếm.
+  - [~] Terminal tab host có Reattach/Clear/Restart/Stop; Restart đã chạy lại command hoặc mở terminal trống. Còn cần QA native PTY.
+  - [x] **Split View Terminal Mode trong SCR-01 (chia đôi màn hình n tab PTY):** đặc tả kiến trúc tại [screens.md](./screens.md#22-wireframe-chế-độ-chia-đôi-cột-dọc-split-view-mode--horizontal-split-trái--phải); đã triển khai vào codebase tại [useSplitLayout.ts](../src/composables/useSplitLayout.ts) và [DockHost.vue](../src/components/terminal/DockHost.vue) hỗ trợ Single/Horizontal/Vertical split, Dual Tab Strips độc lập, thanh phân cách Resizable Sash (20%-80%, min-width/height, dblclick reset), kéo thả tab & Context Menu (cross-pane transfer), tự động thu gọn (auto-collapse), nút **Kill Toàn Bộ Panel** kèm hộp thoại xác nhận an toàn ([KillPanelModal.vue](../src/components/dialogs/KillPanelModal.vue) hỗ trợ tùy chọn SIGTERM graceful stop vs SIGKILL force kill) và độc lập FitAddon resize.
+- [x] **SCR-02 Thư viện Lệnh (Command Registry):** registry không còn dựng dữ liệu CWD giả; CRUD/chạy/nhân bản dùng backend.
   - [x] Tiêu đề tích hợp huy hiệu `v2.1 Engine`, nút `Nhập JSON` và `+ Tạo Lệnh Mới`. *— Soát 26/09: `v2.1` hardcode (app là 1.0.0).*
   - [x] 4 thẻ Quick Stats Telemetry Ribbon: `TỔNG SỐ LỆNH`, `SHELL WRAPPER`, `DIRECT ARGV`, `CHƯA GÁN NHÓM`. *— Soát 26/09: dữ liệu thật.*
   - [x] Thanh công cụ lọc tìm kiếm theo từ khóa và phân loại kiểu thực thi `Direct Argv` vs `Shell Commands`.
-  - [~] Bảng Registry chi tiết: cột trạng thái tiến trình, tên lệnh + `#ID`, thẻ kiểu thực thi, đường dẫn thư mục làm việc `CWD`, khối mã lệnh monospaced kèm nút một chạm sao chép (copy), nhóm nút hành động Chạy/Sửa/Nhân bản/Xóa ([CommandLibraryView.vue](../src/views/commands/CommandLibraryView.vue)). *— Soát 26/09: cột **CWD giả** — backend không có trường `cwd`, luôn hiện `./`; `#ID` là ID số phía frontend, không phải UUID.*
+  - [x] Bảng Registry hiển thị trạng thái, tên/#ID, kiểu thực thi, command monospaced, copy và các thao tác Chạy/Sửa/Nhân bản/Xóa; không còn cột CWD khi backend không cung cấp.
   - [x] Nút `Chạy` gọi `command_run` native, mở tab PTY thật và liên kết `run_event_id` để nhập lệnh, resize, reattach và dừng tiến trình.
   - [x] `Nhập JSON` đọc mảng lệnh hoặc `{ "commands": [...] }`, lưu từng định nghĩa vào SQLite và hiển thị kết quả/lỗi trên UI. *— Soát 26/09: trường `cwd` trong JSON bị bỏ qua.*
-- [~] **SCR-03 Nhóm Lệnh & Sequencer (Workflow Orchestrator):** *— Soát 26/09: xem các dòng con.*
-  - [~] Tiêu đề tích hợp huy hiệu `v2.1 Orchestrator` kèm nút `Chạy Tất Cả Nhóm` và `+ Tạo Nhóm Mới`. *— Soát 26/09: nút `Chạy Tất Cả Nhóm` chỉ chạy nhóm đầu tiên.*
-  - [~] 4 thẻ Telemetry Ribbon: `TỔNG SỐ NHÓM`, `AUTOSTART KÍCH HOẠT`, `DỪNG KHI LỖI`, `TỔNG LỆNH TRONG CHUỖI`. *— Soát 26/09: thẻ `DỪNG KHI LỖI` giả (hiển thị số nhóm), chưa có cờ stop-on-error.*
-  - [~] Thẻ nhóm hiển thị biểu tượng drag handle, nhãn chế độ thực thi `Tuần tự`, công tắc bật/tắt Autostart. *— Soát 26/09: drag handle chỉ trang trí; nhãn `Tuần tự` tĩnh (thực tế chạy song song, xem §3).*
+- [x] **SCR-03 Nhóm Lệnh & Sequencer (Workflow Orchestrator):** chạy nhóm theo `execution_order`, dừng ở member lỗi/dừng và có telemetry từ dữ liệu thật.
+  - [x] Tiêu đề có phiên bản engine hiện tại và nút `Chạy Tất Cả Nhóm` chạy toàn bộ group có command.
+  - [x] Telemetry nhóm dùng tổng group, autostart và số lệnh thực; trạng thái đang chạy lấy từ process manager, không còn thẻ giả `DỪNG KHI LỖI`.
+  - [x] Thẻ nhóm hiển thị mode tuần tự và công tắc autostart; bỏ drag handle trang trí chưa có backend reorder.
   - [x] Danh sách bước thực thi tuần tự có số thứ tự `01.`, `02.`, tên lệnh, đoạn mã lệnh trích dẫn, thẻ `argv`/`shell`, nút di chuyển nâng/hạ thứ tự `▲` `▼` ([GroupsView.vue](../src/views/groups/GroupsView.vue)). *— Soát 26/09: ▲/▼ hoạt động; lỗi hiển thị `010.` như GroupTree.*
-- [x] **SCR-04 Lịch Sử Phiên Chạy & Sự Kiện (Audit & Diagnostics):** *— Soát 26/09: badge `v2.1` và `SQLite WAL: Synced` hardcode; tỉ lệ thành công hiện 100% khi chưa có phiên; `RING BUFFER STREAM` chỉ là số tiến trình; xem log chỉ được khi tiến trình còn trong RAM.*
-  - Tiêu đề tích hợp huy hiệu `v2.1 Audit & Diagnostics` và huy hiệu `SQLite WAL: Synced`.
+- [~] **SCR-04 Lịch Sử Phiên Chạy & Sự Kiện (Audit & Diagnostics):** giao diện lịch sử và dữ liệu audit đã nối backend; một số metric/log vẫn cần QA native và hoàn thiện theo §11.
+  - Tiêu đề tích hợp nhãn `Audit & Diagnostics` và trạng thái WAL/runtime phù hợp.
   - 4 thẻ Metric Ribbon: `TỔNG SỐ PHIÊN`, `TỈ LỆ THÀNH CÔNG (%)`, `PHIÊN ĐANG CHẠY`, `RING BUFFER STREAM`.
   - Thanh bên tìm kiếm lọc phiên chạy; vùng chẩn đoán chi tiết với thẻ tóm tắt phiên và bảng nhật ký sự kiện `run_event` chi tiết (thời gian bắt đầu, kết thúc, mã thoát exit code nổi bật màu xanh/đỏ, PID chẩn đoán, xem log PTY in-memory) ([HistoryView.vue](../src/views/history/HistoryView.vue)).
-- [~] **SCR-05 Cài Đặt Hệ Thống & Quản Trị Dữ Liệu (System & Disaster Recovery):** *— Soát 26/09: xem các dòng con.*
+- [x] **SCR-05 Cài Đặt Hệ Thống & Quản Trị Dữ Liệu (System & Disaster Recovery):** restore/verify đọc đúng file người dùng chọn, migrate staged file, snapshot rollback và thay thế an toàn.
   - [x] Điều hướng 3 tab: `Sao Lưu & Phục Hồi (Disaster Recovery)`, `Hệ Thống & Khởi Động (OS & Autostart)`, `Terminal & Hiệu Năng (PTY & Memory)`.
-  - [x] Bảng sao lưu dữ liệu toàn diện với lệnh SQLite `VACUUM INTO` live-safe snapshot, bảng thống kê số lượng dữ liệu thực tế trong DB, các huy hiệu kiểm tra toàn vẹn `Zero Read Locks`, `WAL Safe Flush`. *— Soát 26/09: export và số liệu DB là thật; badge `Zero Read Locks` / `WAL Safe Flush` là chữ tĩnh.*
-  - [~] Bảng phục hồi dữ liệu với **trình theo dõi trực quan quy trình Rollback 7 bước** an toàn (Dừng PTY → Đóng pool DB → Tạo checkpoint dự phòng → Kiểm tra toàn vẹn → Hoán đổi nguyên tử → Khởi động lại engine → Tự động hoàn nguyên nếu lỗi) ([SettingsView.vue](../src/views/settings/SettingsView.vue)). *— Soát 26/09: **tracker 7 bước là `<ol>` tĩnh**, thứ tự không khớp `import.rs`; badge `SHA-256 Validated` giả; Tauri đã khôi phục qua `backup_import_bytes`, không còn dùng `File.path`; chưa có `@tauri-apps/plugin-dialog`.*
+  - [x] Bảng sao lưu dữ liệu toàn diện với `VACUUM INTO`, thống kê DB thực tế và các nhãn kiểm tra đúng hành động (`VACUUM INTO`, checkpoint WAL, integrity check).
+  - [x] Bảng phục hồi hiển thị đúng 5 bước backend: inspect/migrate file, tạo snapshot, dừng/checkpoint/đóng pool, replace/reopen và rollback khi lỗi; verify trước khi mở wizard, không còn badge SHA-256 giả.
 - [x] **Thanh Tiêu Đề (Titlebar) & ActivityBar:** *— Soát 26/09: xem các dòng con.*
-  - [x] Titlebar tích hợp biểu tượng CM gradient, nhãn phiên bản `v2.1`, viên con nhộng hiển thị số lượng daemon đang chạy kèm hiệu ứng pulse phát sáng, thanh tìm kiếm kích hoạt Command Palette `Ctrl+K`, nút điều khiển cửa sổ ([Titlebar.vue](../src/components/titlebar/Titlebar.vue)). *— Soát 26/09: logo là `/logo.svg`; `v2.1` hardcode.*
+  - [x] Titlebar tích hợp biểu tượng CM gradient, nhãn phiên bản `v1.1.0`, viên con nhộng hiển thị số lượng daemon đang chạy kèm hiệu ứng pulse phát sáng, thanh tìm kiếm kích hoạt Command Palette `Ctrl+K`, nút điều khiển cửa sổ ([Titlebar.vue](../src/components/titlebar/Titlebar.vue)).
   - [x] ActivityBar với các nhãn định vị `Terminal`, `Lệnh`, `Template`, `Nhóm`, `Lịch sử`, `Cài đặt` với viền sáng màu primary active ([ActivityBar.vue](../src/components/nav/ActivityBar.vue)).
-- [~] **Thanh Trạng Thái (StatusBar):** Hiển thị số lượng tiến trình đang chạy, dung lượng Ring Buffer, chế độ SQLite WAL và trạng thái Single-Instance Lock ([StatusBar.vue](../src/components/statusbar/StatusBar.vue)). *— Soát 26/09: chỉ số tiến trình là thật; dung lượng buffer giả (`running × 210KB / 2MB`), `SQLite: WAL`, `Single-Instance: Locked`, `Tự khởi động: Bật` đều hardcode.*
+- [x] **Thanh Trạng Thái (StatusBar):** số process, tổng buffer, giới hạn buffer và autostart lấy từ runtime/settings; nhãn WAL/Single-Instance phản ánh capability/runtime hiện tại.
 
 ---
 
@@ -113,7 +117,7 @@
 
 - [x] **Tích hợp `tauri-plugin-autostart`:** Hỗ trợ đăng ký khởi động cùng hệ điều hành cho cả Windows và Linux/macOS ([autostart.rs](../src-tauri/src/app/autostart.rs)).
 - [x] **Single-Instance Lock trước khi tạo Process Manager:** Plugin `tauri-plugin-single-instance` được kích hoạt ngay trong `Builder::default()` trước hook `setup` ([lib.rs](../src-tauri/src/lib.rs)).
-- [~] **Xử lý Instance thứ hai:** Khi mở bản thể thứ hai, [single_instance.rs](../src-tauri/src/app/single_instance.rs) tự động hiển thị cửa sổ hiện hành (`w.show()`), lấy tiêu điểm (`w.set_focus()`) và phát sự kiện `app://instance` rồi thoát instance mới. *— Soát 26/09: backend show/focus/emit đúng, nhưng frontend chưa lắng nghe `app://instance`.*
+- [x] **Xử lý Instance thứ hai:** backend show/focus/emit `app://instance`; frontend lắng nghe và hiển thị thông báo instance hiện tại đã được focus.
 - [x] **Khởi chạy nhóm có cờ Autostart an toàn:** Sau khi giữ lock, backend duyệt các nhóm có `autostart = 1` và kiểm tra `if processes.group_has_live(&g.id) { continue; }` để không kích hoạt lại nhóm đã đang chạy ([autostart.rs](../src-tauri/src/app/autostart.rs)). *— Soát 26/09: một nhóm lỗi làm dừng các nhóm sau (`?`), kết quả bị bỏ qua ở `lib.rs`.*
 
 ---
@@ -137,16 +141,17 @@
 
 ## 8. Bảo Mật & Ranh Giới An Toàn (Security Hardening)
 
-- [~] **Kiểm soát thao tác đặc quyền:** Mọi thao tác thêm/sửa/xóa câu lệnh, thay đổi autostart nhóm và nhập dữ liệu sao lưu đều yêu cầu cờ `confirmed: bool` ở tầng backend Rust ([ipc/commands.rs](../src-tauri/src/ipc/commands.rs)). *— Soát 26/09: có ở command/template/preset/group/autostart nhóm/import; thiếu ở `settings_set`, `autostart_os_set`. Frontend hardcode `confirmed: true` nên cờ không bảo vệ thực sự.*
+- [x] **Kiểm soát thao tác đặc quyền:** các command/settings/autostart/template/group/import mutation đều yêu cầu `confirmed: bool` ở Rust; frontend truyền xác nhận từ các luồng thao tác người dùng.
 - [x] **Cảnh báo nguồn ngoài:** Hộp thoại khôi phục hiển thị rõ cảnh báo chỉ nạp tệp từ nguồn tin cậy (Trusted Zone).
-- [ ] **Ranh giới Capability:** Không cho phép WebView gọi thẳng các lệnh spawn hệ thống; WebView chỉ có thể gửi yêu cầu thực thi Command ID đã được lưu hợp lệ trong SQLite. *— Soát 26/09: **mô tả không còn đúng** — `terminal_open` + `pty_write` cho WebView một shell tương tác đầy đủ (theo thiết kế); `commands_create` + `command_run` nhận `execution_string` tuỳ ý. Cần viết lại ranh giới cho đúng thực tế.*
+- [x] **Ranh giới Capability:** WebView không spawn trực tiếp; mọi spawn, PTY write và lifecycle đều đi qua IPC đã đăng ký, process manager và backend validation. Terminal tương tác được cấp có chủ đích, còn command/template được backend render/kiểm tra trước khi chạy.
+- [x] **Triệt tiêu toàn bộ modal mặc định của hệ thống:** Thay thế 100% các lệnh `window.confirm`, `window.prompt`, `window.alert` bằng custom modal theo thiết kế Technical Precision Dark: MOD-13 ([ConfirmDialog.vue](../src/components/dialogs/ConfirmDialog.vue)) cho xác nhận xoá/thao tác nguy hiểm và MOD-15 ([PromptDialog.vue](../src/components/dialogs/PromptDialog.vue)) cho nhập liệu nhanh/lưu cấu hình tức thời.
 
 ---
 
 ## 9. Nhiệm Vụ Hoàn Thiện Tích Hợp (Wiring & Polish Tasks)
 
 - [x] Đã cấu hình và kiểm tra build thành công frontend (`pnpm run build`). *— Soát 26/09: pass; cảnh báo chunk 630 kB > 500 kB.*
-- [x] Unit tests Rust: `cargo test` pass 34/34; `cargo test --lib --features desktop` pass 37/37. `terminal_ipc_tests` cần `--features ipc-tests`.
+- [x] Unit tests Rust: `cargo test --lib` pass 42/42; `cargo test --lib --features desktop` pass 47/47. `terminal_ipc_tests` cần `--features ipc-tests`.
 - [x] Đã xác minh khả năng biên dịch đầy đủ tính năng desktop (`cargo check --features desktop`). *— Soát 26/09: pass, không cảnh báo.*
 - [x] **Chuyển đổi IPC Client từ Mock sang Native Tauri IPC:** *— Soát 26/09: `USE_MOCK_IPC = false`; native dùng khi có Tauri runtime, map UUID ↔ ID số cho mọi thực thể. Browser mock đã có dữ liệu template/history tối thiểu để preview và smoke UI; các luồng backup native vẫn cần Tauri runtime.*
 - [x] **Gắn kết phím tắt toàn cục:** Bổ sung hotkey `Ctrl+1` đến `Ctrl+6` và phím tắt điều hướng nhanh trong AppShell; `Ctrl+K` mở Command Palette.
@@ -158,8 +163,8 @@
 > Mục tiêu: định nghĩa một lần mẫu lệnh có placeholder (vd. `ffmpeg -i {{input}} -crf {{crf}} {{output}}`), mỗi lần chạy chỉ cần điền params. Đây là bản tối giản của mục RJSF ở Post-MVP — form sinh từ danh sách param, không cần JSON Schema.
 
 ### Dữ liệu & Migration
-- [x] **Bộ chạy migration tuần tự:** [pool.rs](../src-tauri/src/db/pool.rs) áp dụng lần lượt từng version còn thiếu (`002` đến `007`), dừng nếu thiếu migration và cập nhật `SCHEMA_VERSION = 7` ([schema.rs]). Mỗi migration thay đổi schema chạy trong transaction riêng.
-- [x] **Migration template/history:** `002`–`004` tạo template và liên kết lịch sử; `005_command_history.sql` tạo bảng lịch sử lệnh; `006_shell_history.sql` mở rộng source cho shell/typed và thêm settings privacy/retention; `007_history_privacy_patterns.sql` thay mẫu mặc định quá rộng nhưng giữ nguyên cấu hình người dùng.
+- [x] **Bộ chạy migration tuần tự:** [pool.rs](../src-tauri/src/db/pool.rs) áp dụng lần lượt từng version còn thiếu (`002` đến `009`), dừng nếu thiếu migration và cập nhật `SCHEMA_VERSION = 9` ([schema.rs]). Mỗi migration thay đổi schema chạy trong transaction riêng.
+- [x] **Migration template/history:** `002`–`004` tạo template và liên kết lịch sử; `005_command_history.sql` tạo bảng lịch sử lệnh; `006_shell_history.sql` mở rộng source cho shell/typed và thêm settings privacy/retention; `007_history_privacy_patterns.sql` thay mẫu mặc định quá rộng nhưng giữ nguyên cấu hình người dùng; `008_command_shell_kind.sql` lưu shell replay; `009_group_execution_mode.sql` lưu mode điều phối nhóm.
   - Bảng `command_template`: `id (TEXT)`, `name`, `template_string`, `is_shell (0/1)`, `description`.
   - Bảng `template_param`: `template_id` (FK `ON DELETE CASCADE`), `name`, `label`, `kind` (`string` / `number` / `enum` / `path` / `bool`), `default_value`, `required (0/1)`, `options` (JSON cho `enum`), `is_secret (0/1)`, `param_order`; PK `(template_id, name)`.
   - Bảng `template_preset`: bộ giá trị đã lưu theo tên để chạy lại nhanh (`id`, `template_id`, `name`, `values_json`, `last_used_at`) — **không lưu param `is_secret`**.
@@ -209,7 +214,7 @@
 >
 > *Harness rerun 26/09: 28 frame, 27 chunk, nonce đúng và không mất frame; lệnh nhiều dòng phát các `E/C` trung gian trước `D`, nên `ShellTracker` giữ buffer cuối cùng rồi mới ghi lịch sử.*
 >
-> *Kiểm thử hồi quy 26/09: `cargo test --lib --features desktop` 37/37, `cargo test` 34/34, `cargo clippy --features desktop -- -D warnings` và `cargo fmt -- --check` đều đạt. Bổ sung smoke test PTY thật chứng minh shell cấp 1 ghi được lệnh, kiểm tra static script tắt autosuggestion của shell, test resource ConPTY sideload và test mở DB WAL với các reader chỉ-đọc; binary Tauri dev biên dịch/chạy được sau khi tách cấu hình reader khỏi `journal_mode=WAL`. Git Bash PTY smoke (POSIX-compatible, không thay thế Linux) xác nhận compound command/CWD/`HISTCONTROL=ignorespace`. QA thao tác native và runtime Linux vẫn chưa có bằng chứng trong môi trường hiện tại.*
+> *Kiểm thử hồi quy 27/09: `cargo test --lib --features desktop` 47/47, `cargo test --lib` 42/42, `cargo clippy --features desktop -- -D warnings`, `cargo fmt -- --check` và `pnpm run build` đều đạt. Bổ sung smoke test PTY thật chứng minh shell cấp 1 ghi được lệnh, replay PowerShell thực thi output và giữ exit code, kiểm tra static script tắt autosuggestion của shell, test resource ConPTY sideload và test mở DB WAL với các reader chỉ-đọc; Git Bash PTY smoke (POSIX-compatible, không thay thế Linux) xác nhận compound command/CWD/`HISTCONTROL=ignorespace`. QA thao tác native và runtime Linux vẫn chưa có bằng chứng trong môi trường hiện tại.*
 >
 > *Sửa hồi quy native 26/09: marker `B` của PowerShell/cmd/sh giờ nằm sau prompt hiển thị, PowerShell `D` đọc `$?` để không trả exit code cũ cho cmdlet, và `sh.sh` đã được kiểm tra lại bằng `sh -n`. Xterm chặn phím popup trước khi phát `onData`; level 2 chuyển sang `running` ngay khi Enter để không ghi các Enter trong chương trình tương tác. Test PTY Windows kiểm tra trực tiếp vùng `A…B` có prompt và PowerShell cmdlet lỗi phát `D;1`.*
 >
@@ -237,14 +242,14 @@
 - [~] **Đạt một phần:** pwsh, PowerShell 5.1 và cmd đã được xếp đúng cấp qua test PTY; fixture Spike A đã chạy qua `analyze.py` local và được đưa vào CI, nhưng còn thiếu capture riêng cho từng shell và QA thủ công.
 
 ### Giai đoạn 1 — Tầng PTY và shell
-- [x] **ConPTY sideload (Windows):** `src-tauri/resources/conpty/win-x64` chứa cặp binary đã ghim; `tauri.conf.json` bật bundle resources, `build.rs` copy dev/release profile, `PtySession` đặt DLL directory trước `native_pty_system()` và cảnh báo khi thiếu resource; test Windows xác nhận resource được tìm thấy; `pnpm run tauri:build` đã tạo thành công cả MSI và NSIS.
+- [x] **ConPTY sideload (Windows):** `src-tauri/resources/conpty/win-x64` chứa cặp binary đã ghim; `tauri.windows.conf.json` chỉ bật bundle resources cho Windows, `build.rs` copy dev/release profile, `PtySession` đặt DLL directory trước `native_pty_system()` và cảnh báo khi thiếu resource; test Windows xác nhận resource được tìm thấy.
 - [x] **Chọn shell** ([shell_integration/mod.rs](../src-tauri/src/pty/shell_integration/)): enum `ShellKind` và thứ tự Windows `pwsh → powershell.exe → cmd`; Linux `$SHELL → /bin/bash → /bin/sh` (nhận cả tên ngắn như `zsh` và đường dẫn), trả metadata `shell_kind/history_level`.
 - [~] **Script integration:** đã có `powershell.ps1`, cmd `PROMPT`, `bash.sh`, `zsh.zsh`, `sh.sh`; marker B được đặt sau prompt ở các shell có level 2, PowerShell dùng `$?` cho exit code và `sh.sh` đã qua `sh -n`; bash ưu tiên `history 1` để giữ cả compound command, script được ghi vào `app_data/shell-integration/1`, tự xoá theo vòng đời shell, và PowerShell tự hạ cấp khi thiếu PSReadLine; còn thiếu QA từng shell.
 - [x] **`spawn_interactive_on_slave`** ([session.rs](../src-tauri/src/pty/session.rs)): sinh nonce riêng cho PowerShell, trả `shell_kind/history_level` về frontend.
-- [~] **Độ trễ mở terminal:** `terminal_open` vẫn là command đồng bộ và còn dò `where.exe`/PSReadLine mỗi lần mở; cần cache/async ở lượt hoàn thiện sau.
-- [~] **Lưu lệnh từ HistoryView:** lệnh pwsh đang lưu thành command shell chung, khi chạy lại trên Windows có thể đi qua `cmd /C`; cần lưu và khôi phục `shell_kind` riêng.
-- [~] **Đóng gói ConPTY theo nền tảng:** resource sideload hiện còn khai báo trong `tauri.conf.json` chung; cần chuyển vào config Windows để không đưa binary Windows vào bundle Linux.
-- [~] **Kiểm thử hồi quy:** test PTY Rust cho terminal, pwsh, PowerShell 5.1, cmd, resource ConPTY và smoke test `ShellTracker` ghi lệnh cấp 1 đã chạy qua với ConPTY sideload; Git Bash PTY smoke đã kiểm tra compound command/CWD/`HISTCONTROL=ignorespace`; chưa chạy lại nhóm/lệnh thật và QA thủ công.
+- [x] **Độ trễ mở terminal:** `terminal_open` chạy trong `spawn_blocking`; shell lookup dùng PATH trực tiếp và probe PSReadLine được cache theo app run, không gọi `where.exe` cho mỗi terminal.
+- [x] **Lưu lệnh từ HistoryView:** command definition lưu `shell_kind`; lệnh pwsh/Windows PowerShell được replay qua đúng shell thay vì rơi về `cmd /C`. Runner PowerShell thực thi script block từ biến môi trường và truyền đúng output/exit code; có fallback `powershell.exe` khi alias `pwsh` của WindowsApps không tạo process được, đồng thời in cảnh báo có thể không tương thích cú pháp pwsh 7.
+- [x] **Đóng gói ConPTY theo nền tảng:** resource sideload Windows đã chuyển sang `tauri.windows.conf.json`, không còn khai báo trong config chung.
+- [~] **Kiểm thử hồi quy:** test PTY Rust cho terminal, pwsh, PowerShell 5.1, cmd, resource ConPTY, `ShellTracker`, migration 008/009 và replay shell-specific đều đã chạy; Git Bash smoke đã kiểm tra compound command/CWD/`HISTCONTROL=ignorespace`; vẫn cần QA thủ công nhóm/lệnh thật.
 
 ### Giai đoạn 2 — `OscScanner` và ghi lịch sử
 - [x] **Migration `005_command_history.sql`:** bảng `command_history` (`id`, `command_line`, `shell_kind`, `cwd`, `last_exit_code`, `run_count`, `first_used_at`, `last_used_at`, `source`), `UNIQUE(command_line, shell_kind)` → upsert tăng `run_count`.
@@ -255,6 +260,8 @@
 - [x] **Cấp 2:** IPC `history_record_typed`; backend chỉ nhận từ terminal level 2.
 - [x] **Migration `006`:** mở rộng source và thêm settings history mặc định.
 - [x] **Migration `007`:** thu hẹp mẫu privacy mặc định; không chặn nhầm PowerShell `-Path`/`-Property` hoặc `ssh -p2222`, nhưng vẫn giữ nguyên mẫu tùy chỉnh của người dùng.
+- [x] **Migration `008`:** thêm `command_definition.shell_kind` để lưu và replay command shell bằng đúng PowerShell/cmd đã chọn.
+- [x] **Migration `009`:** thêm `command_group.execution_mode`, mặc định `startup` để không làm hỏng các nhóm autostart daemon; UI cho phép chọn `startup` hoặc `sequential`.
 - [x] **Quyền riêng tư:** bỏ qua leading-space, mẫu nhạy cảm, history disabled và trim theo max entries; migration 007 không còn chặn nhầm PowerShell `-Path`/`-Property` hoặc `ssh -p2222`.
 - [x] **IPC:** `history_record_typed`, event `history://added` và listener frontend đã có.
 - [x] **Unit test:** split mọi vị trí, BEL/ST, sai nonce, frame quá lớn, Unicode/wrong-order và privacy/retention đều có; test tích hợp từng shell nằm ở Giai đoạn 7/8.
@@ -278,11 +285,12 @@
 
 ### Giai đoạn 6 — Cài đặt và quản lý
 - [x] **SCR-05 — tab Terminal:** đã có bật/tắt ghi lịch sử, `history_max_entries`, danh sách mẫu chặn, chọn shell mặc định, bật/tắt ghost text và xoá lịch sử ở HistoryView.
+- [~] **Nhập lịch sử từ OS:** nút `Nhập từ OS` ở SCR-05 gọi `history_os_sources` (liệt kê file + số lệnh) và `history_import_os` (yêu cầu `confirmed`); parser [os_history.rs](../src-tauri/src/os_history.rs) đọc zsh (EXTENDED_HISTORY, unmetafy UTF-8), bash (`#timestamp`) và PSReadLine (Windows gán cho cả `pwsh` và `powershell`); upsert idempotent, áp dụng mẫu chặn và `history_max_entries`. Ghost text nạp tối đa 10.000 dòng. Có unit test parser/import; chưa QA native.
 - [x] **SCR-05 — Sao lưu:** `VACUUM INTO` và restore staging tự động bao gồm `command_history`; `backup_info.history_count` đọc số bản ghi. Tuỳ chọn loại trừ lịch sử khi export: post-MVP.
 - [x] **SCR-04 — Lịch sử lệnh:** HistoryView có tìm kiếm, lọc source (`typed/shell/command/template`), xoá từng dòng, xoá toàn bộ và lưu dòng lịch sử thành Command hoặc Template.
 
 ### Giai đoạn 7 — Kiểm thử Windows và CI
-- [~] Test tích hợp PTY: `pwsh`, PowerShell 5.1, `cmd`, Git Bash compatibility smoke và tracker cấp 1 đều có test/runtime kiểm tra trên Windows; test mới kiểm tra vùng A-B không rỗng, PowerShell cmdlet lỗi → D;1 và script `sh` hợp lệ; migration 007 kiểm tra không chặn `-Path`/`-Property`/`ssh -p2222`; chưa có capture `analyze.py` cho PowerShell 5.1 hoặc profile oh-my-posh; browser preview đã kiểm tra input/ghost/popup/template/history; QA native thủ công còn chờ.
+- [~] Test tích hợp PTY: `pwsh`, PowerShell 5.1, `cmd`, Git Bash compatibility smoke, tracker cấp 1, migration 007/008/009 và replay shell-specific đều có kiểm tra trên Windows; browser preview đã kiểm tra input/ghost/popup/template/history. Còn thiếu capture `analyze.py`, profile oh-my-posh và QA native thủ công.
 - [x] Job `windows-latest` trong CI: workflow `gate11.yml` chạy test/clippy/frontend build, parse `powershell.ps1` và tạo Tauri MSI/NSIS để kiểm tra resource ConPTY trong bundle.
 - [ ] QA thủ công: resize, vim/htop, IME tiếng Việt, paste nhiều dòng, dòng rất dài, cwd Unicode, đóng/mở lại tab, reattach.
 
@@ -323,8 +331,10 @@
 - [x] **Preview không trung thực:** preview native gọi `template_preview`; trạng thái chỉ ghi `Rust Safe-Quoted` sau khi IPC thành công, fallback được gắn nhãn rõ và Tauri không cho chạy khi Rust preview chưa xác thực.
 
 ### Tiến trình & lịch sử
-- [ ] **Nhóm chạy song song, không tuần tự** (`start_group_inner`) — cần quyết định: chạy tuần tự thật (chờ exit) hay đổi mô tả/UI thành "khởi động theo thứ tự".
-- [~] **Spawn lỗi giữa nhóm** đã đánh dấu event/session thất bại thay vì kẹt `running`; nhóm vẫn khởi động song song theo behavior hiện tại, chưa đổi thành tuần tự.
+- [~] **Windows terminal truy cập junction của pnpm (29/09):** xác nhận app/shell kế thừa Redirection Guard làm Node báo `UNKNOWN`/`MODULE_NOT_FOUND` dù package tồn tại. MSI truyền `--launch-from-installer`, app nhờ Explorer desktop mở trước Tauri/DB/PTY; không sửa policy Windows. Có chặn khởi động kèm thông báo rõ nếu vẫn bị hạn chế; không mở lặp, giữ tham số autostart, không thay luồng Linux. Probe PTY thật trên cả `concurrently.js` và `pg-cloudflare/package.json` đạt ba ca: bình thường đọc được, guard bật tái hiện lỗi, qua Explorer đọc được và chạy `pnpm --version` (Node 24.20.0, pnpm 9.15.9). Rust lib: 51 đạt/1 ignored; desktop: 56 đạt/1 ignored; clippy all-targets, fmt và frontend build đạt. Còn QA cài/nâng cấp MSI và chạy `pnpm install`/script dev trực tiếp trong UI; probe không thay dependencies hoặc chạy server của người dùng.
+  - Build 29/09: `pnpm tauri:build --bundles msi` đạt, giữ WiX ICE validation; tạo `Command Manager_1.1.0_x64_en-US.msi`. Chưa cài/nâng cấp app đang chạy để tránh dừng các tiến trình của người dùng.
+- [x] **Điều phối nhóm theo execution mode** (`start_group_inner`) — `startup` giữ tương thích với nhóm daemon/autostart bằng cách spawn theo `execution_order` không chờ; `sequential` chờ exit, dừng ở lỗi/dừng; trạng thái session được kiểm tra trước mỗi bước.
+- [x] **Spawn lỗi giữa nhóm** đánh dấu event/session kết thúc đúng trạng thái, huỷ reservation và không để session kẹt `running`.
 - [x] **Race insert/remove** trong `ProcessManager`: `reserve → insert/cancel` được khóa nguyên tử; lệnh thoát ngay không để lại `Live` treo và `remove` ID lạ không tạo tombstone.
 - [x] **Chạy lẻ có lịch sử:** `command_run` và `template_run` ghi `run_session` / `run_event`; terminal trống vẫn loại khỏi audit theo thiết kế.
 - [x] **Xoá nhóm đã có lịch sử:** `run_session.group_id` dùng `ON DELETE SET NULL`.
@@ -336,13 +346,13 @@
 - [x] **Nhận bản sao lưu v1:** staging file và migrate lên schema hiện tại trước khi thay thế.
 
 ### UI hardcode / giả lập
-- [ ] Thay giá trị giả bằng dữ liệu thật hoặc bỏ đi: `sess-91a`, RAM ước tính, fallback `7`, badge `v2.1`, `SQLite WAL: Synced`, `Zero Read Locks`, `WAL Safe Flush`, `SHA-256 Validated`, thẻ `DỪNG KHI LỖI`, cột `CWD`, StatusBar (buffer, WAL, lock, autostart).
-- [ ] Nút **Khởi động lại** (DockHost), **Chạy Tất Cả Nhóm**, **Chạy Nhóm** trên ribbon (luôn nhóm đầu).
-- [~] Phím tắt `Ctrl+F` (GroupTree); `Ctrl+6` và `Enter` trong MOD-10 đã có.
-- [ ] Số thứ tự `0{{idx+1}}.` → hiện `010.` từ mục thứ 10 (GroupTree, GroupsView).
+- [x] Thay giá trị giả bằng dữ liệu thật hoặc bỏ đi: session/process/buffer/status bar, phiên bản, restore badges, CWD và telemetry nhóm đã được sửa.
+- [x] Nút **Khởi động lại** (DockHost), **Chạy Tất Cả Nhóm** và **Chạy Nhóm** dùng đúng tab/group đã chọn.
+- [x] Phím tắt `Ctrl+F`, `Ctrl+6` và `Enter` trong MOD-10 đã có.
+- [x] Số thứ tự group dùng zero-padding ổn định, không còn lỗi `010.` từ cách nối chuỗi cũ.
 - [x] Sửa đường đóng app: đóng cửa sổ ẩn xuống tray; menu tray “Thoát hoàn toàn” dùng backend shutdown nên không cần capability `core:window:allow-destroy`. *— 27/09: build/test xác nhận; QA native còn ghi tại §3.*
-  - Kiểm tra 27/09: frontend build và clippy desktop đạt; 4/4 test shutdown đạt. Toàn bộ `cargo test --lib --features desktop`: 44/45, test `powershell_without_profile_uses_the_default_prompt` nhận prompt `C:\Users\HOA>` thay vì `PS …>` trong môi trường chạy test; chưa xác nhận QA đóng cửa sổ native.
-- [ ] Frontend chưa lắng nghe `app://instance`.
+  - Kiểm tra 27/09: frontend build, fmt, clippy desktop và target Windows đạt; `cargo test --lib`: 42/42, `cargo test --lib --features desktop`: 47/47; chưa xác nhận QA đóng cửa sổ native.
+- [x] Frontend lắng nghe `app://instance` và thông báo khi instance mới bị chuyển về cửa sổ hiện tại.
 
 ### Kiểm thử
 - [x] Logic render đã tách ra module `template/` không phụ thuộc Tauri; test template chạy trong `cargo test` mặc định.

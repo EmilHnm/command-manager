@@ -4,15 +4,16 @@
       <div class="header-left">
         <div class="title-row">
           <h2 class="view-title">Cài Đặt Hệ Thống & Quản Lý Dữ Liệu (SCR-05)</h2>
-          <span class="engine-badge">v2.1 Engine</span>
+          <span class="engine-badge">{{ APP_ENGINE_TAG }}</span>
         </div>
         <span class="view-subtitle">Cấu hình PTY, biến môi trường toàn cục, khởi động cùng OS và cơ chế sao lưu SQLite an toàn</span>
       </div>
 
       <div class="header-right">
-        <button class="btn btn-primary btn-sm" @click="handleSaveSettings">
-          <Save :size="13" />
-          <span>Lưu Cài Đặt</span>
+        <button class="btn btn-primary btn-sm" :disabled="isSaving" @click="handleSaveSettings">
+          <LoaderCircle v-if="isSaving" :size="13" class="spin" />
+          <Save v-else :size="13" />
+          <span>{{ isSaving ? 'Đang Lưu...' : 'Lưu Cài Đặt' }}</span>
         </button>
       </div>
     </header>
@@ -86,19 +87,20 @@
             </div>
             <div class="db-stat-item">
               <span class="db-stat-lbl">TRẠNG THÁI CƠ SỞ DỮ LIỆU</span>
-              <span class="db-stat-num font-mono text-accent">{{ backupInfo?.integrityOk ? 'WAL Synced' : 'Đang kiểm tra...' }}</span>
+              <span class="db-stat-num font-mono text-accent">{{ backupInfo?.integrityOk ? 'Integrity OK' : 'Đang kiểm tra...' }}</span>
             </div>
           </div>
 
           <div class="precheck-badges">
-            <span class="check-pill">✓ Zero Read Locks</span>
-            <span class="check-pill">✓ WAL Safe Flush</span>
+            <span class="check-pill">✓ VACUUM INTO</span>
+            <span class="check-pill">✓ WAL checkpoint</span>
             <span class="check-pill">✓ PRAGMA integrity_check</span>
           </div>
 
           <div class="action-row">
             <button class="btn btn-primary" :disabled="isExporting" @click="handleExportBackup">
-              <Download :size="14" />
+              <LoaderCircle v-if="isExporting" :size="14" class="spin" />
+              <Download v-else :size="14" />
               <span>{{ isExporting ? 'Đang tạo snapshot...' : 'Tạo Bản Sao Lưu Ngay (Export SQLite)' }}</span>
             </button>
             <span v-if="exportSuccessPath" class="export-success">
@@ -107,7 +109,7 @@
           </div>
         </div>
 
-        <!-- Card 2: Disaster Recovery Restore with 7-step rollback sequence -->
+        <!-- Card 2: Disaster Recovery Restore with the backend rollback sequence -->
         <div class="setting-card danger-card">
           <div class="card-header-row">
             <div class="card-title-group">
@@ -122,24 +124,22 @@
             các kết nối SQLite sẽ đóng lại và file cơ sở dữ liệu sẽ được thay thế có <strong>tự động Rollback</strong> dự phòng.
           </p>
 
-          <!-- 7-Step Rollback Visual Sequence Tracker (from Stitch SCR-05) -->
+          <!-- Backend restore sequence: inspect, snapshot, stop, replace, rollback. -->
           <div class="rollback-sequence-box">
-            <span class="sequence-box-title">QUY TRÌNH 7 BƯỚC KHÔI PHỤC AN TOÀN (ATOMIC SEQUENCE):</span>
+            <span class="sequence-box-title">QUY TRÌNH 5 BƯỚC KHÔI PHỤC AN TOÀN (ATOMIC SEQUENCE):</span>
             <ol class="step-list">
-              <li><span class="step-num">01.</span> Dừng an toàn tất cả tiến trình PTY daemons (SIGTERM)</li>
-              <li><span class="step-num">02.</span> Đóng kết nối SQLite connection pool</li>
-              <li><span class="step-num">03.</span> Tạo checkpoint an toàn dự phòng <code>backup_checkpoint.sqlite</code></li>
-              <li><span class="step-num">04.</span> Kiểm tra toàn vẹn tệp nạp vào <code>PRAGMA integrity_check</code></li>
-              <li><span class="step-num">05.</span> Thay thế tệp DB nguyên tử (Atomic File Swap)</li>
-              <li><span class="step-num">06.</span> Khởi động lại engine và kiểm tra phiên thực thi</li>
-              <li><span class="step-num">07.</span> Tự động Rollback hoàn nguyên nếu gặp bất kỳ lỗi nào</li>
+              <li><span class="step-num">01.</span> Kiểm tra toàn vẹn và migrate file nạp vào</li>
+              <li><span class="step-num">02.</span> Tạo snapshot rollback cho DB hiện tại</li>
+              <li><span class="step-num">03.</span> Dừng tiến trình, checkpoint WAL và đóng pool SQLite</li>
+              <li><span class="step-num">04.</span> Thay thế DB nguyên tử và mở lại engine</li>
+              <li><span class="step-num">05.</span> Tự động rollback nếu bất kỳ bước nào thất bại</li>
             </ol>
           </div>
 
           <div class="precheck-badges">
-            <span class="check-pill text-danger">✓ Checkpoint Snapshot Ready</span>
-            <span class="check-pill text-danger">✓ SHA-256 Validated</span>
-            <span class="check-pill text-danger">✓ Zero Data Loss Fallback</span>
+            <span class="check-pill text-danger">✓ Kiểm tra file trước khi nạp</span>
+            <span class="check-pill text-danger">✓ Snapshot rollback</span>
+            <span class="check-pill text-danger">✓ Tự động mở lại DB</span>
           </div>
 
           <div class="action-row">
@@ -324,6 +324,32 @@
           </div>
           <label class="history-pattern-label" for="history-block-patterns">Mẫu không lưu (mỗi dòng một mẫu)</label>
           <textarea id="history-block-patterns" v-model="settings.historyBlockPatterns" rows="4" class="history-patterns" />
+
+          <div class="setting-row os-history-row">
+            <div class="row-info">
+              <span class="row-label">Nhập lịch sử từ hệ điều hành</span>
+              <span class="row-desc">Đọc lịch sử của shell trên máy (zsh, bash, PowerShell) vào lịch sử của ứng dụng để dùng cho gợi ý. File gốc chỉ được đọc; lệnh khớp mẫu không lưu sẽ bị bỏ qua. Nhập lại nhiều lần không làm trùng.</span>
+              <ul v-if="osHistorySources.length" class="os-history-sources">
+                <li v-for="source in osHistorySources" :key="source.path">
+                  <span class="font-mono">{{ source.path }}</span>
+                  <span class="os-history-meta">
+                    {{ source.shellKinds.join(', ') }} ·
+                    {{ source.error ? `lỗi: ${source.error}` : `${source.entries} lệnh` }}
+                  </span>
+                </li>
+              </ul>
+              <span v-else-if="osHistoryLoaded" class="row-desc">Không tìm thấy file lịch sử shell nào.</span>
+            </div>
+            <button
+              class="btn btn-primary"
+              :disabled="isImportingOsHistory || !osHistorySources.length"
+              @click="showOsHistoryConfirm = true"
+            >
+              <LoaderCircle v-if="isImportingOsHistory" :size="14" class="spin" />
+              <Download v-else :size="14" />
+              <span>Nhập từ OS</span>
+            </button>
+          </div>
         </div>
       </div>
     </main>
@@ -332,9 +358,23 @@
     <RestoreWizard
       :visible="showRestoreModal"
       :file-path="selectedBackupPath"
-      :backup-info="backupInfo"
+      :backup-info="restoreInfo || backupInfo"
+      :loading="isRestoringDb"
       @confirm-restore="confirmRestoreDatabase"
       @close="showRestoreModal = false"
+    />
+
+    <ConfirmDialog
+      :visible="showOsHistoryConfirm"
+      title="Nhập Lịch Sử Từ Hệ Điều Hành"
+      subtitle="MOD-13 • Shell History Import"
+      :message="osHistoryConfirmMessage"
+      confirm-text="Nhập Lịch Sử"
+      loading-text="Đang Nhập..."
+      :privileged-notice="true"
+      :loading="isImportingOsHistory"
+      @confirm="confirmImportOsHistory"
+      @cancel="showOsHistoryConfirm = false"
     />
 
     <div v-if="toastMessage" class="settings-toast" :class="toastType" role="status" aria-live="polite">
@@ -345,11 +385,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue';
-import { Save, Cpu, Terminal, Database, Download, Upload } from 'lucide-vue-next';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { Save, Cpu, Terminal, Database, Download, Upload, LoaderCircle } from 'lucide-vue-next';
 import RestoreWizard from '@/components/dialogs/RestoreWizard.vue';
+import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import { ipcClient } from '@/ipc/client';
-import type { BackupIntegrityResult, SystemSettings } from '@/types/models';
+import { APP_ENGINE_TAG } from '@/config/version';
+import type { BackupIntegrityResult, OsHistorySource, SystemSettings } from '@/types/models';
 
 const currentTab = ref<'system' | 'terminal' | 'backup'>('system');
 const isWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
@@ -375,6 +417,7 @@ const showRestoreModal = ref(false);
 const restoreInput = ref<HTMLInputElement | null>(null);
 const selectedBackupPath = ref('');
 const selectedBackupFile = ref<File | null>(null);
+const restoreInfo = ref<BackupIntegrityResult | null>(null);
 const toastMessage = ref('');
 const toastType = ref<'error' | 'success'>('success');
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -397,7 +440,50 @@ onBeforeUnmount(() => {
   if (toastTimer) clearTimeout(toastTimer);
 });
 
+const osHistorySources = ref<OsHistorySource[]>([]);
+const osHistoryLoaded = ref(false);
+const showOsHistoryConfirm = ref(false);
+const isImportingOsHistory = ref(false);
+
+const osHistoryConfirmMessage = computed(() => {
+  const total = osHistorySources.value.reduce((sum, source) => sum + source.entries, 0);
+  return `Nhập ${total} lệnh từ ${osHistorySources.value.length} file lịch sử shell vào lịch sử của ứng dụng. `
+    + 'Lệnh khớp mẫu không lưu sẽ bị bỏ qua; nếu vượt giới hạn số mục, các mục cũ nhất sẽ bị loại bỏ.';
+});
+
+const loadOsHistorySources = async () => {
+  try {
+    osHistorySources.value = await ipcClient.listOsHistorySources();
+  } catch (error) {
+    osHistorySources.value = [];
+    showToast(error instanceof Error ? error.message : String(error), 'error');
+  } finally {
+    osHistoryLoaded.value = true;
+  }
+};
+
+const confirmImportOsHistory = async () => {
+  if (isImportingOsHistory.value) return;
+  isImportingOsHistory.value = true;
+  try {
+    const results = await ipcClient.importOsHistory();
+    const imported = results.reduce((sum, row) => sum + row.imported, 0);
+    const skipped = results.reduce((sum, row) => sum + row.skipped, 0);
+    showOsHistoryConfirm.value = false;
+    showToast(
+      `Đã nhập ${imported} lệnh vào lịch sử${skipped ? `, bỏ qua ${skipped} lệnh khớp mẫu không lưu` : ''}.`,
+      'success',
+    );
+  } catch (error) {
+    showOsHistoryConfirm.value = false;
+    showToast(error instanceof Error ? error.message : String(error), 'error');
+  } finally {
+    isImportingOsHistory.value = false;
+  }
+};
+
 onMounted(async () => {
+  void loadOsHistorySources();
   try {
     const [loaded, info] = await Promise.all([
       ipcClient.getSettings(),
@@ -410,12 +496,19 @@ onMounted(async () => {
   }
 });
 
+const isSaving = ref(false);
+const isRestoringDb = ref(false);
+
 const handleSaveSettings = async () => {
+  if (isSaving.value) return;
+  isSaving.value = true;
   try {
     await ipcClient.saveSettings(settings.value);
     showToast('Đã lưu thành công cài đặt hệ thống.', 'success');
   } catch (error) {
     showToast(error instanceof Error ? error.message : String(error), 'error');
+  } finally {
+    isSaving.value = false;
   }
 };
 
@@ -437,7 +530,7 @@ const chooseRestoreFile = () => {
   restoreInput.value?.click();
 };
 
-const handleRestoreFile = (event: Event) => {
+const handleRestoreFile = async (event: Event) => {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   input.value = '';
@@ -445,7 +538,21 @@ const handleRestoreFile = (event: Event) => {
 
   selectedBackupFile.value = file;
   selectedBackupPath.value = file.name;
-  showRestoreModal.value = true;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = '';
+    bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+    restoreInfo.value = await ipcClient.verifyBackupBytes(btoa(binary));
+    if (!restoreInfo.value.integrityOk) {
+      showToast('Tệp sao lưu không vượt qua integrity_check.', 'error');
+      selectedBackupFile.value = null;
+      return;
+    }
+    showRestoreModal.value = true;
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error), 'error');
+    selectedBackupFile.value = null;
+  }
 };
 
 const confirmRestoreDatabase = async () => {
@@ -453,6 +560,7 @@ const confirmRestoreDatabase = async () => {
     showToast('Chưa chọn file backup.', 'error');
     return;
   }
+  isRestoringDb.value = true;
   try {
     const bytes = new Uint8Array(await selectedBackupFile.value.arrayBuffer());
     let binary = '';
@@ -463,6 +571,8 @@ const confirmRestoreDatabase = async () => {
     showToast('Đã khôi phục cơ sở dữ liệu thành công.', 'success');
   } catch (error) {
     showToast(error instanceof Error ? error.message : String(error), 'error');
+  } finally {
+    isRestoringDb.value = false;
   }
 };
 </script>
@@ -790,6 +900,35 @@ const confirmRestoreDatabase = async () => {
   color: var(--text-muted);
 }
 
+.os-history-row {
+  margin-top: 12px;
+}
+
+.os-history-row .btn {
+  flex-shrink: 0;
+}
+
+.os-history-sources {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.os-history-sources li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.os-history-meta {
+  color: var(--text-muted);
+}
+
 .select-inline {
   background-color: var(--bg-input);
   border: 1px solid var(--border-subtle);
@@ -888,5 +1027,18 @@ const confirmRestoreDatabase = async () => {
 
 .text-danger {
   color: var(--status-failed);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

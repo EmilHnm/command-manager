@@ -11,6 +11,65 @@ pub fn kill_pid(pid: u32) {
     let _ = platform::kill_force(pid);
 }
 
+/// Stop a process and verify that the OS no longer reports it as alive.
+/// A graceful request gets a short window first; if the process ignores it,
+/// force termination is used before returning success to the caller.
+pub fn stop_and_wait(pid: u32, force: bool) -> crate::error::Result<()> {
+    if !platform::is_process_alive(pid) {
+        return Ok(());
+    }
+
+    let request = if force {
+        platform::kill_force(pid)
+    } else {
+        platform::terminate_graceful(pid)
+    };
+    if let Err(error) = request {
+        // The child can exit between the liveness check and the OS request.
+        // Treat that race as a successful stop, but do not hide a live child.
+        if !platform::is_process_alive(pid) {
+            return Ok(());
+        }
+        return Err(error);
+    }
+
+    let graceful_deadline = Instant::now() + Duration::from_secs(if force { 2 } else { 3 });
+    let mut check_interval = Duration::from_millis(10);
+    while Instant::now() < graceful_deadline {
+        if !platform::is_process_alive(pid) {
+            return Ok(());
+        }
+        std::thread::sleep(check_interval);
+        if check_interval < Duration::from_millis(50) {
+            check_interval += Duration::from_millis(10);
+        }
+    }
+
+    if !force {
+        if let Err(error) = platform::kill_force(pid) {
+            if !platform::is_process_alive(pid) {
+                return Ok(());
+            }
+            return Err(error);
+        }
+        let force_deadline = Instant::now() + Duration::from_secs(2);
+        let mut force_check_interval = Duration::from_millis(10);
+        while Instant::now() < force_deadline {
+            if !platform::is_process_alive(pid) {
+                return Ok(());
+            }
+            std::thread::sleep(force_check_interval);
+            if force_check_interval < Duration::from_millis(50) {
+                force_check_interval += Duration::from_millis(10);
+            }
+        }
+    }
+
+    Err(crate::error::Error::msg(format!(
+        "Không thể xác nhận process PID {pid} đã dừng; tiến trình vẫn còn chạy"
+    )))
+}
+
 /// SIGTERM/CTRL_C → wait → SIGKILL/TerminateProcess.
 pub fn shutdown_all(mgr: &ProcessManager, timeout: Duration) {
     shutdown_all_with_control(mgr, timeout, &AtomicBool::new(false), |_, _| {});
