@@ -210,6 +210,7 @@ let compositionTarget: HTMLTextAreaElement | null = null;
 let onCompositionStart: (() => void) | undefined;
 let onCompositionEnd: (() => void) | undefined;
 let onCompositionCancel: (() => void) | undefined;
+let onOrphanCompositionInput: ((event: InputEvent) => void) | undefined;
 
 const { subscribePty, sendInput, resize, reattachBuffer } = usePtyStream();
 const { loadHistory, findSuggestions, findFuzzySuggestions, findHistoryEntries } = useSuggestions(() => {
@@ -384,6 +385,19 @@ onMounted(async () => {
     compositionTarget.addEventListener('compositionstart', onCompositionStart);
     compositionTarget.addEventListener('compositionend', onCompositionEnd);
     compositionTarget.addEventListener('compositioncancel', onCompositionCancel);
+    // ibus-unikey on WebKitGTK commits punctuation, and the space after it,
+    // as a composition with no compositionstart: beforeinput
+    // insertFromComposition, input, compositionend. xterm then reads the
+    // committed text from the start of the previous word's composition and
+    // sends that word again ("là , à ,"). Announcing the missing start before
+    // the text lands gives xterm the right position; its own bookkeeping then
+    // sends the character once.
+    const helperTextarea = compositionTarget;
+    onOrphanCompositionInput = (event: InputEvent) => {
+      if (composing || !(event.inputType === 'insertFromComposition' || event.isComposing)) return;
+      helperTextarea.dispatchEvent(new CompositionEvent('compositionstart', { data: '' }));
+    };
+    compositionTarget.addEventListener('beforeinput', onOrphanCompositionInput);
   }
   renderDisposable = term.onRender(() => updateSuggestionPosition());
   // Like zsh-autosuggestions, derive the suggestion from the line the shell
@@ -598,6 +612,7 @@ onBeforeUnmount(() => {
     if (onCompositionStart) compositionTarget.removeEventListener('compositionstart', onCompositionStart);
     if (onCompositionEnd) compositionTarget.removeEventListener('compositionend', onCompositionEnd);
     if (onCompositionCancel) compositionTarget.removeEventListener('compositioncancel', onCompositionCancel);
+    if (onOrphanCompositionInput) compositionTarget.removeEventListener('beforeinput', onOrphanCompositionInput);
   }
   renderDisposable?.dispose();
   writeParsedDisposable?.dispose();
