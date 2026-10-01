@@ -664,13 +664,34 @@ const handleRun = () => {
 }
 
 .preset-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  color-scheme: dark;
   flex: 1;
   background-color: var(--bg-app-base);
   border: 1px solid var(--border-subtle);
   color: var(--text-primary);
   font-size: 12px;
-  padding: 5px 8px;
+  padding: 5px 28px 5px 8px;
   border-radius: var(--radius-sm);
+  outline: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 14px 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.preset-select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-glow);
+}
+
+.preset-select option {
+  background-color: var(--surface-container);
+  color: var(--text-primary);
 }
 
 .preset-actions {
@@ -790,6 +811,25 @@ const handleRun = () => {
 .form-input:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px var(--primary-glow);
+}
+
+select.form-input {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  color-scheme: dark;
+  padding-right: 28px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 14px 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+select.form-input option {
+  background-color: var(--surface-container);
+  color: var(--text-primary);
 }
 
 .mono-input {

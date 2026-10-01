@@ -1,4 +1,6 @@
 :root {
+  color-scheme: dark;
+
   /* Stitch Brand & Accents (Primary Plum / Royal Purple) */
   --primary: #744791;
   --primary-hover: #8956aa;
