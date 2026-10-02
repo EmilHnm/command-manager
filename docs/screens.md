@@ -102,81 +102,94 @@ graph TD
 
 ---
 
-### Màn hình 1: SCR-01 — Terminal Workspace & Execution Dashboard
+### Màn hình 1: SCR-01 — Terminal Workspace & Execution Dashboard (Tilix-Style Tiling Architecture)
+
+> **Chi tiết thiết kế kiến trúc nâng cao:** Xem toàn bộ đặc tả giải thuật cây nhị phân, cấu trúc dữ liệu và ma trận phím tắt tại [docs/tilix-tiling-spec.md](./tilix-tiling-spec.md).
 
 #### 1. Mục đích & Vai trò
-Màn hình trung tâm hàng ngày của người dùng. Cho phép kích hoạt chạy theo nhóm hoặc từng lệnh riêng lẻ, giám sát trực quan các terminal PTY qua các thẻ tab dockview, xem log đầu ra gần đây từ ring buffer và kiểm soát vòng đời tiến trình. Đồng thời, cung cấp **Chế độ Split View Terminal Mode (Chia đôi màn hình n tab PTY)**, cho phép quan sát và tương tác đồng thời với 2 khung terminal cạnh nhau (trái/phải hoặc trên/dưới), mỗi khung chứa danh sách n tab PTY độc lập, có thể kéo thả chuyển tab và điều chỉnh kích thước thanh chia linh hoạt.
+Màn hình trung tâm điều hành hàng ngày của lập trình viên và kỹ sư hệ thống. Cho phép kích hoạt chạy theo nhóm hoặc từng lệnh riêng lẻ, giám sát trực quan các terminal PTY, xem log đầu ra gần đây từ ring buffer và kiểm soát vòng đời tiến trình. 
+
+Đặc biệt, hệ thống kế thừa triết lý phân chia không gian tối ưu từ **Tilix Tiling Terminal Emulator**:
+1. **Kiến trúc Chia Lát Gạch Tự Do (Recursive Binary Tree Tiling):** Vượt qua giới hạn chia 2 khung cứng nhắc (Dual-Pane A/B), cho phép chia đệ quy vô hạn cấp (Split Right `Ctrl+Alt+R`, Split Down `Ctrl+Alt+D`), dễ dàng tạo bố cục 3 panel (1 chính + 2 phụ), lưới 4 panel (2x2 Grid), hoặc 3 cột song song.
+2. **Quản lý Đa Phiên Làm Việc (Multi-Workspace Sessions & Sessions Drawer):** Tổ chức các luồng công việc thành các Session độc lập (vd: Session "Web Dev", Session "Docker Cluster", Session "Monitoring").
+3. **Mini-Headerbar Trên Từng Panel (Per-Pane Chrome - 28px):** Mỗi ô terminal sở hữu một header nhỏ tích hợp chỉ báo trạng thái tiến trình, tiêu đề động (OSC 0/2), huy hiệu PID, và các nút thao tác nhanh: Chia Phải, Chia Dưới, Phóng To (Zoom 100%), Đồng Bộ Phím (Sync), Dừng và Đóng.
+4. **Thu Phóng Tức Thì (Pane Zoom / Maximize - Ctrl+Shift+Z):** Cho phép 1 panel mở rộng chiếm 100% diện tích workspace để soi log mà không làm hỏng cấu trúc cây tiling đã dựng.
+5. **Đồng Bộ Bàn Phím Đa Nhiệm (Synchronized Keystroke Broadcasting):** Phát sóng cùng lúc nội dung gõ phím tới tất cả các terminal trong Session hoặc theo nhóm màu (Group), lý tưởng cho quản trị cụm máy chủ và container.
+6. **Thư Viện Bố Cục Mẫu (Layout Presets):** 1-click kích hoạt ngay các layout quen thuộc: Single, 2 Cột, 2 Hàng, 2x2 Grid, 1 Lớn + 2 Nhỏ (1+2 Tiled), 3 Cột, hoặc lưu layout tùy biến.
 
 #### 2. Wireframe Chi tiết
 
-##### 2.1. Wireframe Chế độ Tab Đơn (Single View Mode - Mặc định)
+##### 2.1. Wireframe Chế độ Tilix Tiling N-Panes (Bố cục 1 Lớn + 2 Nhỏ & Thanh Sessions Drawer)
+
+```
++-------------------------------------------------------------------------------------------------------------------------+
+| [=] Workspace   | Phiên: Dev Stack (Started 14:20:05)   [⚡ 3 Ngầm] [Layout: ⊞ 1+2 ▾] [🔗 Sync: Session] [⏹ Stop All]   |
++-----------------+-------------------------------------------------------------------------------------------------------+
+| SESSIONS DRAWER | KHUNG CHÍNH (PANE 1 - Active Focus)       | KHUNG PHỤ 1 (PANE 2 - Top Right)                          |
+| ≡ SESSIONS  [+] | [●] api-server · PID 3102  ~/repo/api     | [●] vite-dev · PID 4091  [🔗 SYNC]  ~/repo/web            |
+|-----------------| [◫ Chia Phải] [⬒ Chia Dưới] [🗖 Zoom] [✕] | [◫ Chia Phải] [⬒ Chia Dưới] [🗖 Zoom] [✕]                 |
+| v Dev Stack (3) |-------------------------------------------+-----------------------------------------------------------|
+|   [⊞ 1+2 Tiled] | [NestFactory] Starting Nest application.. | VITE v5.4.2 ready in 280 ms                               |
+|   ● 3 running   | [RoutesResolver] AppController {/api}:    | ➜ Local:   http://localhost:5173/                         |
+|                 |   Mapped {/api/v1/commands, GET} +2ms     | ➜ Network: http://192.168.1.15:5173/                      |
+| > Docker Infra  | [HTTP] 10:14:08 GET /api/v1/health 200 OK |=================== SASH PHÂN CÁCH NGANG (ROW-RESIZE) =====|
+|   [◫ 2 Cột Dọc] | ➜ cm-api git:(main) $                     | KHUNG PHỤ 2 (PANE 3 - Bottom Right)                       |
+|   ● 1 running   |                                           | [●] worker-daemon · PID 4120  [🔗 SYNC]  ~/repo           |
+|                 |                                           | [◫ Chia Phải] [⬒ Chia Dưới] [🗖 Zoom] [✕]                 |
+| > Production    |                                           |-----------------------------------------------------------|
+|   [⊞ 2x2 Grid]  |                                           | 1:M 28 Sep 10:15:01 * Ready to accept Redis connections   |
+|   ○ Inactive    | <==== Viền Active Focus tím #744791 ====> | [WorkerEngine] Heartbeat acknowledged (queue: 0)          |
++-----------------+-------------------------------------------+-----------------------------------------------------------+
+| Active: 3 panes | Ring Buffer: 680KB/2MB | Tiling: 1+2 Main/Sub | Sync: 2 Panes Linked | Shortcuts: Ctrl+Alt+R / D / S     |
++-------------------------------------------------------------------------------------------------------------------------+
+```
+
+##### 2.2. Wireframe Bố cục Lưới 4 Ô Cân Xứng (2x2 Grid Layout Mode)
 
 ```
 +----------------------------------------------------------------------------------------------------+
-| [=] Workspace   | Active Session: Web Platform Dev (Started 14:20:05)   [⚡ 2 Ngầm] [⏹ Stop Group]  |
+| [=] Workspace   | Phiên: Microservices Cluster [Layout: ⊞ 2x2 Grid] [🔗 Sync: Off]   [⏹ Stop All]  |
++-----------------+-------------------------------------------------+--------------------------------+
+| GROUPS / SESS   | PANEL 1: auth-service (PID: 3201)               | PANEL 2: billing-api (PID: 3205)|
+| Search..        | [◫][⬒][🗖][✕] ~/repo/auth                        | [◫][⬒][🗖][✕] ~/repo/billing    |
+| v Services (4)  |-------------------------------------------------+--------------------------------|
+|   ● auth        | [AuthService] Initialized JWT public keys       | [Billing] Stripe webhook ready |
+|   ● billing     | ➜ listening on :4001                            | ➜ listening on :4002           |
+|   ● notifications========================= SASH NGANG (50%) =======================================|
+|   ● analytics   | PANEL 3: notifications (PID: 3210)              | PANEL 4: analytics (PID: 3218) |
+|                 | [◫][⬒][🗖][✕] ~/repo/notify                      | [◫][⬒][🗖][✕] ~/repo/analytics  |
+|                 |-------------------------------------------------+--------------------------------|
+|                 | [RabbitMQ] Channel connected: 'email_queue'     | [ClickHouse] Sink buffer 1024  |
+|                 | ➜ listening on :4003                            | ➜ streaming telemetry to OLAP  |
++-----------------+-------------------------------------------------+--------------------------------+
+```
+
+##### 2.3. Wireframe Chế độ Thu Phóng Toàn Màn hình (Pane Zoom / Maximize State - Ctrl+Shift+Z)
+
+```
++----------------------------------------------------------------------------------------------------+
+| [=] Workspace   | Phiên: Dev Stack   [🗗 ĐANG ZOOM PANEL: api-server] [Ctrl+Shift+Z để khôi phục]  |
 +-----------------+----------------------------------------------------------------------------------+
-| GROUPS TREE     | [xterm] frontend (PID: 2841) [x] | [xterm] backend-api (PID: 2845) [x] | [+] New Tab|
-| Search groups.. |   [View: [◻ Single] [◫ Split Dọc] [⬒ Split Ngang] ]                              |
-| v Web Platform  |----------------------------------------------------------------------------------+
-|   [▷] [⏹] [Aut] | [Actions: 🔄 Reattach Buffer | ⎚ Clear | 🗖 Maximize | ⏹ Stop Process (SIGTERM) ]  |
-|   ● 01. db-init |----------------------------------------------------------------------------------+
-|     (Code: 0)   | $ pnpm run dev                                                                   |
-|   ● 02. backend |   VITE v5.4.2  ready in 340 ms                                                   |
-|     (PID: 2845) |   ➜  Local:   http://localhost:5173/                                             |
-|   ● 03. frontend|   +------------------------------------------------------------------------------+ |
-|     (PID: 2841) |   | ⚡ MENU TIẾN TRÌNH CHẠY NGẦM (ACTIVE BACKGROUND DAEMONS)       [⏹ Stop All] [X] | |
-|                 |   +------------------------------------------------------------------------------+ |
-| > Microservices |   | ● NestJS Backend API (ID: #2) | PID: 2845 | RAM: 192MB | Buffer: 210KB/2MB      | |
-|   [▷] [⏹]       |   |   Trạng thái UI: [🙈 Tab đang ẩn (Detached)]                                  | |
-|   ○ 01. redis   |   |   Hành động: [👁️ Mở lại Tab] [📜 Xem Log] [⏹ Dừng] [💀 Force Kill]           | |
-|   ○ 02. worker  |   |------------------------------------------------------------------------------| |
-|                 |   | ● Vite Frontend Dev (ID: #1)  | PID: 2841 | RAM: 192MB | Buffer: 180KB/2MB      | |
-| > Standalone    |   |   Trạng thái UI: [👁️ Tab đang hiển thị]                                     | |
-|   ▷ cloudflared |   |   Hành động: [👁️ Focus Tab]  [📜 Xem Log] [⏹ Dừng] [💀 Force Kill]           | |
-|   ▷ backup-job  |   +------------------------------------------------------------------------------+ |
+| SESSIONS DRAWER | PANEL 1: api-server (PID: 3102) - PHÓNG TO 100% DIỆN TÍCH      [🗗 Thu nhỏ] [⏹] [✕]|
+| ≡ SESSIONS      | [● Running] · ttys004 · ~/repo/api · Kích thước viewport: 180x48                 |
+|-----------------|----------------------------------------------------------------------------------+
+| v Dev Stack (3) | [NestFactory] Starting Nest application...                                       |
+|   [ZOOM ACTIVE] | [InstanceLoader] DatabaseModule dependencies initialized +36ms                   |
+|   ● 3 running   | [DB] Connected to PostgreSQL pool (host: 127.0.0.1:5432, db: cm_dev, pool: 10)   |
+|                 | [RoutesResolver] CommandController {/api/v1/commands}:                           |
+|                 |   Mapped {/api/v1/commands, GET} route +2ms                                      |
+|                 |   Mapped {/api/v1/commands/run, POST} route +1ms                                 |
+|                 |   Mapped {/api/v1/health, GET} route +1ms                                        |
+|                 | [Nest] application successfully started on port 3000                             |
+|                 | [HTTP] 10:14:08.922 GET /api/v1/health 200 OK (2.1ms - 48 bytes)                 |
+|                 | [HTTP] 10:14:12.304 POST /api/v1/commands/run 201 Created (14.2ms)              |
+|                 | ➜ cm-api git:(main) $ _                                                          |
 +-----------------+----------------------------------------------------------------------------------+
-| Active: 2 cmds  | xterm: 120x34 | Encoding: UTF-8 | PTY Stream: Connected | Memory Buffer: 128KB     |
+| Zoomed: 1 pane  | Bố cục gốc (1+2 Tiled) được bảo toàn trong bộ nhớ; bấm Ctrl+Shift+Z để trở lại    |
 +----------------------------------------------------------------------------------------------------+
 ```
 
-##### 2.2. Wireframe Chế độ Chia Đôi Cột Dọc (Split View Mode — Horizontal Split: Trái | Phải)
-
-```
-+----------------------------------------------------------------------------------------------------+
-| [=] Workspace   | Active Session: Fullstack Stack (Started 14:20:05)     [⚡ 3 Ngầm] [⏹ Stop Group] |
-+-----------------+----------------------------------------------------------------------------------+
-| GROUPS TREE     | KHUNG TRÁI (PANE A - Active Focus)             | KHUNG PHẢI (PANE B)             |
-| Search groups.. | [● api-server (PID: 2845)] [● redis] [x]  [+]  | [● frontend (PID: 2841)] [x] [+] |
-| v Web Platform  | [View: [◻ Single] [*◫ Dọc*] [⬒ Ngang] [⇄ Hoán Đổi] | Tỉ lệ chia: 50% | 50%]      |
-|   ● 01. db      |-----------------------------------------------+----------------------------------|
-|     (Code: 0)   | [Actions: 🔄 | ⎚ | ⏹ Stop | ◫ Chuyển Phải]  | [Actions: 🔄 | ⎚ | ⏹ Stop]       |
-|   ● 02. api     |-----------------------------------------------+----------------------------------|
-|     (PID: 2845) | [Nest] 2845 - LOG [NestFactory] Starting...   |  VITE v5.4.2 ready in 280 ms     |
-|   ● 03. frontend| [Nest] 2845 - LOG [RoutesResolver] AppController|  ➜ Local: http://localhost:5173/ |
-|     (PID: 2841) | [Nest] 2845 - LOG Nest app started on :4000   |  ➜ Network: use --host to expose |
-|                 | $                                             |  ➜ press h + enter to show help  |
-| > Background    |                                               |                                  |
-|   ▷ worker      |                                               |                                  |
-|                 | <==== Viền Active Focus tím #744791 ====>     | <==== Thanh Sash kéo chuột || == |
-+-----------------+-----------------------------------------------+----------------------------------+
-| Active: 2 panes | Pane A: 68x34 (PID: 2845)                     | Pane B: 68x34 (PID: 2841)        |
-+----------------------------------------------------------------------------------------------------+
-```
-
-##### 2.3. Wireframe Chế độ Chia Đôi Hàng Ngang (Split View Mode — Vertical Split: Trên / Dưới)
-
-```
-+----------------------------------------------------------------------------------------------------+
-| [=] Workspace   | Active Session: Microservices Log Monitor              [⚡ 3 Ngầm] [⏹ Stop Group] |
-+-----------------+----------------------------------------------------------------------------------+
-| GROUPS TREE     | KHUNG TRÊN (PANE A - Active Focus)                                               |
-| Search groups.. | [● docker-compose-logs (PID: 3012)] [● worker-daemon] [x]  [+]                    |
-| v Microservices | [View: [◻ Single] [◫ Dọc] [*⬒ Ngang*] [⇄ Hoán Đổi] | Tỉ lệ: 55% Trên / 45% Dưới]   |
-|   ● 01. compose |----------------------------------------------------------------------------------+
-|   ● 02. worker  | postgres-1  | database system is ready to accept connections                     |
-|   ● 03. redis   | redis-1     | 1:M 28 Sep 10:15:01.022 * Ready to accept connections tcp          |
-|                 | worker-1    | [JobQueue] Processed 142 events in batch #481                      |
-|                 |====================== THANH PHÂN CÁCH SASH NGANG (KÉO CHUỘT / RESIZABLE) ========|
+##### 2.4. Wireframe Bố Cục Thanh Bên Kèm Section Quick Access (Dual-Section Sidebar Wireframe)===== THANH PHÂN CÁCH SASH NGANG (KÉO CHUỘT / RESIZABLE) ========|
 |                 | KHUNG DƯỚI (PANE B)                                                              |
 |                 | [● bash-interactive-test] [x]  [+]                          [Actions: ⎚ | ⏹]     |
 |                 |----------------------------------------------------------------------------------+
@@ -245,65 +258,60 @@ Màn hình trung tâm hàng ngày của người dùng. Cho phép kích hoạt c
     * **Cột 1 - Định danh & Tên:** Dot trạng thái hoạt động (active running pulse); Huy hiệu phân loại (`[Terminal]` màu tím PTY vs `[Lệnh]` màu xanh command); Tên hiển thị đầy đủ (hiển thị tên tùy biến đã đổi, ví dụ `Dev Server`, hoặc `Terminal (POWERSHELL)` nếu là mặc định, với cơ chế chống rớt dòng `text-overflow: ellipsis`); Dòng meta hiển thị `#commandId`, `PID` và loại shell.
     * **Cột 2 - Trạng thái Tab & Bộ nhớ Ring Buffer:** Căn lề thẳng hàng tuyệt đối trên toàn bộ danh sách; Huy hiệu trạng thái UI Tab (**`[👁️ Tab đang hiển thị]`** màu xanh blue Attached hoặc **`[👁️‍🗨️ Tab đang ẩn (Detached)]`** màu vàng cam khi đóng ẩn tab); Dòng telemetry hiển thị dung lượng bộ đệm Ring Buffer (ví dụ `Buffer: 118 B · Running`).
     * **Cột 3 - Thao tác Hành động trực tiếp:** Nút **`[👁️ Mở lại Tab / Focus Tab]`** (khôi phục tab trên Dockview kèm tên tùy biến; khi ở chế độ Split Mode có tùy chọn mở vào Pane A hoặc Pane B); nút **`[📜 Xem Log]`** (mở drawer Ring Buffer); nút **`[⏹ Dừng]`** (SIGTERM); nút **`[💀 Force Kill]`** (SIGKILL).
-* **Main Area: Chế độ Split View Terminal Mode (Dual-Pane Multi-Tab PTY):**
-  * **Kiến trúc Khung Đôi & Quản Lý State (Dual-Pane Architecture):**
-    * Trạng thái bố cục: `splitMode: boolean` (mặc định `false` = Single View; `true` = Split View).
-    * Hướng chia đôi: `splitDirection: 'horizontal' | 'vertical'` (`horizontal` = Cột Dọc Trái - Phải; `vertical` = Hàng Ngang Trên - Dưới).
-    * Tỉ lệ chia đôi: `splitRatio: number` (tính theo phần trăm %, giá trị từ 20 đến 80, mặc định 50 ứng với 50:50).
-    * Quản lý Tab độc lập theo 2 Pane:
-      * **Khung A (Pane 1 / Primary):** `paneA.tabs: OpenTabItem[]`, `paneA.activeTabId: string`.
-      * **Khung B (Pane 2 / Secondary):** `paneB.tabs: OpenTabItem[]`, `paneB.activeTabId: string`.
-    * Nhận diện Khung đang Focus: `focusedPaneId: 'paneA' | 'paneB'`. Bất kỳ thao tác gõ phím hoặc phím tắt ngữ cảnh sẽ hướng tới tab active của khung đang focus.
-  * **Thanh Công Cụ Điều Khiển Split (Split View Control Toolbar):**
-    * Bố trí trên thanh công cụ góc trên bên phải của Workspace:
-      * **Nút `[◻ Single View]`:** Thu gọn giao diện về 1 khung duy nhất. Toàn bộ các tab đang mở tại Pane B được tự động gộp nối tiếp vào cuối danh sách tab của Pane A mà không gián đoạn bất kỳ tiến trình nào.
-      * **Nút `[◫ Split Dọc / Split Right]`:** Kích hoạt chế độ chia đôi theo cột dọc (Side-by-side: Khung Trái | Khung Phải). Nếu Pane B chưa có tab, tab hiện tại hoặc tab kế tiếp sẽ được chuyển sang Pane B.
-      * **Nút `[⬒ Split Ngang / Split Down]`:** Kích hoạt chế độ chia đôi theo hàng ngang (Stacked: Khung Trên / Khung Dưới).
-      * **Nút `[⇄ Hoán Đổi / Swap Panes]`:** Hoán đổi toàn bộ danh sách tab và vị trí hiển thị giữa Pane A và Pane B trong 1 click.
-  * **Thanh Phân Cách Điều Chỉnh Kích Thước (Interactive Resizable Sash / Splitter):**
-    * Vị trí nằm chính giữa 2 Pane.
-    * Kích thước: Độ rộng 5px (chia dọc) hoặc độ cao 5px (chia ngang).
-    * Màu sắc: Mặc định `--border-subtle` (#242a3e); khi hover chuột hoặc đang kéo rê (dragging) chuyển sang màu chủ đạo **`--primary: #744791`** kèm hiệu ứng bóng đổ phát sáng nhẹ (`--primary-glow`).
-    * Con trỏ chuột: Tự động chuyển thành `col-resize` (khi chia dọc) hoặc `row-resize` (khi chia ngang).
-    * Cơ chế Kéo thả (Drag to Resize): Người dùng nhấn giữ chuột trái và kéo thanh Sash để thay đổi `splitRatio` realtime.
-    * Ràng buộc kích thước an toàn: Giới hạn tối thiểu **min-width: 220px** và **min-height: 150px** cho mỗi Pane, ngăn chặn xterm.js bị co rúm gây lỗi hiển thị ký tự dòng lệnh.
-    * **Tương tác Nháy đúp (Double-Click to Reset):** Nháy đúp chuột vào thanh Splitter Sash sẽ ngay lập tức khôi phục tỉ lệ chia về trạng thái cân bằng chuẩn **50:50**.
-  * **Chỉ Báo Khung Đang Focus (Active Pane Focus Indicator):**
-    * Pane đang nhận focus (đang gõ lệnh hoặc vừa click vào) được viền nhẹ bằng màu `--border-focus: #744791` (opacity 0.6) hoặc Tab Active Bar sáng rõ.
-    * Click chuột vào bất kỳ khu vực nào trong viewport hoặc thanh tab của một Pane sẽ chuyển `focusedPaneId` về Pane đó.
-  * **Dual Tab Strip Headers (Thanh Thẻ Tab Độc Lập Mỗi Khung):**
-    * Mỗi Pane sở hữu một thanh Tab Strip riêng biệt nằm phía trên terminal viewport của nó.
-    * Danh sách tab hiển thị độc lập: Pane A chỉ hiển thị tab của Pane A, Pane B chỉ hiển thị tab của Pane B.
-    * Mỗi Tab Strip có đầy đủ:
-      * Dot màu trạng thái tiến trình (Xanh = Running, Xám = Stopped, Đỏ = Crashed).
-      * Tên tab (hỗ trợ nháy đúp đổi tên đối với terminal thủ công MOD-14).
-      * Tiêu đề do chương trình đặt qua OSC 0/2 (vd. `claude`, `vim`, termsupport của oh-my-zsh): terminal thủ công chưa được đổi tên (tên mặc định `Terminal`) hiển thị tiêu đề này làm tên tab và trên thanh công cụ của pane; tên người dùng đặt qua MOD-14 luôn được ưu tiên. Tab của lệnh đã lưu giữ tên lệnh, tiêu đề chương trình chỉ hiện trong tooltip.
-      * Badge PID chẩn đoán.
-      * Nút đóng tab `[x]`: Chỉ ẩn tab khỏi Pane hiện tại, không ngắt tiến trình ngầm.
-      * Nút `[+]`: Mở terminal mới trực tiếp vào Pane đó.
-      * Hỗ trợ lăn chuột ngang (`wheel scroll`) và animation trượt tab.
-  * **Cơ Chế Kéo Thả Tab Giữa 2 Khung (Cross-Pane Tab Drag & Drop):**
-    * Người dùng có thể nhấn giữ chuột trái và kéo bất kỳ tab nào từ Tab Strip của Pane A thả sang Tab Strip của Pane B (hoặc ngược lại).
-    * Khi con trỏ chuột di chuyển vào vùng Tab Strip hoặc khung terminal của Pane đối diện, giao diện hiển thị vạch chèn (drop indicator / placeholder) rõ ràng.
-    * Thả chuột sẽ di chuyển đối tượng `OpenTabItem` từ mảng của Pane nguồn sang mảng của Pane đích, tự động focus vào tab vừa chuyển.
-  * **Menu Ngữ Cảnh Trên Tab (Tab Context Menu for Splitting):**
-    * Nhấp chuột phải (`contextmenu`) vào bất kỳ tab nào trên Tab Strip sẽ mở menu thao tác nhanh:
-      * **`◫ Chia sang bên phải (Split to Right)`:** Đưa tab hiện tại sang Pane B và bật chế độ chia dọc.
-      * **`⬒ Chia xuống dưới (Split Down)`:** Đưa tab hiện tại sang Pane B và bật chế độ chia ngang.
-      * **`⇄ Chuyển sang khung bên (Move to Other Pane)`:** Chuyển tab sang Pane đối diện (chỉ khả dụng khi đang ở Split View).
-      * **`🗖 Phóng to toàn màn hình (Maximize Pane)`:** Tạm thời ẩn Pane còn lại để tập trung vào Pane hiện tại.
-      * **`[x] Ẩn tab này (Hide Tab)`:** Ẩn tab (tiến trình vẫn chạy ngầm).
-      * **`⏹ Dừng tiến trình (Stop Process)`:** Gửi SIGTERM tới tiến trình của tab.
-  * **Quy Tắc Tự Động Thu Gọn (Auto-Collapse on Empty Pane):**
-    * Khi người dùng đóng/ẩn tất cả các tab trong Pane B: Hệ thống tự động thu gọn về Single View Mode, Pane A tự động mở rộng 100% diện tích mà không để lại khoảng trống thừa.
-    * Nếu Pane A bị đóng hết tab trong khi Pane B vẫn còn tab: Pane B tự động chuyển đổi thành Primary Pane (Pane A mới) và mở rộng 100% diện tích.
+* **Main Area: Chế độ Tilix Tiling Terminal Workspace (Recursive Binary Tree & Multi-Session PTY):**
+  * **Kiến trúc Cây Nhị phân Đệ quy (Recursive Binary Tree Tiling Engine):**
+    - Thay thế mô hình 2 pane tĩnh bằng cấu trúc cây đệ quy `TilingNode` (chi tiết tại [docs/tilix-tiling-spec.md](./tilix-tiling-spec.md)).
+    - Mỗi Session quản lý một cây layout độc lập, hỗ trợ chia đôi N lần theo chiều ngang hoặc dọc.
+    - Hỗ trợ thêm/bớt panel linh hoạt: khi chia đôi (Split Right `Ctrl+Alt+R` hoặc Split Down `Ctrl+Alt+D`), panel mới được chèn làm nhánh con kề cạnh; khi đóng panel (`[✕]` hoặc `Ctrl+Shift+W`), không gian được tự động hoàn lại cho sibling node kề cạnh.
+  * **Thanh Công Cụ Workspace & Layout Presets Toolbar:**
+    - **Menu Layout Presets (Bố cục Mẫu):**
+      - `[◻] Single Pane` (100% diện tích).
+      - `[◫] 2 Columns` (50:50 trái - phải).
+      - `[⬒] 2 Rows` (50:50 trên - dưới).
+      - `[⊞] 2x2 Grid` (4 ô vuông đối xứng).
+      - `[◨] 1+2 Tiled` (1 panel chính 60% bên trái + 2 panel phụ xếp tầng bên phải).
+      - `[⬓] 1 Top Main + 2 Bottom` (1 panel chính nằm trên, 2 panel phụ nằm dưới).
+      - `[⚏] 3 Columns` (3 cột song song 33:33:33).
+      - `[💾] Lưu Layout Thành Mẫu Mới...`: Lưu cấu trúc phân nhánh hiện tại vào danh sách preset.
+    - **Bộ Điều Khiển Phát Sóng Gõ Phím Đồng Bộ (Synchronized Input Broadcast):**
+      - Toggle switch: `Off` | `Session` | `Group`.
+      - Khi bật `Session` hoặc `Group`, bất kỳ ký tự nào gõ vào panel đang active sẽ được phát sóng đồng thời qua IPC stdin tới tất cả các terminal liên kết.
+      - Panel đang được liên kết hiển thị viền phát xung và huy hiệu `[🔗 SYNC]` màu tím/xanh nổi bật.
+    - **Nút Batch Action:** `[▷ Chạy lại cả Session]`, `[⏹ Dừng cả Session]`.
+  * **Mini-Headerbar Trên Từng Terminal Panel (28px Per-Pane Chrome):**
+    - Nằm ngay trên đỉnh mỗi terminal viewport, trang bị đầy đủ controls cục bộ:
+      - Dot trạng thái hoạt động: 🟢 Running, 🟡 Starting, ⚪ Exited, 🔴 Failed.
+      - Tên terminal tùy biến (hỗ trợ nháy đúp đổi tên MOD-14) và tiêu đề chương trình (OSC 0/2).
+      - Huy hiệu PID và thư mục CWD hiện tại.
+      - Huy hiệu `[🔗 SYNC]` khi đang ở chế độ gõ phím đồng bộ.
+      - Cụm nút thao tác nhanh:
+        - `[◫]` Split Right (Chia sang phải).
+        - `[⬒]` Split Down (Chia xuống dưới).
+        - `[🗖]` Zoom / Maximize (Phóng to 100% / Khôi phục layout cũ bằng `Ctrl+Shift+Z`).
+        - `[🔄]` Reattach Buffer (Xả lại 1MB/2MB log từ ring buffer).
+        - `[⎚]` Clear (Xóa màn hình xterm cục bộ).
+        - `[⏹]` Stop Process (Gửi SIGTERM).
+        - `[✕]` Close Pane (Thu hồi panel khỏi cây nhị phân, tiến trình vẫn chạy ngầm nếu là daemon).
+  * **Thanh Phân Cách Điều Chỉnh Kích Thước Đa Trục (Interactive Multi-Axis Resizable Sashes):**
+    - Phân bố dọc và ngang giữa các panel kề nhau.
+    - Độ dày 5px, hover/drag chuyển sang màu chủ đạo `--primary: #744791` kèm hiệu ứng glow.
+    - Con trỏ tự động chuyển `col-resize` hoặc `row-resize`.
+    - Ràng buộc an toàn: Tối thiểu `min-width: 200px` và `min-height: 120px` mỗi ô terminal để tránh co rút xterm.js.
+    - Nháy đúp (`dblclick`) vào thanh sash bất kỳ lập tức cân bằng lại 2 panel con về tỉ lệ chuẩn **50:50**.
+  * **Cơ Chế Thu Phóng Tức Thì (Pane Zoom / Maximize):**
+    - Cho phép lập trình viên tập trung quan sát log của 1 panel duy nhất trong chốc lát mà không cần đóng các panel khác.
+    - Khi Zoom được kích hoạt, layout cây nhị phân được "đóng băng" (freeze) trong bộ nhớ, viewport được mở rộng 100% diện tích workspace.
+    - Nhấn `Ctrl+Shift+Z` lần nữa sẽ "giải đông" (unfreeze) và trả lại chính xác vị trí, kích thước dòng cột ban đầu.
+  * **Thanh Quản Lý Phiên Làm Việc (Sessions Drawer / Sidebar):**
+    - Cho phép tạo nhiều Phiên làm việc (Sessions), mỗi phiên có 1 cây tiling layout riêng.
+    - Hiển thị danh sách card kèm sơ đồ thu nhỏ (mini layout thumbnail), số lượng terminal đang chạy.
+    - Chuyển đổi qua lại giữa các Session mượt mà bằng phím tắt `Ctrl+PageUp` / `Ctrl+PageDown`.
   * **Cơ Chế Đồng Bộ Kernel PTY & FitAddon Độc Lập:**
-    * Mỗi `XtermPane` trong từng Pane sở hữu một instance `ResizeObserver` độc lập gắn với container DOM của nó.
-    * Khi người dùng kéo thanh Splitter Sash, chuyển đổi chế độ chia đôi, hoặc thay đổi kích thước cửa sổ app:
-      * Cả hai instance xterm.js gọi `fitAddon.fit()` độc lập dựa trên kích thước pixel thực tế (width & height) của từng Pane.
-      * Tính toán lại chính xác số lượng cột (`cols`) và số dòng (`rows`) của từng terminal.
-      * Kích hoạt debounce (50ms) và gọi lệnh IPC `pty_resize({ commandId, cols, rows })` tới backend Rust để cập nhật kernel PTY tương ứng.
-      * Đảm bảo các chương trình tương tác CLI (như `htop`, `vim`, `nano`, các bảng log kẻ khung) tự động vẽ lại vừa khít với kích thước của từng Pane mà không bị vỡ chữ hay lệch hàng.
+    - Mỗi `XtermPane` trong từng ô panel sở hữu một instance `ResizeObserver` độc lập.
+    - Khi kéo bất kỳ thanh sash nào hoặc đổi kích thước cửa sổ app:
+      - Từng instance xterm gọi `fitAddon.fit()` theo kích thước pixel thực tế của ô panel đó.
+      - Backend Rust nhận sự kiện `pty_resize({ commandId, cols, rows })` và cập nhật kích thước terminal kernel.
+      - Đảm bảo các giao diện tương tác CLI (như `htop`, `vim`, `nano`, các bảng log kẻ khung) tự động vẽ lại vừa khít với kích thước của từng Pane mà không bị vỡ chữ hay lệch hàng.
 
 #### 4. Các Trạng thái Giao diện (UI States)
 * **Single View State:** Chế độ 1 khung mặc định. Toàn bộ các tab nằm chung trên một Tab Strip duy nhất chiếm 100% chiều rộng.

@@ -7,6 +7,7 @@
 - [docs/plan.md](./docs/plan.md): Báo cáo nghiên cứu & thiết kế kiến trúc hệ thống
 - [docs/checklist.md](./docs/checklist.md): Danh mục kiểm tra triển khai MVP
 - [docs/screens.md](./docs/screens.md): Đặc tả thiết kế chi tiết giao diện các màn hình (SCR-01…SCR-05 & Modals)
+- [docs/tilix-tiling-spec.md](./docs/tilix-tiling-spec.md): Đặc tả kiến trúc chia màn hình & panel theo mô hình Tilix Tiling Emulator
 - [docs/structure.md](./docs/structure.md): Bản đồ cấu trúc thư mục codebase frontend & backend
 
 ---

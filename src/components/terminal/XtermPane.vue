@@ -1,7 +1,7 @@
 <template>
   <div class="xterm-pane-container">
     <!-- Pane Toolbar -->
-    <div class="pane-toolbar">
+    <div v-if="!hideToolbar" class="pane-toolbar">
       <div class="toolbar-left">
         <span class="cmd-badge" :class="processStatus" :title="commandName">
           <span class="status-dot" :class="{ active: processStatus === 'running' }" />
@@ -118,12 +118,14 @@ const props = withDefaults(
     fontFamily?: string;
     fontSize?: number;
     restarting?: boolean;
+    hideToolbar?: boolean;
   }>(),
   {
     processStatus: 'idle',
     fontFamily: 'JetBrains Mono',
     fontSize: 13,
     restarting: false,
+    hideToolbar: false,
   }
 );
 
@@ -165,6 +167,7 @@ const emit = defineEmits<{
   (e: 'cwd-change', cwd: string): void;
   (e: 'title-change', title: string): void;
   (e: 'phase-change', phase: 'prompt' | 'input' | 'running'): void;
+  (e: 'data', data: string): void;
 }>();
 
 const terminalElement = ref<HTMLDivElement | null>(null);
@@ -553,6 +556,7 @@ onMounted(async () => {
     const data = isPasting || bracketedPaste || typed.includes('\x1b[200~')
       ? typed
       : typed.replace(/\u00a0/g, ' ');
+    emit('data', data);
     // ConPTY focus reporting is terminal protocol traffic, not user editing.
     // Do not lose the ↑/↓ position when the app window is refocused.
     if (!isFocusReport(data)) resetHistoryNavigation();
@@ -1036,6 +1040,8 @@ defineExpose({
   pasteText,
   sendCommand,
   inputState,
+  handleReattach,
+  handleClear,
 });
 </script>
 
