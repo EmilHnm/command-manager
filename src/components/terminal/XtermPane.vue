@@ -377,6 +377,13 @@ onMounted(async () => {
   }, 50);
   compositionTarget = term.element?.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea') || null;
   if (compositionTarget) {
+    // xterm styles its helper textarea `white-space: nowrap`, so WebKitGTK
+    // keeps a run of spaces visible by rewriting one of them as U+00A0 when
+    // the next space is typed. xterm diffs that textarea to find what the IME
+    // inserted; the rewritten old space breaks the diff and xterm resends the
+    // whole textarea (everything typed since the last Enter). `pre` keeps
+    // spaces as typed.
+    compositionTarget.style.whiteSpace = 'pre';
     onCompositionStart = () => {
       composing = true;
       suggestionText.value = '';
