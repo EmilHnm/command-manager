@@ -157,7 +157,7 @@ onBeforeUnmount(() => {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background-color: rgba(11, 13, 19, 0.8);
+  background-color: var(--surface-overlay, #0b0d13cc);
   backdrop-filter: blur(6px);
   z-index: 120;
   display: flex;
@@ -172,7 +172,7 @@ onBeforeUnmount(() => {
   background-color: var(--bg-surface);
   border: 1px solid var(--border-medium);
   border-radius: var(--radius-lg);
-  box-shadow: 0 20px 30px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 20px 30px #00000099;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -180,8 +180,8 @@ onBeforeUnmount(() => {
 }
 
 .confirm-modal-container.is-danger {
-  box-shadow: 0 20px 30px rgba(0, 0, 0, 0.7), 0 0 20px rgba(239, 68, 68, 0.25);
-  border-color: rgba(239, 68, 68, 0.4);
+  box-shadow: 0 20px 30px #000000b3, 0 0 20px #ef444440;
+  border-color: #ef444466;
 }
 
 .hazard-stripe {
@@ -214,12 +214,12 @@ onBeforeUnmount(() => {
 }
 
 .icon-badge.danger-badge {
-  background-color: rgba(239, 68, 68, 0.2);
+  background-color: var(--status-failed-bg, #ef444433);
   color: #ef4444;
 }
 
 .icon-badge.warning-badge {
-  background-color: rgba(245, 158, 11, 0.2);
+  background-color: var(--status-starting-bg, #f59e0b33);
   color: #f59e0b;
 }
 
@@ -268,8 +268,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  background-color: rgba(239, 68, 68, 0.12);
-  border: 1px solid rgba(239, 68, 68, 0.35);
+  background-color: var(--status-failed-bg, #ef44441f);
+  border: 1px solid #ef444459;
   border-radius: var(--radius-md);
   padding: 10px 12px;
 }
@@ -298,8 +298,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  background-color: rgba(116, 71, 145, 0.15);
-  border: 1px solid rgba(116, 71, 145, 0.35);
+  background-color: var(--primary-alpha-15, #74479126);
+  border: 1px solid var(--primary-alpha-35, #74479159);
   border-radius: var(--radius-md);
   padding: 10px 12px;
   font-size: 12px;
@@ -378,7 +378,7 @@ onBeforeUnmount(() => {
 .btn-danger {
   background-color: #ef4444;
   color: #ffffff;
-  box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+  box-shadow: 0 0 10px #ef444466;
 }
 
 .btn-danger:hover:not(:disabled) {

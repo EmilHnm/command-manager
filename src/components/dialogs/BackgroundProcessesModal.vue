@@ -463,7 +463,7 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: 1200;
-  background-color: rgba(11, 13, 19, 0.75);
+  background-color: var(--surface-overlay, #0b0d13bf);
   backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
@@ -478,7 +478,7 @@ onBeforeUnmount(() => {
   background-color: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(116, 71, 145, 0.2);
+  box-shadow: 0 20px 40px #00000099, 0 0 0 1px var(--primary-alpha-20, #74479133);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -505,14 +505,14 @@ onBeforeUnmount(() => {
 
 .stop-feedback.success {
   color: #bbf7d0;
-  background: rgba(18, 53, 34, 0.95);
-  border: 1px solid rgba(74, 222, 128, 0.55);
+  background: #123522f2;
+  border: 1px solid #4ade808c;
 }
 
 .stop-feedback.error {
   color: #fecaca;
-  background: rgba(127, 29, 29, 0.95);
-  border: 1px solid rgba(248, 113, 113, 0.55);
+  background: #7f1d1df2;
+  border: 1px solid #f871718c;
 }
 
 .header-left {
@@ -554,9 +554,9 @@ onBeforeUnmount(() => {
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 9999px;
-  background: rgba(16, 185, 129, 0.15);
+  background: var(--status-running-bg, #10b98126);
   color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  border: 1px solid #10b9814d;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -649,8 +649,8 @@ onBeforeUnmount(() => {
 }
 
 .process-card.is-detached {
-  border-color: rgba(245, 158, 11, 0.3);
-  background-color: rgba(245, 158, 11, 0.03);
+  border-color: #f59e0b4d;
+  background-color: #f59e0b08;
 }
 
 .card-main {
@@ -703,15 +703,15 @@ onBeforeUnmount(() => {
 }
 
 .proc-type-badge.badge-terminal {
-  background: rgba(168, 85, 247, 0.16);
+  background: #a855f729;
   color: #c084fc;
-  border: 1px solid rgba(168, 85, 247, 0.35);
+  border: 1px solid #a855f759;
 }
 
 .proc-type-badge.badge-command {
-  background: rgba(59, 130, 246, 0.15);
+  background: #3b82f626;
   color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.35);
+  border: 1px solid #3b82f659;
 }
 
 .proc-name {
@@ -774,15 +774,15 @@ onBeforeUnmount(() => {
 }
 
 .tab-status-badge.attached {
-  background: rgba(59, 130, 246, 0.15);
+  background: #3b82f626;
   color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.3);
+  border: 1px solid #3b82f64d;
 }
 
 .tab-status-badge.detached {
-  background: rgba(245, 158, 11, 0.15);
+  background: var(--status-starting-bg, #f59e0b26);
   color: #fbbf24;
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  border: 1px solid #f59e0b4d;
 }
 
 .proc-telemetry {
@@ -807,9 +807,9 @@ onBeforeUnmount(() => {
 }
 
 .btn-danger-subtle {
-  background-color: rgba(239, 68, 68, 0.12);
+  background-color: var(--status-failed-bg, #ef44441f);
   color: #ef4444;
-  border: 1px solid rgba(239, 68, 68, 0.25);
+  border: 1px solid #ef444440;
 }
 
 .btn-danger-subtle:hover {

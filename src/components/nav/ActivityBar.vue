@@ -168,6 +168,6 @@ const navItems = computed(() => [
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+  box-shadow: 0 0 6px var(--status-running-glow, #10b98199);
 }
 </style>

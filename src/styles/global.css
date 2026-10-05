@@ -95,24 +95,24 @@ body {
 }
 
 .btn-danger {
-  background-color: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
-  border-color: rgba(239, 68, 68, 0.3);
+  background-color: var(--status-failed-bg, #ef444426);
+  color: var(--status-failed, #ef4444);
+  border-color: #ef44444d;
 }
 
 .btn-danger:hover {
-  background-color: #ef4444;
+  background-color: var(--status-failed, #ef4444);
   color: #ffffff;
 }
 
 .btn-success {
-  background-color: rgba(16, 185, 129, 0.15);
-  color: #10b981;
-  border-color: rgba(16, 185, 129, 0.3);
+  background-color: var(--status-running-bg, #10b98126);
+  color: var(--status-running, #10b981);
+  border-color: #10b9814d;
 }
 
 .btn-success:hover {
-  background-color: #10b981;
+  background-color: var(--status-running, #10b981);
   color: #ffffff;
 }
 
@@ -236,38 +236,38 @@ select.select {
 .badge-running {
   background: var(--status-running-bg);
   color: var(--status-running);
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  border: 1px solid #10b9814d;
 }
 
 .badge-idle {
   background: var(--status-idle-bg);
   color: var(--status-idle);
-  border: 1px solid rgba(100, 116, 139, 0.3);
+  border: 1px solid #64748b4d;
 }
 
 .badge-failed {
   background: var(--status-failed-bg);
   color: var(--status-failed);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  border: 1px solid #ef44444d;
 }
 
 .badge-starting {
   background: var(--status-starting-bg);
   color: var(--status-starting);
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  border: 1px solid #f59e0b4d;
 }
 
 .badge-primary {
   background: var(--primary-subtle);
-  color: #c49be4;
-  border: 1px solid rgba(116, 71, 145, 0.4);
+  color: var(--primary-accent, #c49be4);
+  border: 1px solid var(--primary-alpha-40, #74479166);
 }
 
 /* Modal Overlay & Card */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background-color: rgba(10, 12, 18, 0.75);
+  background-color: var(--surface-overlay, #0a0c12bf);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -322,7 +322,7 @@ select.select {
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
-  background-color: rgba(15, 17, 23, 0.5);
+  background-color: #0f111780;
 }
 
 /* Animations */
@@ -371,7 +371,7 @@ select.select {
 
 /* Dockview Theme Overrides for Dark UI */
 .dockview-theme-dark {
-  --dv-drag-over-background-color: rgba(116, 71, 145, 0.25);
+  --dv-drag-over-background-color: var(--primary-alpha-25, #74479140);
   --dv-drag-over-border-color: var(--primary);
   --dv-tabs-container-background-color: var(--bg-sidebar);
   --dv-tab-background-color: transparent;

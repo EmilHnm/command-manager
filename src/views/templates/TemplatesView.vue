@@ -484,7 +484,7 @@ const handleRunExecution = async (payload: {
 .view-subtitle code {
   font-family: var(--font-mono);
   color: #4cd7f6;
-  background: rgba(0, 0, 0, 0.3);
+  background: #0000004d;
   padding: 1px 4px;
   border-radius: 3px;
 }
@@ -516,22 +516,22 @@ const handleRunExecution = async (payload: {
 }
 
 .metric-icon.purple {
-  background-color: rgba(116, 71, 145, 0.2);
+  background-color: var(--primary-alpha-20, #74479133);
   color: #e4b5ff;
 }
 
 .metric-icon.amber {
-  background-color: rgba(245, 158, 11, 0.2);
+  background-color: var(--status-starting-bg, #f59e0b33);
   color: #f59e0b;
 }
 
 .metric-icon.emerald {
-  background-color: rgba(16, 185, 129, 0.2);
+  background-color: var(--status-running-bg, #10b98133);
   color: #4edea3;
 }
 
 .metric-icon.cyan {
-  background-color: rgba(6, 182, 212, 0.2);
+  background-color: #06b6d433;
   color: #4cd7f6;
 }
 
@@ -707,15 +707,15 @@ const handleRunExecution = async (payload: {
 }
 
 .badge-exec.mode-shell {
-  background-color: rgba(245, 158, 11, 0.15);
+  background-color: var(--status-starting-bg, #f59e0b26);
   color: #f59e0b;
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  border: 1px solid #f59e0b4d;
 }
 
 .badge-exec.mode-argv {
-  background-color: rgba(16, 185, 129, 0.15);
+  background-color: var(--status-running-bg, #10b98126);
   color: #4edea3;
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  border: 1px solid #10b9814d;
 }
 
 .mono-code-block {
@@ -753,9 +753,9 @@ const handleRunExecution = async (payload: {
 
 .badge-secret {
   font-size: 10px;
-  background-color: rgba(245, 158, 11, 0.15);
+  background-color: var(--status-starting-bg, #f59e0b26);
   color: #f59e0b;
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  border: 1px solid #f59e0b4d;
   padding: 2px 6px;
   border-radius: 3px;
   display: flex;
@@ -765,9 +765,9 @@ const handleRunExecution = async (payload: {
 
 .badge-preset {
   font-size: 10px;
-  background-color: rgba(6, 182, 212, 0.15);
+  background-color: #06b6d426;
   color: #4cd7f6;
-  border: 1px solid rgba(6, 182, 212, 0.3);
+  border: 1px solid #06b6d44d;
   padding: 2px 6px;
   border-radius: 3px;
 }
@@ -807,8 +807,8 @@ const handleRunExecution = async (payload: {
 }
 
 .btn-run {
-  background-color: rgba(16, 185, 129, 0.15);
-  border-color: rgba(16, 185, 129, 0.4);
+  background-color: var(--status-running-bg, #10b98126);
+  border-color: #10b98166;
   color: #4edea3;
   font-weight: 600;
 }
@@ -888,8 +888,8 @@ const handleRunExecution = async (payload: {
   gap: 12px;
   padding: 9px 12px;
   color: #fecaca;
-  background: rgba(127, 29, 29, 0.88);
-  border: 1px solid rgba(248, 113, 113, 0.45);
+  background: #7f1d1de0;
+  border: 1px solid #f8717173;
   border-radius: var(--radius-sm);
   font-size: 12px;
 }

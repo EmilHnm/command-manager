@@ -305,7 +305,7 @@ const handleCancel = () => {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background-color: rgba(11, 13, 19, 0.8);
+  background-color: var(--surface-overlay, #0b0d13cc);
   backdrop-filter: blur(6px);
   z-index: 120;
   display: flex;
@@ -320,7 +320,7 @@ const handleCancel = () => {
   background-color: var(--bg-surface);
   border: 1px solid var(--border-medium);
   border-radius: var(--radius-lg);
-  box-shadow: 0 20px 35px -5px rgba(0, 0, 0, 0.8), 0 0 20px rgba(116, 71, 145, 0.28);
+  box-shadow: 0 20px 35px -5px #000000cc, 0 0 20px var(--primary-alpha-30, #74479147);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -351,8 +351,8 @@ const handleCancel = () => {
   width: 30px;
   height: 30px;
   border-radius: var(--radius-md);
-  background-color: rgba(116, 71, 145, 0.2);
-  border: 1px solid rgba(116, 71, 145, 0.4);
+  background-color: var(--primary-alpha-20, #74479133);
+  border: 1px solid var(--primary-alpha-40, #74479166);
   color: var(--primary);
   display: flex;
   align-items: center;
@@ -404,8 +404,8 @@ const handleCancel = () => {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  background-color: rgba(116, 71, 145, 0.1);
-  border: 1px solid rgba(116, 71, 145, 0.25);
+  background-color: var(--primary-alpha-10, #7447911a);
+  border: 1px solid var(--primary-alpha-25, #74479140);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
 }
@@ -444,8 +444,8 @@ const handleCancel = () => {
 .preview-badge {
   font-size: 10px;
   color: var(--secondary);
-  background-color: rgba(78, 222, 163, 0.12);
-  border: 1px solid rgba(78, 222, 163, 0.3);
+  background-color: var(--secondary-container, #4edea31f);
+  border: 1px solid #4edea34d;
   border-radius: var(--radius-sm);
   padding: 1px 6px;
 }
@@ -547,7 +547,7 @@ const handleCancel = () => {
 
 .input-container.has-error {
   border-color: var(--status-failed);
-  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25);
+  box-shadow: 0 0 0 2px #ef444440;
 }
 
 .input-icon {

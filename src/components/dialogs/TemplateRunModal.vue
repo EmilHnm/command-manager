@@ -541,7 +541,7 @@ const handleRun = () => {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background-color: rgba(11, 13, 19, 0.75);
+  background-color: var(--surface-overlay, #0b0d13bf);
   backdrop-filter: blur(6px);
   z-index: 100;
   display: flex;
@@ -556,7 +556,7 @@ const handleRun = () => {
   background-color: var(--bg-surface);
   border: 1px solid var(--border-medium);
   border-radius: var(--radius-lg);
-  box-shadow: 0 20px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(116, 71, 145, 0.25);
+  box-shadow: 0 20px 30px #00000099, 0 0 20px var(--primary-alpha-25, #74479140);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -773,7 +773,7 @@ const handleRun = () => {
 .token-tag {
   font-family: var(--font-mono);
   font-size: 11px;
-  background-color: rgba(116, 71, 145, 0.2);
+  background-color: var(--primary-alpha-20, #74479133);
   color: #e4b5ff;
   padding: 1px 5px;
   border-radius: 3px;
@@ -961,8 +961,8 @@ select.form-input option {
 .preview-error {
   padding: 7px 9px;
   color: #fecaca;
-  background: rgba(127, 29, 29, 0.35);
-  border: 1px solid rgba(248, 113, 113, 0.35);
+  background: #7f1d1d59;
+  border: 1px solid #f8717159;
   border-radius: var(--radius-sm);
   font-size: 11px;
 }
@@ -973,7 +973,7 @@ select.form-input option {
   gap: 3px;
   margin-top: 8px;
   padding: 8px 10px;
-  border: 1px solid rgba(245, 190, 80, 0.35);
+  border: 1px solid #f5be5059;
   border-radius: 6px;
   color: #f5be50;
   font-size: 11px;

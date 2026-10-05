@@ -530,7 +530,7 @@ const handleSave = async () => {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background-color: rgba(11, 13, 19, 0.75);
+  background-color: var(--surface-overlay, #0b0d13bf);
   backdrop-filter: blur(6px);
   z-index: 100;
   display: flex;
@@ -545,7 +545,7 @@ const handleSave = async () => {
   background-color: var(--bg-surface);
   border: 1px solid var(--border-medium);
   border-radius: var(--radius-lg);
-  box-shadow: 0 20px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(116, 71, 145, 0.25);
+  box-shadow: 0 20px 30px #00000099, 0 0 20px var(--primary-alpha-25, #74479140);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -759,7 +759,7 @@ const handleSave = async () => {
 
 .template-highlight mark {
   color: #f0c8ff;
-  background: rgba(116, 71, 145, 0.45);
+  background: var(--primary-alpha-45, #74479173);
   border-radius: 2px;
 }
 
@@ -802,11 +802,11 @@ const handleSave = async () => {
 .token-pill {
   font-family: var(--font-mono);
   font-size: 11px;
-  background-color: rgba(116, 71, 145, 0.25);
+  background-color: var(--primary-alpha-25, #74479140);
   color: #e4b5ff;
   padding: 1px 6px;
   border-radius: 3px;
-  border: 1px solid rgba(116, 71, 145, 0.4);
+  border: 1px solid var(--primary-alpha-40, #74479166);
 }
 
 .no-tokens {
@@ -1011,7 +1011,7 @@ const handleSave = async () => {
 .form-textarea.has-error,
 .table-input.has-error {
   border-color: var(--status-failed, #ef4444) !important;
-  background-color: rgba(239, 68, 68, 0.05) !important;
+  background-color: #ef44440d !important;
 }
 
 .field-error-msg {
@@ -1033,8 +1033,8 @@ const handleSave = async () => {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background-color: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background-color: var(--status-failed-bg, #ef44441a);
+  border: 1px solid #ef44444d;
   border-radius: var(--radius-md);
   color: var(--status-failed, #ef4444);
   font-size: 12px;

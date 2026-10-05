@@ -231,13 +231,13 @@ const isCollapsed = ref(false);
 }
 
 .session-card:hover {
-  border-color: rgba(116, 71, 145, 0.5);
+  border-color: var(--primary-alpha-50, #74479180);
   background-color: var(--bg-surface-hover);
 }
 
 .session-card.active {
   border-color: var(--primary);
-  background-color: rgba(116, 71, 145, 0.15);
+  background-color: var(--primary-alpha-15, #74479126);
   box-shadow: inset 0 0 0 1px var(--primary);
 }
 
@@ -301,7 +301,7 @@ const isCollapsed = ref(false);
 
 .status-dot.active {
   background-color: var(--status-running);
-  box-shadow: 0 0 5px rgba(16, 185, 129, 0.6);
+  box-shadow: 0 0 5px var(--status-running-glow, #22c55eb3);
 }
 
 .running-text {

@@ -102,7 +102,7 @@ const handlePointerDown = (e: PointerEvent) => {
 .tiling-sash:hover,
 .tiling-sash.is-dragging {
   background-color: var(--primary);
-  box-shadow: 0 0 8px rgba(116, 71, 145, 0.4);
+  box-shadow: 0 0 8px var(--primary-alpha-40, #74479166);
 }
 
 /* Horizontal split = divider is a vertical bar (side by side) */
@@ -134,14 +134,14 @@ const handlePointerDown = (e: PointerEvent) => {
   width: 2px;
   height: 20px;
   border-radius: 1px;
-  background-color: rgba(228, 181, 255, 0.6);
+  background-color: var(--primary-accent-alpha-60, #e4b5ff99);
 }
 
 .sash-vertical .sash-line {
   width: 20px;
   height: 2px;
   border-radius: 1px;
-  background-color: rgba(228, 181, 255, 0.6);
+  background-color: var(--primary-accent-alpha-60, #e4b5ff99);
 }
 
 .tiling-sash.is-dragging .sash-line {

@@ -226,7 +226,7 @@ const selectItem = (item: any) => {
   background-color: var(--bg-surface);
   border: 1px solid var(--border-medium);
   border-radius: var(--radius-lg);
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 10px 10px -5px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 20px 25px -5px #00000099, 0 10px 10px -5px #00000066;
   overflow: hidden;
   display: flex;
   flex-direction: column;

@@ -199,8 +199,8 @@ const handleRestore = () => {
   gap: 10px;
   cursor: pointer;
   padding: 8px 10px;
-  background-color: rgba(239, 68, 68, 0.08);
-  border: 1px solid rgba(239, 68, 68, 0.25);
+  background-color: var(--status-failed-bg, #ef444414);
+  border: 1px solid #ef444440;
   border-radius: var(--radius-md);
 }
 

@@ -149,8 +149,8 @@ const close = () => {
   align-items: center;
   gap: 6px;
   padding: 2px 8px;
-  background-color: rgba(100, 116, 139, 0.12);
-  border: 1px solid rgba(100, 116, 139, 0.25);
+  background-color: var(--status-idle-bg, #64748b1f);
+  border: 1px solid #64748b40;
   border-radius: 9999px;
   font-size: 10.5px;
   font-weight: 500;
@@ -162,7 +162,7 @@ const close = () => {
 
 .daemon-pill.active {
   background-color: var(--status-running-bg);
-  border-color: rgba(16, 185, 129, 0.35);
+  border-color: #10b98159;
   color: #34d399;
 }
 

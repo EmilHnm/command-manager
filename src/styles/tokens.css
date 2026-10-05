@@ -6,14 +6,49 @@
   --primary-hover: #8956aa;
   --primary-active: #5f3977;
   --primary-accent: #e4b5ff;
-  --primary-subtle: rgba(116, 71, 145, 0.16);
-  --primary-glow: rgba(116, 71, 145, 0.35);
+  --primary-light: #e4b5ff;
+  --primary-subtle: #74479129;
+  --primary-glow: #74479159;
+
+  /* Primary Alpha Scales (Unified Hex format) */
+  --primary-alpha-08: #74479114;
+  --primary-alpha-10: #7447911a;
+  --primary-alpha-12: #7447911f;
+  --primary-alpha-15: #74479126;
+  --primary-alpha-20: #74479133;
+  --primary-alpha-22: #74479138;
+  --primary-alpha-25: #74479140;
+  --primary-alpha-30: #7447914d;
+  --primary-alpha-35: #74479159;
+  --primary-alpha-40: #74479166;
+  --primary-alpha-45: #74479173;
+  --primary-alpha-50: #74479180;
+  --primary-alpha-60: #74479199;
+  --primary-alpha-90: #744791e6;
+
+  /* Primary Accent Alpha Scales */
+  --primary-accent-alpha-25: #e4b5ff40;
+  --primary-accent-alpha-50: #e4b5ff80;
+  --primary-accent-alpha-60: #e4b5ff99;
+
+  /* Surface Alpha Tokens */
+  --surface-overlay: #0c0e14b8;
+  --surface-card: #1a1e2bf2;
+  --surface-white-04: #ffffff0a;
+  --surface-white-05: #ffffff0d;
+  --surface-white-06: #ffffff0f;
+  --surface-white-08: #ffffff14;
+  --surface-white-10: #ffffff1a;
+  --surface-white-12: #ffffff1f;
+  --surface-white-15: #ffffff26;
+  --surface-white-20: #ffffff33;
 
   /* Stitch Secondary & Tertiary Accents */
   --secondary: #4edea3;
-  --secondary-container: rgba(78, 222, 163, 0.15);
+  --secondary-container: #4edea326;
+  --secondary-alpha-45: #4edea373;
   --tertiary: #4cd7f6;
-  --tertiary-container: rgba(76, 215, 246, 0.15);
+  --tertiary-container: #4cd7f626;
 
   /* Stitch Surface Container Scale (Dark Precision Theme) */
   --surface-container-lowest: #0c0e14;
@@ -53,10 +88,12 @@
   --status-warning: #f97316;
 
   /* Status Background Tints */
-  --status-running-bg: rgba(16, 185, 129, 0.12);
-  --status-failed-bg: rgba(239, 68, 68, 0.12);
-  --status-starting-bg: rgba(245, 158, 11, 0.12);
-  --status-idle-bg: rgba(100, 116, 139, 0.12);
+  --status-running-bg: #10b9811f;
+  --status-running-glow: #22c55eb3;
+  --status-failed-bg: #ef44441f;
+  --status-failed-hover: #ef444433;
+  --status-starting-bg: #f59e0b1f;
+  --status-idle-bg: #64748b1f;
 
   /* Font Families */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -74,7 +111,7 @@
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-xl: 12px;
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.45), 0 2px 4px -1px rgba(0, 0, 0, 0.35);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.55), 0 4px 6px -2px rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 1px 2px 0 #00000059;
+  --shadow-md: 0 4px 6px -1px #00000073, 0 2px 4px -1px #00000059;
+  --shadow-lg: 0 10px 15px -3px #0000008c, 0 4px 6px -2px #00000073;
 }

@@ -564,7 +564,7 @@ const handleImportFile = async (event: Event) => {
   color: var(--primary-accent);
   padding: 1px 6px;
   border-radius: var(--radius-xs);
-  border: 1px solid rgba(116, 71, 145, 0.35);
+  border: 1px solid var(--primary-alpha-35, #74479159);
 }
 
 .view-subtitle {
@@ -597,7 +597,7 @@ const handleImportFile = async (event: Event) => {
   gap: 12px;
   padding: 11px 12px;
   border-radius: var(--radius-md);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 12px 30px #00000059;
   font-size: 12px;
   line-height: 1.4;
   pointer-events: auto;
@@ -606,13 +606,13 @@ const handleImportFile = async (event: Event) => {
 .library-toast.error {
   color: #fecaca;
   background: #3b1418;
-  border: 1px solid rgba(248, 113, 113, 0.55);
+  border: 1px solid #f871718c;
 }
 
 .library-toast.success {
   color: #bbf7d0;
   background: #123522;
-  border: 1px solid rgba(74, 222, 128, 0.55);
+  border: 1px solid #4ade808c;
 }
 
 .toast-close {
@@ -631,7 +631,7 @@ const handleImportFile = async (event: Event) => {
 }
 
 .toast-close:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: #ffffff1f;
 }
 
 /* 5 Quick Stats Cards (from Stitch SCR-02) */
@@ -651,18 +651,18 @@ const handleImportFile = async (event: Event) => {
 
 .quick-stat-card {
   cursor: pointer;
-  border-color: rgba(116, 71, 145, 0.25);
+  border-color: var(--primary-alpha-25, #74479140);
 }
 
 .quick-stat-card:hover {
-  border-color: rgba(116, 71, 145, 0.6);
-  background-color: rgba(116, 71, 145, 0.05);
+  border-color: var(--primary-alpha-60, #74479199);
+  background-color: var(--primary-alpha-08, #7447910d);
 }
 
 .quick-stat-card.stat-active {
   border-color: var(--primary);
-  background-color: rgba(116, 71, 145, 0.12);
-  box-shadow: 0 0 10px rgba(116, 71, 145, 0.2);
+  background-color: var(--primary-alpha-12, #7447911f);
+  box-shadow: 0 0 10px var(--primary-alpha-20, #74479133);
 }
 
 .text-accent {
@@ -796,11 +796,11 @@ const handleImportFile = async (event: Event) => {
   font-family: var(--font-mono);
   padding: 1px 5px;
   border-radius: 9px;
-  background-color: rgba(255, 255, 255, 0.08);
+  background-color: var(--surface-white-08, #ffffff14);
 }
 
 .filter-tab-btn.active .filter-count-badge {
-  background-color: rgba(168, 85, 247, 0.25);
+  background-color: #a855f740;
   color: #f3e8ff;
 }
 
@@ -872,7 +872,7 @@ const handleImportFile = async (event: Event) => {
 }
 
 .table-row:hover {
-  background-color: rgba(255, 255, 255, 0.02);
+  background-color: #ffffff05;
 }
 
 .status-indicator-cell {
@@ -929,15 +929,15 @@ const handleImportFile = async (event: Event) => {
 }
 
 .type-badge.argv {
-  background-color: rgba(16, 185, 129, 0.12);
+  background-color: var(--status-running-bg, #10b9811f);
   color: #10b981;
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  border: 1px solid #10b98140;
 }
 
 .type-badge.shell {
-  background-color: rgba(245, 158, 11, 0.12);
+  background-color: var(--status-starting-bg, #f59e0b1f);
   color: #fbbf24;
-  border: 1px solid rgba(245, 158, 11, 0.25);
+  border: 1px solid #f59e0b40;
 }
 
 .cwd-cell {
@@ -1022,12 +1022,12 @@ const handleImportFile = async (event: Event) => {
 
 .run-btn:hover {
   color: var(--status-running);
-  border-color: rgba(16, 185, 129, 0.4);
+  border-color: #10b98166;
 }
 
 .delete-btn:hover {
   color: var(--status-failed);
-  border-color: rgba(239, 68, 68, 0.4);
+  border-color: #ef444466;
 }
 
 .empty-cell {

@@ -473,7 +473,7 @@ const confirmDeleteGroup = async () => {
   color: var(--primary-accent);
   padding: 1px 6px;
   border-radius: var(--radius-xs);
-  border: 1px solid rgba(116, 71, 145, 0.35);
+  border: 1px solid var(--primary-alpha-35, #74479159);
 }
 
 .view-subtitle {
@@ -601,7 +601,7 @@ const confirmDeleteGroup = async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: rgba(255, 255, 255, 0.015);
+  background-color: #ffffff04;
 }
 
 .group-title-row {
@@ -757,12 +757,12 @@ const confirmDeleteGroup = async () => {
 }
 
 .shell-tag {
-  background: rgba(245, 158, 11, 0.12);
+  background: var(--status-starting-bg, #f59e0b1f);
   color: #fbbf24;
 }
 
 .argv-tag {
-  background: rgba(16, 185, 129, 0.12);
+  background: var(--status-running-bg, #10b9811f);
   color: #10b981;
 }
 
@@ -919,7 +919,7 @@ const confirmDeleteGroup = async () => {
 
 .input.has-error {
   border-color: var(--status-failed, #ef4444) !important;
-  background-color: rgba(239, 68, 68, 0.05) !important;
+  background-color: #ef44440d !important;
 }
 
 .field-error-msg {
@@ -936,8 +936,8 @@ const confirmDeleteGroup = async () => {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background-color: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background-color: var(--status-failed-bg, #ef44441a);
+  border: 1px solid #ef44444d;
   border-radius: var(--radius-md);
   color: var(--status-failed, #ef4444);
   font-size: 12px;

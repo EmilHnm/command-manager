@@ -161,7 +161,7 @@ watch(
   background-color: var(--bg-surface, #1a1e2b);
   border: 1px solid var(--border-medium, #2d3448);
   border-radius: var(--radius-lg, 8px);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7), 0 0 20px rgba(239, 68, 68, 0.2);
+  box-shadow: 0 16px 40px #000000b3, 0 0 20px #ef444433;
 }
 
 .hazard-stripe {
@@ -201,9 +201,9 @@ watch(
 }
 
 .danger-badge {
-  background-color: rgba(239, 68, 68, 0.15);
+  background-color: var(--status-failed-bg, #ef444426);
   color: var(--status-failed, #ef4444);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  border: 1px solid #ef44444d;
 }
 
 .modal-title {
@@ -244,7 +244,7 @@ watch(
 
 .list-header {
   padding: 7px 12px;
-  background-color: rgba(26, 30, 43, 0.6);
+  background-color: #1a1e2b99;
   border-bottom: 1px solid var(--border-subtle, #242a3e);
   font-size: 11px;
   font-weight: 500;
@@ -264,7 +264,7 @@ watch(
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  border-bottom: 1px solid rgba(36, 42, 62, 0.5);
+  border-bottom: 1px solid #242a3e80;
   font-size: 12px;
 }
 
@@ -315,7 +315,7 @@ watch(
   font-size: 9.5px;
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   color: var(--primary-accent, #e4b5ff);
-  background-color: rgba(116, 71, 145, 0.15);
+  background-color: var(--primary-alpha-15, #74479126);
   padding: 1px 4px;
   border-radius: 2px;
 }
@@ -328,16 +328,16 @@ watch(
 }
 
 .status-tag.running {
-  background-color: rgba(16, 185, 129, 0.15);
+  background-color: var(--status-running-bg, #10b98126);
   color: var(--status-running, #10b981);
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  border: 1px solid #10b9814d;
 }
 
 .status-tag.idle,
 .status-tag.stopped {
-  background-color: rgba(100, 116, 139, 0.15);
+  background-color: var(--status-idle-bg, #64748b26);
   color: var(--text-muted, #64748b);
-  border: 1px solid rgba(100, 116, 139, 0.3);
+  border: 1px solid #64748b4d;
 }
 
 /* Stop Mode Radio Cards */
@@ -355,23 +355,23 @@ watch(
   border: 1px solid var(--border-subtle, #242a3e);
   border-radius: var(--radius-sm, 4px);
   cursor: pointer;
-  background-color: rgba(26, 30, 43, 0.4);
+  background-color: #1a1e2b66;
   transition: all 0.15s ease;
 }
 
 .stop-option-card:hover {
-  background-color: rgba(35, 40, 58, 0.7);
+  background-color: #23283ab3;
   border-color: var(--border-medium, #2d3448);
 }
 
 .stop-option-card.selected {
-  background-color: rgba(116, 71, 145, 0.12);
+  background-color: var(--primary-alpha-12, #7447911f);
   border-color: var(--primary, #744791);
 }
 
 .stop-option-card.danger.selected {
-  background-color: rgba(239, 68, 68, 0.12);
-  border-color: rgba(239, 68, 68, 0.6);
+  background-color: #ef44441f;
+  border-color: #ef444499;
 }
 
 .stop-option-card input[type="radio"] {
@@ -410,8 +410,8 @@ watch(
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background-color: rgba(249, 115, 22, 0.1);
-  border: 1px solid rgba(249, 115, 22, 0.25);
+  background-color: #f973161a;
+  border: 1px solid #f9731640;
   border-radius: var(--radius-sm, 4px);
   font-size: 11px;
   color: #fdba74;
@@ -430,7 +430,7 @@ watch(
   gap: 10px;
   padding: 14px 20px;
   border-top: 1px solid var(--border-subtle, #242a3e);
-  background-color: rgba(18, 21, 31, 0.5);
+  background-color: #12151f80;
 }
 
 .spin {

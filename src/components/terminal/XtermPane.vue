@@ -342,7 +342,7 @@ onMounted(async () => {
       foreground: '#f1f5f9',
       cursor: '#8956aa',
       cursorAccent: '#ffffff',
-      selectionBackground: 'rgba(116, 71, 145, 0.4)',
+      selectionBackground: '#74479166',
       black: '#1a1e2b',
       red: '#ef4444',
       green: '#10b981',
@@ -1190,7 +1190,7 @@ defineExpose({
 .ghost-suggestion {
   position: absolute;
   z-index: 2;
-  color: rgba(148, 163, 184, 0.55);
+  color: #94a3b88c;
   pointer-events: none;
   white-space: pre;
   max-width: 100%;
@@ -1208,7 +1208,7 @@ defineExpose({
   background: #171b27;
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+  box-shadow: 0 8px 24px #00000059;
   transform: translateY(calc(-100% - 4px));
 }
 
@@ -1249,13 +1249,13 @@ defineExpose({
   z-index: 9999;
   pointer-events: none;
   background: #171b27;
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border: 1px solid var(--border-subtle, #ffffff1f);
   backdrop-filter: blur(10px);
   color: #f1f5f9;
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 11.5px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 8px 24px #00000073;
   white-space: nowrap;
   max-width: 450px;
   overflow: hidden;
@@ -1285,14 +1285,14 @@ defineExpose({
   font-size: 10px;
   font-family: inherit;
   font-weight: 600;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: var(--surface-white-10, #ffffff1a);
+  border: 1px solid var(--surface-white-20, #ffffff33);
   border-radius: 3px;
   color: #e2e8f0;
 }
 
 .key-badge.warning {
-  background: rgba(245, 158, 11, 0.2);
+  background: var(--status-starting-bg, #f59e0b33);
   border-color: #f59e0b;
   color: #fbbf24;
 }

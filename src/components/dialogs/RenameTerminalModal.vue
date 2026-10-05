@@ -230,7 +230,7 @@ const handleSave = () => {
   position: fixed;
   inset: 0;
   z-index: 1050;
-  background-color: rgba(11, 13, 19, 0.78);
+  background-color: var(--surface-overlay, #0b0d13c7);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   display: flex;
@@ -256,7 +256,7 @@ const handleSave = () => {
   background-color: var(--surface-container, #1a1e2b);
   border: 1px solid var(--border-medium, #2d344d);
   border-radius: 8px;
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.65), 0 0 24px rgba(116, 71, 145, 0.25);
+  box-shadow: 0 16px 36px #000000a6, 0 0 24px var(--primary-alpha-25, #74479140);
   overflow: hidden;
   animation: modalScaleIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -297,13 +297,13 @@ const handleSave = () => {
   width: 32px;
   height: 32px;
   border-radius: 6px;
-  background: rgba(116, 71, 145, 0.2);
-  border: 1px solid rgba(116, 71, 145, 0.4);
+  background: var(--primary-alpha-20, #74479133);
+  border: 1px solid var(--primary-alpha-40, #74479166);
   color: var(--primary-accent, #e4b5ff);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 0 10px rgba(116, 71, 145, 0.3);
+  box-shadow: 0 0 10px var(--primary-alpha-30, #7447914d);
 }
 
 .header-titles {
@@ -381,8 +381,8 @@ const handleSave = () => {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  background-color: rgba(116, 71, 145, 0.12);
-  border: 1px solid rgba(116, 71, 145, 0.25);
+  background-color: var(--primary-alpha-12, #7447911f);
+  border: 1px solid var(--primary-alpha-25, #74479140);
   border-radius: 6px;
   padding: 10px 12px;
 }
@@ -446,12 +446,12 @@ const handleSave = () => {
 
 .input-wrapper.is-focused {
   border-color: var(--primary, #744791);
-  box-shadow: 0 0 0 3px var(--primary-glow, rgba(116, 71, 145, 0.35));
+  box-shadow: 0 0 0 3px var(--primary-glow, #74479159);
 }
 
 .input-wrapper.has-error {
   border-color: var(--status-failed, #ef4444);
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.25);
+  box-shadow: 0 0 0 3px #ef444440;
 }
 
 .input-prefix-icon {
@@ -534,8 +534,8 @@ const handleSave = () => {
 }
 
 .preset-chip:hover {
-  background-color: rgba(116, 71, 145, 0.22);
-  border-color: rgba(116, 71, 145, 0.4);
+  background-color: var(--primary-alpha-22, #74479138);
+  border-color: var(--primary-alpha-40, #74479166);
   color: var(--primary-accent, #e4b5ff);
   transform: translateY(-1px);
 }
@@ -544,7 +544,7 @@ const handleSave = () => {
   background-color: var(--primary, #744791);
   border-color: var(--primary-accent, #e4b5ff);
   color: #ffffff;
-  box-shadow: 0 0 8px rgba(116, 71, 145, 0.4);
+  box-shadow: 0 0 8px var(--primary-alpha-40, #74479166);
 }
 
 /* Footer */
@@ -554,7 +554,7 @@ const handleSave = () => {
   justify-content: space-between;
   padding: 12px 18px;
   border-top: 1px solid var(--border-subtle, #1e2436);
-  background-color: rgba(18, 21, 31, 0.4);
+  background-color: #12151f66;
 }
 
 .footer-hint {
@@ -605,14 +605,14 @@ const handleSave = () => {
 
 .btn-primary {
   background-color: var(--primary, #744791);
-  border-color: rgba(228, 181, 255, 0.25);
+  border-color: var(--primary-accent-alpha-25, #e4b5ff40);
   color: #ffffff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 2px 6px #00000059;
 }
 
 .btn-primary:hover:not(:disabled) {
   background-color: var(--primary-hover, #8956aa);
-  box-shadow: 0 0 12px var(--primary-glow, rgba(116, 71, 145, 0.45));
+  box-shadow: 0 0 12px var(--primary-glow, #74479173);
 }
 
 .btn-primary:active:not(:disabled) {

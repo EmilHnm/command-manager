@@ -299,8 +299,8 @@ const pasteButtonTooltip = (cmd: CommandDefinition): string => {
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 10px;
   font-weight: 600;
-  color: var(--primary, #e4b5ff);
-  background-color: var(--primary-subtle, rgba(116, 71, 145, 0.2));
+  color: var(--primary-accent, #e4b5ff);
+  background-color: var(--primary-subtle, #74479129);
   padding: 1px 5px;
   border-radius: 4px;
 }
@@ -399,12 +399,12 @@ const pasteButtonTooltip = (cmd: CommandDefinition): string => {
 
 .status-pulse-dot.running {
   background-color: var(--status-running, #10b981);
-  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+  box-shadow: 0 0 6px var(--status-running-glow, #22c55eb3);
 }
 
 .status-pulse-dot.warning {
   background-color: var(--status-warning, #f59e0b);
-  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+  box-shadow: 0 0 6px #f59e0b99;
 }
 
 .target-status {
@@ -484,7 +484,7 @@ const pasteButtonTooltip = (cmd: CommandDefinition): string => {
 
 .qa-card:hover {
   background-color: var(--bg-surface-hover, #23283a);
-  border-color: rgba(116, 71, 145, 0.45);
+  border-color: var(--primary-alpha-45, #74479173);
 }
 
 .qa-card:focus-visible {
@@ -519,7 +519,7 @@ const pasteButtonTooltip = (cmd: CommandDefinition): string => {
   display: inline-flex;
   align-items: center;
   color: var(--status-warning, #f59e0b);
-  background-color: rgba(245, 158, 11, 0.15);
+  background-color: var(--status-starting-bg, #f59e0b26);
   border-radius: 3px;
   padding: 1px 3px;
 }
@@ -553,13 +553,13 @@ const pasteButtonTooltip = (cmd: CommandDefinition): string => {
 .qa-run-btn:not(:disabled):hover {
   color: #fff;
   background-color: var(--primary, #744791);
-  border-color: var(--primary-glow, rgba(116, 71, 145, 0.5));
+  border-color: var(--primary-glow, #74479159);
 }
 
 .qa-paste-btn:not(:disabled):hover {
-  color: var(--primary, #e4b5ff);
-  background-color: var(--primary-subtle, rgba(116, 71, 145, 0.2));
-  border-color: rgba(116, 71, 145, 0.4);
+  color: var(--primary-accent, #e4b5ff);
+  background-color: var(--primary-subtle, #74479129);
+  border-color: var(--primary-alpha-40, #74479166);
 }
 
 .qa-card-row-bottom {
@@ -585,7 +585,7 @@ const pasteButtonTooltip = (cmd: CommandDefinition): string => {
   font-size: 9px;
   font-weight: 600;
   color: var(--tertiary, #4cd7f6);
-  background-color: rgba(76, 215, 246, 0.15);
+  background-color: var(--tertiary-container, #4cd7f626);
   border-radius: 3px;
   padding: 1px 4px;
   flex-shrink: 0;

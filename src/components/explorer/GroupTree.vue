@@ -358,7 +358,7 @@ const handleStopGroup = (groupId: number) => {
   justify-content: space-between;
   padding: 6px 8px;
   cursor: pointer;
-  background-color: rgba(255, 255, 255, 0.02);
+  background-color: #ffffff05;
   transition: background-color 0.1s ease;
 }
 
@@ -426,7 +426,7 @@ const handleStopGroup = (groupId: number) => {
 }
 .play-btn:hover {
   background-color: var(--status-running-bg);
-  border-color: rgba(16, 185, 129, 0.4);
+  border-color: #10b98166;
 }
 
 .stop-btn {
@@ -434,7 +434,7 @@ const handleStopGroup = (groupId: number) => {
 }
 .stop-btn:hover {
   background-color: var(--status-failed-bg);
-  border-color: rgba(239, 68, 68, 0.4);
+  border-color: #ef444466;
 }
 
 .commands-list {
@@ -501,13 +501,13 @@ const handleStopGroup = (groupId: number) => {
 }
 
 .command-item.running {
-  background-color: rgba(16, 185, 129, 0.08);
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  background-color: var(--status-running-bg, #10b98114);
+  border: 1px solid #10b98140;
 }
 
 .command-item.failed {
-  background-color: rgba(239, 68, 68, 0.08);
-  border: 1px solid rgba(239, 68, 68, 0.25);
+  background-color: var(--status-failed-bg, #ef444414);
+  border: 1px solid #ef444440;
 }
 
 .cmd-item-right {
@@ -526,7 +526,7 @@ const handleStopGroup = (groupId: number) => {
   font-size: 9px;
   font-family: var(--font-mono);
   color: #fbbf24;
-  background: rgba(245, 158, 11, 0.12);
+  background: var(--status-starting-bg, #f59e0b1f);
   padding: 0 3px;
   border-radius: 2px;
 }
@@ -535,7 +535,7 @@ const handleStopGroup = (groupId: number) => {
   font-size: 9px;
   font-family: var(--font-mono);
   color: #34d399;
-  background: rgba(16, 185, 129, 0.12);
+  background: var(--status-running-bg, #10b9811f);
   padding: 0 3px;
   border-radius: 2px;
 }

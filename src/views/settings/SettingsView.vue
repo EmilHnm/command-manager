@@ -616,7 +616,7 @@ const confirmRestoreDatabase = async () => {
   color: var(--primary-accent);
   padding: 1px 6px;
   border-radius: var(--radius-xs);
-  border: 1px solid rgba(116, 71, 145, 0.35);
+  border: 1px solid var(--primary-alpha-35, #74479159);
 }
 
 .view-subtitle {
@@ -691,7 +691,7 @@ const confirmRestoreDatabase = async () => {
   width: min(360px, calc(100vw - 40px));
   padding: 11px 12px;
   border-radius: var(--radius-md);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 12px 30px #00000059;
   font-size: 12px;
   line-height: 1.4;
 }
@@ -699,13 +699,13 @@ const confirmRestoreDatabase = async () => {
 .settings-toast.error {
   color: #fecaca;
   background: #3b1418;
-  border: 1px solid rgba(248, 113, 113, 0.55);
+  border: 1px solid #f871718c;
 }
 
 .settings-toast.success {
   color: #bbf7d0;
   background: #123522;
-  border: 1px solid rgba(74, 222, 128, 0.55);
+  border: 1px solid #4ade808c;
 }
 
 .toast-close {
@@ -768,7 +768,7 @@ const confirmRestoreDatabase = async () => {
 /* 7-Step Rollback Visual Sequence Box (from Stitch SCR-05) */
 .rollback-sequence-box {
   background-color: var(--bg-app-base);
-  border: 1px solid rgba(239, 68, 68, 0.25);
+  border: 1px solid #ef444440;
   border-radius: var(--radius-md);
   padding: 12px 16px;
   display: flex;
@@ -826,17 +826,17 @@ const confirmRestoreDatabase = async () => {
 .check-pill {
   font-size: 10.5px;
   font-weight: 600;
-  background-color: rgba(16, 185, 129, 0.12);
+  background-color: var(--status-running-bg, #10b9811f);
   color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  border: 1px solid #10b98140;
   padding: 2px 8px;
   border-radius: 9999px;
 }
 
 .check-pill.text-danger {
-  background-color: rgba(239, 68, 68, 0.12);
+  background-color: var(--status-failed-bg, #ef44441f);
   color: #f87171;
-  border-color: rgba(239, 68, 68, 0.25);
+  border-color: #ef444440;
 }
 
 .setting-card {
@@ -850,8 +850,8 @@ const confirmRestoreDatabase = async () => {
 }
 
 .danger-card {
-  border-color: rgba(239, 68, 68, 0.35);
-  background-color: rgba(239, 68, 68, 0.02);
+  border-color: #ef444459;
+  background-color: #ef444405;
 }
 
 .card-title {

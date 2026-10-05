@@ -165,7 +165,7 @@ onUnmounted(() => {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background-color: rgba(11, 13, 19, 0.85);
+  background-color: var(--surface-overlay, #0b0d13d9);
   backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
@@ -180,7 +180,7 @@ onUnmounted(() => {
   background-color: var(--surface-container);
   border: 1px solid var(--border-medium);
   border-radius: var(--radius-xl, 12px);
-  box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  box-shadow: 0 24px 48px -12px #000000bf, 0 0 0 1px var(--surface-white-05, #ffffff0d);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -225,7 +225,7 @@ onUnmounted(() => {
 }
 
 .badge-icon.warning {
-  background-color: rgba(245, 158, 11, 0.15);
+  background-color: var(--status-starting-bg, #f59e0b26);
   color: #f59e0b;
 }
 
@@ -326,7 +326,7 @@ onUnmounted(() => {
   height: 7px;
   border-radius: 50%;
   background-color: #10b981;
-  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+  box-shadow: 0 0 6px var(--status-running-glow, #10b98199);
   flex-shrink: 0;
   animation: pulseDot 2s infinite ease-in-out;
 }
@@ -356,7 +356,7 @@ onUnmounted(() => {
   font-family: var(--font-mono, monospace);
   font-size: 10px;
   padding: 2px 5px;
-  background-color: rgba(255, 255, 255, 0.06);
+  background-color: var(--surface-white-06, #ffffff0f);
   color: var(--text-secondary);
   border-radius: 4px;
 }
@@ -392,7 +392,7 @@ onUnmounted(() => {
   justify-content: flex-end;
   gap: 10px;
   border-top: 1px solid var(--border-subtle);
-  background-color: rgba(0, 0, 0, 0.15);
+  background-color: #00000026;
 }
 
 .tray-action-btn {

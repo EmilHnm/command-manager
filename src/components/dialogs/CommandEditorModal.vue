@@ -324,7 +324,7 @@ const handleSave = () => {
 .input.has-error,
 .textarea.has-error {
   border-color: var(--status-failed, #ef4444) !important;
-  background-color: rgba(239, 68, 68, 0.05);
+  background-color: #ef44440d;
 }
 
 .field-error-msg {
@@ -374,8 +374,8 @@ const handleSave = () => {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background-color: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background-color: var(--status-failed-bg, #ef44441a);
+  border: 1px solid #ef44444d;
   border-radius: var(--radius-md);
   color: var(--status-failed, #ef4444);
   font-size: 12px;
@@ -410,8 +410,8 @@ const handleSave = () => {
 }
 
 .quick-access-card.active {
-  border-color: rgba(116, 71, 145, 0.45);
-  background-color: rgba(116, 71, 145, 0.08);
+  border-color: var(--primary-alpha-45, #74479173);
+  background-color: var(--primary-alpha-08, #74479114);
 }
 
 .quick-access-info {

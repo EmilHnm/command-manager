@@ -555,11 +555,11 @@ defineExpose({
 
 .tiling-panel-container.is-active {
   border-color: var(--primary, #744791);
-  box-shadow: inset 0 0 0 1px rgba(116, 71, 145, 0.4);
+  box-shadow: inset 0 0 0 1px var(--primary-alpha-40, #74479166);
 }
 
 .tiling-panel-container.is-sync-linked {
-  box-shadow: inset 0 0 0 1px #744791, 0 0 8px rgba(116, 71, 145, 0.35);
+  box-shadow: inset 0 0 0 1px var(--primary, #744791), 0 0 8px var(--primary-glow, #74479159);
 }
 
 /* ----------------------------------------------------
@@ -580,8 +580,8 @@ defineExpose({
 }
 
 .panel-headerbar.header-active {
-  background-color: #161b29;
-  border-bottom-color: rgba(116, 71, 145, 0.4);
+  background-color: var(--surface-container, #1a1e2b);
+  border-bottom-color: var(--primary-alpha-40, #74479166);
 }
 
 /* Tabs Scroll Container */
@@ -626,13 +626,13 @@ defineExpose({
 }
 
 .panel-tab-item:hover {
-  background-color: rgba(255, 255, 255, 0.05);
-  color: var(--text-primary, #e2e8f0);
+  background-color: var(--surface-white-05, #ffffff0d);
+  color: var(--text-primary, #f1f5f9);
 }
 
 .panel-tab-item.active {
-  background-color: var(--bg-surface-active, #1f2538);
-  border-color: rgba(116, 71, 145, 0.5);
+  background-color: var(--bg-surface-active, #2c3248);
+  border-color: var(--primary-alpha-50, #74479180);
   color: #ffffff;
   font-weight: 500;
   max-width: 220px;
@@ -657,8 +657,8 @@ defineExpose({
 }
 
 .tab-status-dot.running {
-  background-color: var(--status-success, #22c55e);
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.7);
+  background-color: var(--status-running, #10b981);
+  box-shadow: 0 0 6px var(--status-running-glow, #22c55eb3);
 }
 
 .tab-status-dot.failed {
@@ -668,7 +668,7 @@ defineExpose({
 .tab-pid-badge {
   font-size: 9.5px;
   color: var(--text-muted, #64748b);
-  background-color: rgba(255, 255, 255, 0.06);
+  background-color: var(--surface-white-06, #ffffff0f);
   padding: 1px 3px;
   border-radius: 3px;
 }
@@ -688,14 +688,14 @@ defineExpose({
 }
 
 .tab-close-btn:hover {
-  background-color: rgba(239, 68, 68, 0.2);
-  color: #ef4444;
+  background-color: var(--status-failed-hover, #ef444433);
+  color: var(--status-failed, #ef4444);
   opacity: 1;
 }
 
 .panel-new-tab-btn {
   background: transparent;
-  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border: 1px dashed var(--surface-white-12, #ffffff1f);
   width: 22px;
   height: 22px;
   border-radius: 4px;
@@ -710,8 +710,8 @@ defineExpose({
 
 .panel-new-tab-btn:hover {
   border-color: var(--primary, #744791);
-  color: var(--primary-light, #e4b5ff);
-  background-color: rgba(116, 71, 145, 0.15);
+  color: var(--primary-accent, #e4b5ff);
+  background-color: var(--primary-alpha-15, #74479126);
 }
 
 /* ----------------------------------------------------
@@ -728,7 +728,7 @@ defineExpose({
   font-size: 10px;
   font-family: var(--font-mono, monospace);
   color: var(--text-muted, #64748b);
-  background-color: rgba(255, 255, 255, 0.04);
+  background-color: var(--surface-white-04, #ffffff0a);
   padding: 2px 6px;
   border-radius: 3px;
   max-width: 140px;
@@ -745,9 +745,9 @@ defineExpose({
   font-weight: 700;
   padding: 2px 5px;
   border-radius: 3px;
-  background-color: rgba(116, 71, 145, 0.3);
+  background-color: var(--primary-alpha-30, #7447914d);
   border: 1px solid var(--primary, #744791);
-  color: var(--primary-light, #e4b5ff);
+  color: var(--primary-accent, #e4b5ff);
   letter-spacing: 0.5px;
 }
 
@@ -766,26 +766,26 @@ defineExpose({
 }
 
 .panel-action-btn:hover {
-  background-color: rgba(255, 255, 255, 0.08);
+  background-color: var(--surface-white-08, #ffffff14);
   color: #ffffff;
 }
 
 .panel-action-btn.zoom-active {
-  background-color: rgba(116, 71, 145, 0.3);
-  color: var(--primary-light, #e4b5ff);
+  background-color: var(--primary-alpha-30, #7447914d);
+  color: var(--primary-accent, #e4b5ff);
 }
 
 .panel-action-btn.btn-stop {
-  color: #ef4444;
+  color: var(--status-failed, #ef4444);
 }
 
 .panel-action-btn.btn-stop:hover {
-  background-color: rgba(239, 68, 68, 0.2);
+  background-color: var(--status-failed-hover, #ef444433);
 }
 
 .panel-action-btn.btn-close-panel:hover {
-  background-color: rgba(239, 68, 68, 0.2);
-  color: #ef4444;
+  background-color: var(--status-failed-hover, #ef444433);
+  color: var(--status-failed, #ef4444);
 }
 
 /* ----------------------------------------------------
@@ -795,7 +795,7 @@ defineExpose({
   flex: 1;
   position: relative;
   overflow: hidden;
-  background-color: #0c0e14;
+  background-color: var(--surface-container-lowest, #0c0e14);
   transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
@@ -854,14 +854,14 @@ defineExpose({
   align-items: center;
   gap: 6px;
   padding: 0 8px;
-  background-color: rgba(116, 71, 145, 0.22) !important;
-  border: 1.5px dashed var(--primary-light, #e4b5ff) !important;
+  background-color: var(--primary-alpha-22, #74479138) !important;
+  border: 1.5px dashed var(--primary-accent, #e4b5ff) !important;
   border-radius: 4px;
-  color: var(--primary-light, #e4b5ff);
+  color: var(--primary-accent, #e4b5ff);
   font-size: 11px;
   user-select: none;
   white-space: nowrap;
-  box-shadow: inset 0 0 12px rgba(116, 71, 145, 0.35);
+  box-shadow: inset 0 0 12px var(--primary-glow, #74479159);
   pointer-events: none;
   box-sizing: border-box;
   animation: pulseTabPlaceholder 1.5s infinite ease-in-out;
@@ -871,19 +871,19 @@ defineExpose({
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background-color: var(--primary-light, #e4b5ff);
-  box-shadow: 0 0 6px var(--primary-light, #e4b5ff);
+  background-color: var(--primary-accent, #e4b5ff);
+  box-shadow: 0 0 6px var(--primary-accent, #e4b5ff);
   flex-shrink: 0;
 }
 
 @keyframes pulseTabPlaceholder {
   0%, 100% {
     opacity: 0.75;
-    border-color: rgba(228, 181, 255, 0.5);
+    border-color: var(--primary-accent-alpha-50, #e4b5ff80);
   }
   50% {
     opacity: 1;
-    border-color: rgba(228, 181, 255, 1);
+    border-color: var(--primary-accent, #e4b5ff);
   }
 }
 
@@ -892,7 +892,7 @@ defineExpose({
   position: absolute;
   inset: 0;
   z-index: 50;
-  background-color: rgba(12, 14, 20, 0.72);
+  background-color: var(--surface-overlay, #0c0e14b8);
   backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
@@ -908,13 +908,13 @@ defineExpose({
   gap: 10px;
   padding: 16px 24px;
   border-radius: 8px;
-  background: rgba(26, 29, 39, 0.95);
+  background: var(--surface-card, #1a1e2bf2);
   border: 1px dashed var(--primary, #744791);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-lg, 0 10px 15px -3px #0000008c);
 }
 
 .drop-overlay-icon {
-  color: var(--primary-light, #e4b5ff);
+  color: var(--primary-accent, #e4b5ff);
   animation: bounceDropIcon 1s infinite alternate ease-in-out;
 }
 

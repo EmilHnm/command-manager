@@ -649,17 +649,17 @@ const showLogNotice = async (evt: RunEvent) => {
   color: var(--primary-accent);
   padding: 1px 6px;
   border-radius: var(--radius-xs);
-  border: 1px solid rgba(116, 71, 145, 0.35);
+  border: 1px solid var(--primary-alpha-35, #74479159);
 }
 
 .wal-badge {
   font-size: 10px;
   font-family: var(--font-mono);
-  background-color: rgba(6, 182, 212, 0.12);
+  background-color: #06b6d41f;
   color: #38bdf8;
   padding: 1px 6px;
   border-radius: var(--radius-xs);
-  border: 1px solid rgba(6, 182, 212, 0.3);
+  border: 1px solid #06b6d44d;
 }
 
 .view-subtitle {
@@ -1074,7 +1074,7 @@ const showLogNotice = async (evt: RunEvent) => {
 
 .btn-danger {
   color: #fca5a5;
-  border-color: rgba(248, 113, 113, 0.35);
+  border-color: #f8717159;
 }
 
 .history-source-select {
@@ -1205,7 +1205,7 @@ const showLogNotice = async (evt: RunEvent) => {
   border-radius: var(--radius-sm);
   font-size: 12px;
   z-index: 150;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 10px 25px #00000080;
   animation: toastIn 0.2s ease-out;
 }
 

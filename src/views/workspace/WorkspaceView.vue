@@ -567,7 +567,7 @@ onBeforeUnmount(() => {
   width: 32px;
   height: 2px;
   border-radius: 2px;
-  background-color: rgba(255, 255, 255, 0.2);
+  background-color: var(--surface-white-20, #ffffff33);
 }
 
 .sidebar-sash:hover .sash-grip,
@@ -654,13 +654,13 @@ onBeforeUnmount(() => {
   border-radius: 9999px;
   background-color: var(--status-idle-bg);
   color: var(--status-idle);
-  border: 1px solid rgba(100, 116, 139, 0.2);
+  border: 1px solid #64748b33;
 }
 
 .status-pill.running {
   background-color: var(--status-running-bg);
   color: #34d399;
-  border-color: rgba(16, 185, 129, 0.3);
+  border-color: #10b9814d;
 }
 
 .strip-stat {
@@ -693,8 +693,8 @@ onBeforeUnmount(() => {
   margin: 8px;
   padding: 8px 10px;
   color: #fca5a5;
-  background: rgba(127, 29, 29, 0.9);
-  border: 1px solid rgba(248, 113, 113, 0.35);
+  background: #7f1d1de6;
+  border: 1px solid #f8717159;
   border-radius: var(--radius-sm);
   font-size: 12px;
 }
@@ -711,7 +711,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   border-radius: var(--radius-sm);
   font-size: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 8px 24px #00000047;
 }
 
 .feedback-close {
@@ -730,19 +730,19 @@ onBeforeUnmount(() => {
 }
 
 .feedback-close:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: #ffffff1f;
 }
 
 .workspace-feedback.success {
   color: #bbf7d0;
-  background: rgba(18, 53, 34, 0.95);
-  border: 1px solid rgba(74, 222, 128, 0.55);
+  background: #123522f2;
+  border: 1px solid #4ade808c;
 }
 
 .workspace-feedback.error {
   color: #fecaca;
-  background: rgba(127, 29, 29, 0.95);
-  border: 1px solid rgba(248, 113, 113, 0.55);
+  background: #7f1d1df2;
+  border: 1px solid #f871718c;
 }
 
 .cursor-pointer {
@@ -761,8 +761,8 @@ onBeforeUnmount(() => {
 
 .bg-daemons-trigger.active {
   color: #34d399;
-  border-color: rgba(16, 185, 129, 0.4);
-  background-color: rgba(16, 185, 129, 0.1);
+  border-color: #10b98166;
+  background-color: var(--status-running-bg, #10b9811a);
 }
 
 .zap-icon {

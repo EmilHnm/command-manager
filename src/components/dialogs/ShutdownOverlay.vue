@@ -80,7 +80,7 @@ const processesList = computed(() => {
 .shutdown-overlay {
   position: fixed;
   inset: 0;
-  background-color: rgba(11, 13, 19, 0.92);
+  background-color: var(--surface-overlay, #0b0d13eb);
   backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
@@ -96,7 +96,7 @@ const processesList = computed(() => {
   border: 1px solid var(--border-medium);
   border-radius: var(--radius-xl);
   padding: 30px;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
+  box-shadow: 0 25px 50px -12px #000000cc;
   display: flex;
   flex-direction: column;
   align-items: center;

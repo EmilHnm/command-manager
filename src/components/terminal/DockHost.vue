@@ -1431,9 +1431,9 @@ defineExpose({
 }
 
 .toolbar-action-btn.active {
-  background-color: rgba(116, 71, 145, 0.25);
+  background-color: var(--primary-alpha-25, #74479140);
   border: 1px solid var(--primary, #744791);
-  color: var(--primary-light, #e4b5ff);
+  color: var(--primary-accent, #e4b5ff);
 }
 
 .new-term-btn {
@@ -1488,20 +1488,20 @@ defineExpose({
 }
 
 .window-tab-item:hover {
-  background-color: rgba(255, 255, 255, 0.04);
+  background-color: var(--surface-white-04, #ffffff0a);
   color: var(--text-primary, #e2e8f0);
 }
 
 .window-tab-item.active {
   background-color: var(--bg-surface, #141721);
-  border-color: rgba(116, 71, 145, 0.6);
+  border-color: var(--primary-alpha-60, #74479199);
   color: #ffffff;
   font-weight: 600;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 1px 4px #0000004d;
 }
 
 .window-icon {
-  color: var(--primary-light, #e4b5ff);
+  color: var(--primary-accent, #e4b5ff);
   opacity: 0.8;
 }
 
@@ -1516,7 +1516,7 @@ defineExpose({
 .window-panels-count {
   font-size: 9.5px;
   color: var(--text-muted, #64748b);
-  background-color: rgba(255, 255, 255, 0.06);
+  background-color: var(--surface-white-06, #ffffff0f);
   padding: 1px 4px;
   border-radius: 3px;
 }
@@ -1535,8 +1535,8 @@ defineExpose({
 }
 
 .window-close-btn:hover {
-  background-color: rgba(239, 68, 68, 0.2);
-  color: #ef4444;
+  background-color: var(--status-failed-hover, #ef444433);
+  color: var(--status-failed, #ef4444);
   opacity: 1;
 }
 
@@ -1559,7 +1559,7 @@ defineExpose({
   padding: 0 8px;
   border-radius: 4px;
   background-color: transparent;
-  border: 1px dashed rgba(255, 255, 255, 0.15);
+  border: 1px dashed var(--surface-white-15, #ffffff26);
   color: var(--text-muted, #64748b);
   font-size: 11px;
   cursor: pointer;
@@ -1569,8 +1569,8 @@ defineExpose({
 
 .window-add-tab-btn:hover {
   border-color: var(--primary, #744791);
-  color: var(--primary-light, #e4b5ff);
-  background-color: rgba(116, 71, 145, 0.15);
+  color: var(--primary-accent, #e4b5ff);
+  background-color: var(--primary-alpha-15, #74479126);
 }
 
 /* ----------------------------------------------------
@@ -1598,7 +1598,7 @@ defineExpose({
   border: 1px solid var(--border-medium, #282d3f);
   border-radius: 6px;
   padding: 4px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 8px 24px #00000099;
   z-index: 100;
   display: flex;
   flex-direction: column;
@@ -1621,21 +1621,21 @@ defineExpose({
 }
 
 .preset-item:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: var(--surface-white-05, #ffffff0d);
   color: #ffffff;
 }
 
 .preset-item.active {
-  background-color: rgba(116, 71, 145, 0.25);
-  color: var(--primary-light, #e4b5ff);
+  background-color: var(--primary-alpha-25, #74479140);
+  color: var(--primary-accent, #e4b5ff);
   font-weight: 600;
 }
 
 /* Sync Button and Pill */
 .sync-btn.active {
-  background-color: rgba(116, 71, 145, 0.35);
+  background-color: var(--primary-alpha-35, #74479159);
   border: 1px solid var(--primary, #744791);
-  color: #e4b5ff;
+  color: var(--primary-accent, #e4b5ff);
 }
 
 .zoom-pill {
@@ -1727,7 +1727,7 @@ defineExpose({
   background-color: #1a1e2b;
   border: 1px solid var(--border-subtle, #1a1e2b);
   color: var(--text-primary, #e2e8f0);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 16px #00000066;
   z-index: 100;
   animation: fade-in 0.2s ease;
 }
@@ -1744,10 +1744,10 @@ defineExpose({
 
 @keyframes pulse-border {
   0%, 100% {
-    box-shadow: 0 0 0 1px rgba(116, 71, 145, 0.6);
+    box-shadow: 0 0 0 1px var(--primary-alpha-60, #74479199);
   }
   50% {
-    box-shadow: 0 0 0 2px rgba(116, 71, 145, 0.9), 0 0 10px rgba(116, 71, 145, 0.4);
+    box-shadow: 0 0 0 2px var(--primary-alpha-90, #744791e6), 0 0 10px var(--primary-alpha-40, #74479166);
   }
 }
 
@@ -1768,8 +1768,8 @@ defineExpose({
   z-index: 99999;
   pointer-events: none;
   background-color: #1a1e2e;
-  border: 1px solid var(--primary-light, #e4b5ff);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7), 0 0 16px rgba(116, 71, 145, 0.45);
+  border: 1px solid var(--primary-accent, #e4b5ff);
+  box-shadow: 0 8px 24px #000000b3, 0 0 16px var(--primary-alpha-45, #74479173);
   opacity: 0.95;
   cursor: grabbing;
   border-radius: 4px;
@@ -1803,8 +1803,8 @@ defineExpose({
 }
 
 .floating-drag-tab .tab-status-dot.running {
-  background-color: #22c55e;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+  background-color: var(--status-running, #10b981);
+  box-shadow: 0 0 6px var(--status-running-glow, #22c55eb3);
 }
 
 .tab-drag-guard {

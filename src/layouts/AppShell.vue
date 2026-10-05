@@ -159,12 +159,12 @@ onUnmounted(() => {
   right: 16px;
   z-index: 1000;
   padding: 8px 12px;
-  border: 1px solid rgba(78, 222, 163, 0.45);
+  border: 1px solid var(--secondary-alpha-45, #4edea373);
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
   color: var(--text-primary);
   font-size: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 8px 24px #00000047;
 }
 
 .shell-body {
