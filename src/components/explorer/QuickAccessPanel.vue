@@ -25,7 +25,7 @@
           <span class="target-arrow">→</span>
           <span class="target-name" :title="target.label">{{ target.label }}</span>
           <span class="target-dot">·</span>
-          <span class="target-pane">{{ target.pane === 'paneB' ? 'Khung B' : 'Khung A' }}</span>
+          <span class="target-pane" :title="targetLocation">{{ targetLocation }}</span>
         </div>
         <div class="target-status-group">
           <template v-if="target.status !== 'running'">
@@ -133,6 +133,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   Zap,
@@ -226,12 +227,23 @@ const itemTooltip = (cmd: CommandDefinition): string => {
   return `${cmd.name} (${typeStr})\n${cmd.execution_string}\n(Nháy đúp để dán vào terminal)`;
 };
 
+const targetLocation = computed(() => {
+  if (!props.target) return '';
+  return (
+    props.target.locationLabel ||
+    props.target.panelLabel ||
+    (props.target.pane === 'paneB' ? 'Khung B' : 'Khung A') ||
+    'Panel 1'
+  );
+});
+
 const runButtonTooltip = (cmd: CommandDefinition): string => {
   if (props.target?.status !== 'running') {
     return 'Tiến trình của tab đích đã dừng';
   }
   const targetName = props.target?.label || 'terminal đích';
-  return `Run: Chạy "${cmd.name}" trong ${targetName}`;
+  const loc = targetLocation.value ? ` (${targetLocation.value})` : '';
+  return `Run: Chạy "${cmd.name}" trong ${targetName}${loc}`;
 };
 
 const pasteButtonTooltip = (cmd: CommandDefinition): string => {
@@ -239,7 +251,8 @@ const pasteButtonTooltip = (cmd: CommandDefinition): string => {
     return 'Tiến trình của tab đích đã dừng';
   }
   const targetName = props.target?.label || 'terminal đích';
-  return `Paste: Dán "${cmd.name}" vào ${targetName}`;
+  const loc = targetLocation.value ? ` (${targetLocation.value})` : '';
+  return `Paste: Dán "${cmd.name}" vào ${targetName}${loc}`;
 };
 </script>
 
@@ -377,11 +390,13 @@ const pasteButtonTooltip = (cmd: CommandDefinition): string => {
 
 .target-dot {
   color: var(--text-muted, #64748b);
+  flex-shrink: 0;
 }
 
 .target-pane {
   color: var(--text-secondary, #94a3b8);
   font-size: 10px;
+  flex-shrink: 0;
 }
 
 .target-status-group {

@@ -117,12 +117,13 @@ import { useRunSession } from '@/composables/useRunSession';
 const props = withDefaults(
   defineProps<{
     visible: boolean;
-    panelName: 'paneA' | 'paneB';
+    panelName?: string;
     tabs: OpenTabItem[];
     loading?: boolean;
     isSplitMode?: boolean;
   }>(),
   {
+    panelName: 'Panel',
     loading: false,
     isSplitMode: true,
   }
@@ -139,7 +140,9 @@ const stopMode = ref<'graceful' | 'force'>('graceful');
 
 const panelLabel = computed(() => {
   if (!props.isSplitMode) return 'Workspace';
-  return props.panelName === 'paneA' ? 'Khung A (Trái/Trên)' : 'Khung B (Phải/Dưới)';
+  if (props.panelName === 'paneA') return 'Panel 1';
+  if (props.panelName === 'paneB') return 'Panel 2';
+  return props.panelName || 'Panel';
 });
 
 watch(

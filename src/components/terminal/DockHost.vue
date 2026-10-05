@@ -436,6 +436,7 @@ import {
   transferTabBetweenPanels,
 } from '@/composables/useTilingTree';
 import type {
+  TilingNode,
   LayoutPreset,
   SyncInputMode,
   WorkspaceSessionItem,
@@ -913,6 +914,23 @@ const handleRatioUpdate = (splitId: string, ratio: number) => {
   }
 };
 
+const resetAllRatiosInTree = (node: TilingNode): TilingNode => {
+  if (node.type === 'panel') return node;
+  return {
+    ...node,
+    ratio: 0.5,
+    firstChild: resetAllRatiosInTree(node.firstChild),
+    secondChild: resetAllRatiosInTree(node.secondChild),
+  };
+};
+
+const handleResetAllRatios = () => {
+  if (currentTilingRoot.value) {
+    currentTilingRoot.value = resetAllRatiosInTree(currentTilingRoot.value);
+    showToast('Đã cân bằng tỉ lệ các ô về 50:50', 'info');
+  }
+};
+
 // ----------------------------------------------------
 // Closing Tabs and Panels
 // ----------------------------------------------------
@@ -1189,7 +1207,11 @@ const registerXtermRef = (tabId: string, instance: unknown) => {
 export interface QuickAccessTarget {
   tabId: string;
   label: string;
-  pane: 'paneA' | 'paneB';
+  panelId?: string;
+  panelLabel?: string;
+  windowName?: string;
+  locationLabel?: string;
+  pane?: 'paneA' | 'paneB';
   status: ProcessLifecycleStatus;
   busy: boolean;
   shellKind?: string | null;
@@ -1207,9 +1229,51 @@ const quickAccessTarget = computed<QuickAccessTarget | null>(() => {
   if (!targetTab) return null;
   const status = getProcessStatus(targetTab.commandId);
   const busy = targetTab.phase === 'running';
+
+  // Find which window and panel contains this tab
+  let targetWindow = windows.value.find(w => w.id === activeWindowId.value);
+  let panelIndex = -1;
+  let targetPanelId = '';
+
+  if (targetWindow?.tilingRoot) {
+    const panels = collectAllPanels(targetWindow.tilingRoot);
+    const idx = panels.findIndex(p => p.tabIds.includes(targetTab.id));
+    if (idx !== -1) {
+      panelIndex = idx;
+      targetPanelId = panels[idx].id;
+    }
+  }
+
+  // If not found in active window, search across all windows
+  if (panelIndex === -1) {
+    for (const win of windows.value) {
+      if (win.tilingRoot) {
+        const panels = collectAllPanels(win.tilingRoot);
+        const idx = panels.findIndex(p => p.tabIds.includes(targetTab.id));
+        if (idx !== -1) {
+          targetWindow = win;
+          panelIndex = idx;
+          targetPanelId = panels[idx].id;
+          break;
+        }
+      }
+    }
+  }
+
+  const panelNum = panelIndex >= 0 ? panelIndex + 1 : 1;
+  const panelLabel = `Panel ${panelNum}`;
+  const winName = targetWindow?.name || 'Cửa Sổ 1';
+  const locationLabel = windows.value.length > 1
+    ? `${winName} · ${panelLabel}`
+    : panelLabel;
+
   return {
     tabId: targetTab.id,
     label: tabLabel(targetTab),
+    panelId: targetPanelId,
+    panelLabel,
+    windowName: winName,
+    locationLabel,
     pane: 'paneA',
     status,
     busy,
@@ -1328,6 +1392,12 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
   if (e.ctrlKey && e.altKey && (e.key === 'd' || e.key === 'D')) {
     e.preventDefault();
     splitActiveDown();
+    return;
+  }
+  // Ctrl+Alt+0: Reset all split ratios to 50:50 (Balance)
+  if (e.ctrlKey && e.altKey && (e.key === '0' || e.key === ')')) {
+    e.preventDefault();
+    handleResetAllRatios();
     return;
   }
   // Ctrl+Shift+Z: Toggle Zoom on Active Panel

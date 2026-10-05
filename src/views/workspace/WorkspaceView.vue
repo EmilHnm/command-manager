@@ -241,15 +241,41 @@ const resetQuickAccessRatio = () => {
   localStorage.setItem(QA_RATIO_KEY, '50');
 };
 
+let lastSashClickTime = 0;
+let lastSashClickY = 0;
+
 const handleSashPointerDown = (e: PointerEvent) => {
-  if (!sidebarContentRef.value) return;
-  e.preventDefault();
-  isDraggingSash.value = true;
+  if (e.button !== 0 || !sidebarContentRef.value) return;
+
+  const now = Date.now();
+  const distY = Math.abs(e.clientY - lastSashClickY);
+
+  // Detect double click: either browser native e.detail >= 2 or rapid successive clicks within 350ms & 15px
+  if (e.detail === 2 || (now - lastSashClickTime < 350 && distY < 15)) {
+    e.preventDefault();
+    e.stopPropagation();
+    lastSashClickTime = 0;
+    isDraggingSash.value = false;
+    resetQuickAccessRatio();
+    return;
+  }
+
+  lastSashClickTime = now;
+  lastSashClickY = e.clientY;
+
   const containerRect = sidebarContentRef.value.getBoundingClientRect();
   const totalHeight = containerRect.height;
   const topOffset = containerRect.top;
+  const startY = e.clientY;
+  let hasMoved = false;
 
   const onPointerMove = (ev: PointerEvent) => {
+    if (!hasMoved) {
+      if (Math.abs(ev.clientY - startY) < 3) return;
+      hasMoved = true;
+      isDraggingSash.value = true;
+      lastSashClickTime = 0;
+    }
     const currentY = ev.clientY - topOffset;
     const clampedY = Math.max(120, Math.min(totalHeight - 120, currentY));
     const newRatio = Math.round((clampedY / totalHeight) * 100);
@@ -261,7 +287,9 @@ const handleSashPointerDown = (e: PointerEvent) => {
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerUp);
-    localStorage.setItem(QA_RATIO_KEY, String(quickAccessRatio.value));
+    if (hasMoved) {
+      localStorage.setItem(QA_RATIO_KEY, String(quickAccessRatio.value));
+    }
   };
 
   window.addEventListener('pointermove', onPointerMove);
@@ -553,9 +581,21 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  position: relative;
   z-index: 10;
   transition: background-color 0.15s ease;
   user-select: none;
+}
+
+/* Expanded invisible hit target (13px tall) for easy grabbing and double-clicking */
+.sidebar-sash::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  bottom: -4px;
+  z-index: 1;
 }
 
 .sidebar-sash:hover,
