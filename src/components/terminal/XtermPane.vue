@@ -175,6 +175,9 @@ const terminalElement = ref<HTMLDivElement | null>(null);
 let term: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
 let resizeObserver: ResizeObserver | null = null;
+let resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let lastSyncedCols = 0;
+let lastSyncedRows = 0;
 let unsubscribePty: (() => void) | null = null;
 let renderDisposable: { dispose: () => void } | null = null;
 let writeParsedDisposable: { dispose: () => void } | null = null;
@@ -615,15 +618,53 @@ onMounted(async () => {
   if (!terminalElement.value || !term) return;
   focusTerminal();
 
-  // Auto-fit terminal and sync cols/rows with PTY
-  resizeObserver = new ResizeObserver(() => {
-    if (fitAddon && term) {
-      fitAddon.fit();
-      updateSuggestionPosition();
+  const syncPtySize = (immediate = false) => {
+    if (!fitAddon || !term || !terminalElement.value) return;
+
+    const doFitAndResize = () => {
+      if (!fitAddon || !term || !terminalElement.value) return;
+      const rect = terminalElement.value.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+
+      try {
+        fitAddon.fit();
+        updateSuggestionPosition();
+      } catch (err) {
+        console.warn('[XtermPane] fitAddon.fit error:', err);
+        return;
+      }
+
+      // Only notify PTY if cols or rows actually changed
+      if (term.cols === lastSyncedCols && term.rows === lastSyncedRows) {
+        return;
+      }
+
+      lastSyncedCols = term.cols;
+      lastSyncedRows = term.rows;
+
       void resize(props.commandId, term.cols, term.rows, props.runEventId).catch((error) => {
         terminalError.value = String(error);
       });
+    };
+
+    if (immediate) {
+      if (resizeDebounceTimer) {
+        clearTimeout(resizeDebounceTimer);
+        resizeDebounceTimer = null;
+      }
+      doFitAndResize();
+    } else {
+      if (resizeDebounceTimer) {
+        clearTimeout(resizeDebounceTimer);
+      }
+      resizeDebounceTimer = setTimeout(doFitAndResize, 120);
     }
+  };
+
+  // Auto-fit terminal and sync cols/rows with PTY (debounced to avoid staircase prompt redraw during drag resize)
+  syncPtySize(true);
+  resizeObserver = new ResizeObserver(() => {
+    syncPtySize(false);
   });
   resizeObserver.observe(terminalElement.value);
 });
@@ -645,6 +686,10 @@ onBeforeUnmount(() => {
   if (suggestionFrame !== undefined) cancelAnimationFrame(suggestionFrame);
   promptMarker?.dispose();
   if (unsubscribePty) unsubscribePty();
+  if (resizeDebounceTimer) {
+    clearTimeout(resizeDebounceTimer);
+    resizeDebounceTimer = null;
+  }
   if (resizeObserver) resizeObserver.disconnect();
   if (term) {
     term.dispose();

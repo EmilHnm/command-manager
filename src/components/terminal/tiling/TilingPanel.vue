@@ -16,7 +16,7 @@
       <div class="panel-tabs-scroll custom-scrollbar">
         <div class="panel-tabs-list">
           <template v-for="item in displayedTabs" :key="item.key">
-            <!-- TAB PLACEHOLDER (Hiển thị vị trí tab sẽ được chèn khi kéo rê) -->
+            <!-- Tab Placeholder (shows insertion target while dragging) -->
             <div
               v-if="item.isPlaceholder"
               class="panel-tab-item tab-placeholder"
@@ -26,7 +26,7 @@
               <span class="tab-title-text">{{ item.title }}</span>
             </div>
 
-            <!-- TAB ITEM BÌNH THƯỜNG -->
+            <!-- Regular Tab Item -->
             <div
               v-else-if="item.tabId"
               class="panel-tab-item"
@@ -847,7 +847,7 @@ defineExpose({
   opacity: 0.25;
 }
 
-/* TAB PLACEHOLDER (Box nét đứt tím rực rỡ báo vị trí chèn) */
+/* Tab Placeholder (dashed slot preview) */
 .tab-placeholder {
   height: 24px;
   display: inline-flex;

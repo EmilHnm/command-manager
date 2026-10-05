@@ -12,6 +12,15 @@
     <div class="sash-grip">
       <div class="sash-line" />
     </div>
+
+    <!-- Fullscreen Sash Drag Guard (prevents pointer event loss when hovering over xterm canvas) -->
+    <Teleport to="body">
+      <div
+        v-if="isDragging"
+        class="sash-drag-guard"
+        :class="`guard-${orientation}`"
+      />
+    </Teleport>
   </div>
 </template>
 
@@ -30,6 +39,7 @@ const emit = defineEmits<{
 }>();
 
 const isDragging = ref(false);
+let rafId: number | null = null;
 
 const handlePointerDown = (e: PointerEvent) => {
   e.preventDefault();
@@ -43,20 +53,31 @@ const handlePointerDown = (e: PointerEvent) => {
   const isHorizontal = props.orientation === 'horizontal';
 
   const onPointerMove = (moveEvent: PointerEvent) => {
-    let newRatio: number;
-    if (isHorizontal) {
-      const offsetX = moveEvent.clientX - parentRect.left;
-      newRatio = offsetX / parentRect.width;
-    } else {
-      const offsetY = moveEvent.clientY - parentRect.top;
-      newRatio = offsetY / parentRect.height;
-    }
-    const clamped = Math.max(0.15, Math.min(0.85, newRatio));
-    emit('update-ratio', clamped);
+    const clientX = moveEvent.clientX;
+    const clientY = moveEvent.clientY;
+
+    if (rafId !== null) return;
+    rafId = requestAnimationFrame(() => {
+      rafId = null;
+      let newRatio: number;
+      if (isHorizontal) {
+        const offsetX = clientX - parentRect.left;
+        newRatio = offsetX / parentRect.width;
+      } else {
+        const offsetY = clientY - parentRect.top;
+        newRatio = offsetY / parentRect.height;
+      }
+      const clamped = Math.max(0.15, Math.min(0.85, newRatio));
+      emit('update-ratio', clamped);
+    });
   };
 
   const onPointerUp = () => {
     isDragging.value = false;
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerUp);
@@ -125,5 +146,22 @@ const handlePointerDown = (e: PointerEvent) => {
 
 .tiling-sash.is-dragging .sash-line {
   background-color: #ffffff;
+}
+
+/* Fullscreen guard during sash resize to prevent lost mouse events */
+.sash-drag-guard {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  user-select: none;
+  background: transparent;
+}
+
+.sash-drag-guard.guard-horizontal {
+  cursor: col-resize;
+}
+
+.sash-drag-guard.guard-vertical {
+  cursor: row-resize;
 }
 </style>
