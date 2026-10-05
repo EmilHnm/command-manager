@@ -92,12 +92,20 @@ mod desktop {
                 let ipc_pipe = IpcPipe::new(tx);
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    while let Some((id, data)) = rx.recv().await {
-                        let b64 = base64::engine::general_purpose::STANDARD.encode(data);
-                        let _ = handle.emit(
-                            events::PTY_DATA,
-                            serde_json::json!({ "run_event_id": id, "b64": b64 }),
-                        );
+                    while let Some(first) = rx.recv().await {
+                        // Whatever queued up while the webview was busy goes
+                        // out as one event per terminal.
+                        let mut queued = vec![first];
+                        while let Ok(next) = rx.try_recv() {
+                            queued.push(next);
+                        }
+                        for (id, data) in crate::pty::backpressure::coalesce(queued) {
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(data);
+                            let _ = handle.emit(
+                                events::PTY_DATA,
+                                serde_json::json!({ "run_event_id": id, "b64": b64 }),
+                            );
+                        }
                     }
                 });
                 app.manage(ipc::AppState {

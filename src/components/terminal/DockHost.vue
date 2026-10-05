@@ -241,45 +241,55 @@
 
       <!-- Main Tiling Canvas -->
       <div class="tiling-canvas-container">
-        <!-- ZOOMED STATE: Single panel fills 100% of workspace -->
-        <div v-if="zoomedPanel" class="zoomed-panel-wrapper">
-          <TilingPanel
-            :panel="zoomedPanel"
-            :tabs-map="tabsMap"
-            :is-active="true"
-            :is-zoomed="true"
-            :sync-mode="syncMode"
-            :ghost-text-enabled="ghostTextEnabled"
-            :font-family="terminalFontFamily"
-            :font-size="terminalFontSize"
-            :restarting-cmd-id="restartingCmdId"
-            @focus="handlePanelFocus"
-            @select-tab="handleSelectTab"
-            @new-tab="handleNewTabInPanel"
-            @close-tab="handleCloseTab"
-            @close-panel="handleClosePanel"
-            @split-right="handleSplitRight"
-            @split-down="handleSplitDown"
-            @toggle-zoom="handleToggleZoom"
-            @rename-tab="handleTabDblClick"
-            @stop-process="handleStopProcess"
-            @restart-process="handleRestartProcess"
-            @register-xterm="registerXtermRef"
-            @data="handleTerminalData"
-            @cwd-change="handleTabCwdChange"
-            @title-change="handleTabTitleChange"
-            @phase-change="handleTabPhaseChange"
-            @transfer-tab="handleTransferTab"
-          />
-        </div>
+        <!-- Every window stays mounted and inactive ones are hidden with
+             v-show: remounting a window recreated its terminals and replayed
+             raw ring-buffer output, which garbles full-screen programs
+             (htop, Claude Code) until they repaint. -->
+        <div
+          v-for="win in windows"
+          v-show="win.id === activeWindowId"
+          :key="win.id"
+          class="tiling-window"
+        >
+          <!-- ZOOMED STATE: Single panel fills 100% of workspace -->
+          <div v-if="zoomedPanelOf(win)" class="zoomed-panel-wrapper">
+            <TilingPanel
+              :panel="zoomedPanelOf(win)!"
+              :tabs-map="tabsMap"
+              :is-active="win.id === activeWindowId"
+              :is-zoomed="true"
+              :sync-mode="syncMode"
+              :ghost-text-enabled="ghostTextEnabled"
+              :font-family="terminalFontFamily"
+              :font-size="terminalFontSize"
+              :restarting-cmd-id="restartingCmdId"
+              @focus="handlePanelFocus"
+              @select-tab="handleSelectTab"
+              @new-tab="handleNewTabInPanel"
+              @close-tab="handleCloseTab"
+              @close-panel="handleClosePanel"
+              @split-right="handleSplitRight"
+              @split-down="handleSplitDown"
+              @toggle-zoom="handleToggleZoom"
+              @rename-tab="handleTabDblClick"
+              @stop-process="handleStopProcess"
+              @restart-process="handleRestartProcess"
+              @register-xterm="registerXtermRef"
+              @data="handleTerminalData"
+              @cwd-change="handleTabCwdChange"
+              @title-change="handleTabTitleChange"
+              @phase-change="handleTabPhaseChange"
+              @transfer-tab="handleTransferTab"
+            />
+          </div>
 
-        <!-- NORMAL TILING TREE VIEW -->
-        <template v-else-if="currentTilingRoot">
+          <!-- NORMAL TILING TREE VIEW -->
           <TilingNodeView
-            :node="currentTilingRoot"
+            v-else-if="win.tilingRoot"
+            :node="win.tilingRoot"
             :tabs-map="tabsMap"
-            :active-panel-id="currentActivePanelId"
-            :zoomed-panel-id="currentZoomedPanelId"
+            :active-panel-id="win.activePanelId"
+            :zoomed-panel-id="win.zoomedPanelId"
             :sync-mode="syncMode"
             :ghost-text-enabled="ghostTextEnabled"
             :font-family="terminalFontFamily"
@@ -304,10 +314,10 @@
             @phase-change="handleTabPhaseChange"
             @transfer-tab="handleTransferTab"
           />
-        </template>
+        </div>
 
         <!-- EMPTY STATE -->
-        <div v-else class="workspace-empty-state">
+        <div v-if="!currentTilingRoot" class="workspace-empty-state">
           <div class="empty-card">
             <div class="empty-icon-wrap">
               <Terminal :size="32" class="empty-icon" />
@@ -498,6 +508,9 @@ const currentZoomedPanelId = computed({
 });
 
 const currentPreset = computed(() => activeWindow.value?.layoutPreset || 'single');
+
+const zoomedPanelOf = (win: WorkspaceWindowItem) =>
+  win.zoomedPanelId ? findPanelById(win.tilingRoot, win.zoomedPanelId) : null;
 
 const zoomedPanel = computed(() => {
   if (!currentZoomedPanelId.value) return null;
@@ -1660,6 +1673,11 @@ defineExpose({
   overflow: hidden;
   position: relative;
   background-color: var(--bg-app-base, #0c0e14);
+}
+
+.tiling-window {
+  width: 100%;
+  height: 100%;
 }
 
 .zoomed-panel-wrapper {

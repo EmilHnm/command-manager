@@ -97,6 +97,8 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { markSessionShown } from './shownSessions';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { RefreshCw, Trash2, Square, RotateCw, LoaderCircle, ExternalLink } from 'lucide-vue-next';
 import { usePtyStream } from '@/composables/usePtyStream';
@@ -330,6 +332,9 @@ onMounted(async () => {
 
   // Initialize xterm.js with dark theme matching brand palette
   term = new Terminal({
+    // term.unicode (used for the Unicode 11 width tables below) is a
+    // proposed API and throws without this.
+    allowProposedApi: true,
     fontFamily: terminalFontFamily.value,
     fontSize: props.fontSize,
     lineHeight: 1.4,
@@ -364,6 +369,11 @@ onMounted(async () => {
 
   fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+  // xterm defaults to Unicode 6 widths, where emoji such as ✅ take one
+  // column. TUIs (Claude Code/Ink, htop) lay them out as two, so their
+  // in-place redraws land one column off per emoji and overwrite each other.
+  term.loadAddon(new Unicode11Addon());
+  term.unicode.activeVersion = '11';
 
   webLinksAddon = new WebLinksAddon(
     (event: MouseEvent, uri: string) => {
@@ -663,6 +673,20 @@ onMounted(async () => {
 
   // Auto-fit terminal and sync cols/rows with PTY (debounced to avoid staircase prompt redraw during drag resize)
   syncPtySize(true);
+
+  // On a remount the replayed ring buffer is the tail of a byte stream, so a
+  // full-screen program (htop, Claude Code) is left half drawn and, drawing
+  // only what changes, never clears the rest. A size change makes it repaint
+  // everything (SIGWINCH); a newly opened terminal is left alone so the
+  // shell does not print its prompt twice.
+  const remounted = markSessionShown(props.runEventId || String(props.commandId));
+  if (remounted && props.processStatus === 'running' && term.rows > 2) {
+    const { cols, rows } = term;
+    void resize(props.commandId, cols, rows - 1, props.runEventId)
+      .then(() => resize(props.commandId, cols, rows, props.runEventId))
+      .catch(() => undefined);
+  }
+
   resizeObserver = new ResizeObserver(() => {
     syncPtySize(false);
   });

@@ -16,7 +16,7 @@ impl Drop for ShellGuard {
 #[test]
 fn frontend_snake_case_payload_executes_input_through_tauri() {
     let dir = tempfile::tempdir().unwrap();
-    let (tx, _rx) = tokio::sync::mpsc::channel(32);
+    let tx = crate::pty::backpressure::drained_sender();
     let ipc = IpcPipe::new(tx);
     let (pty, slave) = session::PtySession::open(100, 30, 65536).unwrap();
     let child = ShellGuard(session::spawn_interactive_on_slave(slave).unwrap());
@@ -125,7 +125,7 @@ fn frontend_snake_case_payload_executes_input_through_tauri() {
 #[test]
 fn frontend_snake_case_payload_creates_command() {
     let dir = tempfile::tempdir().unwrap();
-    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let tx = crate::pty::backpressure::drained_sender();
     let app = mock_builder()
         .manage(AppState {
             db: crate::db::Db::open(dir.path().join("test.db")).unwrap(),

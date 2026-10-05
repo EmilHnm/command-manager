@@ -522,7 +522,7 @@ mod tests {
         let mut guard = ChildGuard(Some(child));
         let reader = pty.clone_reader().unwrap();
         let buffer = Arc::clone(&pty.buffer);
-        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let tx = crate::pty::backpressure::drained_sender();
         std::thread::spawn(move || {
             pump_reader(reader, buffer, "pnpm-env-probe".into(), IpcPipe::new(tx))
         });
@@ -656,7 +656,7 @@ mod tests {
     #[test]
     fn interactive_shell_accepts_pty_input() {
         let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
-        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let tx = crate::pty::backpressure::drained_sender();
         let run_event_id = "test-interactive-shell".to_string();
         let shell =
             spawn_interactive_with_metadata(slave, None, None, false, None).expect("spawn shell");
@@ -723,7 +723,7 @@ mod tests {
         .expect("spawn shell");
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
-        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let tx = crate::pty::backpressure::drained_sender();
         std::thread::spawn(move || {
             pump_reader(reader, buffer, "test-cwd".into(), IpcPipe::new(tx));
         });
@@ -772,7 +772,7 @@ mod tests {
         );
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
-        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let tx = crate::pty::backpressure::drained_sender();
         std::thread::spawn(move || {
             pump_reader_with_tracker(
                 reader,
@@ -842,7 +842,7 @@ mod tests {
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
         std::thread::spawn(move || {
-            let (tx, _rx) = tokio::sync::mpsc::channel(8);
+            let tx = crate::pty::backpressure::drained_sender();
             pump_reader(
                 reader,
                 buffer,
@@ -880,7 +880,7 @@ mod tests {
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
         std::thread::spawn(move || {
-            let (tx, _rx) = tokio::sync::mpsc::channel(8);
+            let tx = crate::pty::backpressure::drained_sender();
             pump_reader(reader, buffer, "test-term-env".into(), IpcPipe::new(tx));
         });
         child.wait().expect("wait for shell command");
@@ -929,7 +929,7 @@ mod tests {
                     .expect("spawn unix shell");
             let reader = pty.clone_reader().expect("clone pty reader");
             let buffer = Arc::clone(&pty.buffer);
-            let (tx, _rx) = tokio::sync::mpsc::channel(8);
+            let tx = crate::pty::backpressure::drained_sender();
             std::thread::spawn(move || {
                 pump_reader(
                     reader,
@@ -1026,7 +1026,7 @@ mod tests {
                 .expect("spawn cmd shell");
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
-        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let tx = crate::pty::backpressure::drained_sender();
         std::thread::spawn(move || {
             pump_reader(reader, buffer, "test-cmd-shell".into(), IpcPipe::new(tx));
         });
@@ -1103,7 +1103,7 @@ mod tests {
         });
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
-        let (tx, _rx) = tokio::sync::mpsc::channel(16);
+        let tx = crate::pty::backpressure::drained_sender();
         std::thread::spawn(move || {
             pump_reader_with_tracker(
                 reader,
@@ -1188,7 +1188,7 @@ mod tests {
         .expect("spawn Windows PowerShell");
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
-        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let tx = crate::pty::backpressure::drained_sender();
         std::thread::spawn(move || {
             pump_reader(
                 reader,
@@ -1264,7 +1264,7 @@ mod tests {
                 .expect("spawn pwsh without profile");
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
-        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let tx = crate::pty::backpressure::drained_sender();
         std::thread::spawn(move || {
             pump_reader(
                 reader,
@@ -1320,7 +1320,7 @@ mod tests {
         let reader = pty.clone_reader().expect("clone pty reader");
         let buffer = Arc::clone(&pty.buffer);
         std::thread::spawn(move || {
-            let (tx, _rx) = tokio::sync::mpsc::channel(8);
+            let tx = crate::pty::backpressure::drained_sender();
             pump_reader(reader, buffer, "test-pwsh-command".into(), IpcPipe::new(tx));
         });
         let status = child.wait().expect("wait for saved PowerShell command");
