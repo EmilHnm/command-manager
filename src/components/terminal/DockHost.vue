@@ -1,6 +1,6 @@
 <template>
   <div class="dock-host-container">
-    <!-- Top Workspace Tilix Toolbar (36px) -->
+    <!-- Top Workspace Toolbar (36px) -->
     <div class="workspace-split-toolbar">
       <div class="toolbar-left-controls">
         <!-- Sessions Drawer Toggle -->
@@ -64,7 +64,7 @@
               @click="applyPresetMode('single')"
             >
               <Square :size="13" />
-              <span>Single Pane (100%)</span>
+              <span>Khung Đơn (1 Panel)</span>
             </button>
             <button
               class="preset-item"
@@ -88,7 +88,7 @@
               @click="applyPresetMode('2x2-grid')"
             >
               <Grid2x2 :size="13" />
-              <span>Lưới 2x2 (4 Ô Vuông)</span>
+              <span>Lưới 2x2 (4 Panels)</span>
             </button>
             <button
               class="preset-item"
@@ -96,7 +96,7 @@
               @click="applyPresetMode('1+2-tiled')"
             >
               <LayoutTemplate :size="13" />
-              <span>1+2 Tiled (Tilix Classic: 1 Lớn + 2 Nhỏ)</span>
+              <span>1+2 Tiled (1 Chính + 2 Phụ)</span>
             </button>
             <button
               class="preset-item"
@@ -119,15 +119,15 @@
           @click="toggleSyncMode"
         >
           <Link2 :size="13" />
-          <span>{{ syncMode === 'session' ? 'Sync: Session [ON]' : 'Sync Input: Off' }}</span>
+          <span>{{ syncMode === 'session' ? 'Sync: On' : 'Sync: Off' }}</span>
         </button>
 
         <div class="toolbar-divider" />
 
-        <!-- Quick Split Actions -->
+        <!-- Quick Split Actions for Active Panel -->
         <button
           class="btn btn-ghost btn-sm toolbar-action-btn"
-          title="Chia đôi sang phải ô đang chọn (Ctrl+Alt+R)"
+          title="Chia đôi sang phải panel đang chọn (Ctrl+Alt+R)"
           @click="splitActiveRight"
         >
           <Columns2 :size="12" />
@@ -136,7 +136,7 @@
 
         <button
           class="btn btn-ghost btn-sm toolbar-action-btn"
-          title="Chia đôi xuống dưới ô đang chọn (Ctrl+Alt+D)"
+          title="Chia đôi xuống dưới panel đang chọn (Ctrl+Alt+D)"
           @click="splitActiveDown"
         >
           <Rows2 :size="12" />
@@ -145,21 +145,21 @@
 
         <!-- Zoom Indicator & Restore -->
         <button
-          v-if="zoomedTab"
+          v-if="zoomedPanel"
           class="btn btn-primary btn-sm toolbar-action-btn zoom-pill"
           title="Bấm hoặc nhấn Ctrl+Shift+Z để khôi phục bố cục lưới cũ"
-          @click="zoomedTabId = null"
+          @click="currentZoomedPanelId = null"
         >
           <Minimize2 :size="12" />
-          <span>Đang Phóng To: {{ zoomedTab.name }} (Khôi Phục)</span>
+          <span>Đang Phóng To Panel (Bấm để Khôi Phục)</span>
         </button>
       </div>
 
       <div class="toolbar-right-actions">
-        <!-- New Terminal Button -->
+        <!-- New Terminal / Tab Button -->
         <button
           class="btn btn-primary btn-sm toolbar-action-btn new-term-btn"
-          title="Mở thêm một terminal mới vào bố cục (Ctrl+N)"
+          title="Mở thêm một tab terminal mới vào panel hiện tại (Ctrl+N)"
           :disabled="openingTerminal"
           @click="openEmptyTerminal()"
         >
@@ -180,6 +180,54 @@
       </div>
     </div>
 
+    <!-- Windows Bar: Multiple Windows / Workspaces Tabs -->
+    <div class="workspace-windows-bar">
+      <div class="windows-tab-list custom-scrollbar">
+        <div
+          v-for="win in windows"
+          :key="win.id"
+          class="window-tab-item"
+          :class="{ active: win.id === activeWindowId }"
+          @click="switchWindow(win.id)"
+          @dblclick="startRenameWindow(win)"
+        >
+          <Monitor :size="12" class="window-icon" />
+          <input
+            v-if="renamingWindowId === win.id"
+            ref="renameWindowInputRef"
+            v-model="renamingWindowName"
+            type="text"
+            class="window-rename-input"
+            maxlength="24"
+            @blur="saveRenameWindow"
+            @keydown.enter="saveRenameWindow"
+            @keydown.esc="renamingWindowId = null"
+            @click.stop
+          />
+          <span v-else class="window-title" :title="`Cửa sổ: ${win.name}`">{{ win.name }}</span>
+          <span class="window-panels-count">{{ getWindowPanelCount(win) }}p</span>
+          <button
+            v-if="windows.length > 1"
+            class="window-close-btn"
+            title="Đóng cửa sổ này"
+            @click.stop="closeWindow(win.id)"
+          >
+            <X :size="10" />
+          </button>
+        </div>
+
+        <!-- Add New Window Button -->
+        <button
+          class="window-add-tab-btn"
+          title="Mở thêm cửa sổ Workspace mới (Ctrl+Shift+T)"
+          @click="createNewWindow"
+        >
+          <Plus :size="12" />
+          <span>Cửa Sổ Mới</span>
+        </button>
+      </div>
+    </div>
+
     <!-- Main Workspace Body: Sessions Drawer + Tiling Canvas -->
     <div class="workspace-tiling-body">
       <!-- Tilix Sessions Drawer (Collapsible) -->
@@ -193,68 +241,83 @@
 
       <!-- Main Tiling Canvas -->
       <div class="tiling-canvas-container">
-        <!-- ZOOMED STATE: Single tile fills 100% of workspace -->
-        <div v-if="zoomedTab" class="zoomed-tile-wrapper">
-          <TilingTile
-            :tab="zoomedTab"
+        <!-- ZOOMED STATE: Single panel fills 100% of workspace -->
+        <div v-if="zoomedPanel" class="zoomed-panel-wrapper">
+          <TilingPanel
+            :panel="zoomedPanel"
+            :tabs-map="tabsMap"
             :is-active="true"
             :is-zoomed="true"
             :sync-mode="syncMode"
             :ghost-text-enabled="ghostTextEnabled"
             :font-family="terminalFontFamily"
             :font-size="terminalFontSize"
-            :restarting="restartingCmdId === zoomedTab.commandId"
-            @focus="handleTileFocus"
+            :restarting-cmd-id="restartingCmdId"
+            @focus="handlePanelFocus"
+            @select-tab="handleSelectTab"
+            @new-tab="handleNewTabInPanel"
+            @close-tab="handleCloseTab"
+            @close-panel="handleClosePanel"
             @split-right="handleSplitRight"
             @split-down="handleSplitDown"
             @toggle-zoom="handleToggleZoom"
-            @close="handleCloseTab"
-            @stop="handleStopProcess"
-            @restart="handleRestartProcess"
-            @rename="handleTabDblClick"
+            @rename-tab="handleTabDblClick"
+            @stop-process="handleStopProcess"
+            @restart-process="handleRestartProcess"
             @register-xterm="registerXtermRef"
             @data="handleTerminalData"
+            @cwd-change="handleTabCwdChange"
+            @title-change="handleTabTitleChange"
+            @phase-change="handleTabPhaseChange"
+            @transfer-tab="handleTransferTab"
           />
         </div>
 
         <!-- NORMAL TILING TREE VIEW -->
-        <template v-else-if="tilingRoot">
+        <template v-else-if="currentTilingRoot">
           <TilingNodeView
-            :node="tilingRoot"
+            :node="currentTilingRoot"
             :tabs-map="tabsMap"
-            :active-tab-id="activeTabId"
-            :zoomed-tab-id="zoomedTabId"
+            :active-panel-id="currentActivePanelId"
+            :zoomed-panel-id="currentZoomedPanelId"
             :sync-mode="syncMode"
             :ghost-text-enabled="ghostTextEnabled"
             :font-family="terminalFontFamily"
             :font-size="terminalFontSize"
             :restarting-cmd-id="restartingCmdId"
-            @focus="handleTileFocus"
+            @focus="handlePanelFocus"
+            @select-tab="handleSelectTab"
+            @new-tab="handleNewTabInPanel"
+            @close-tab="handleCloseTab"
+            @close-panel="handleClosePanel"
             @split-right="handleSplitRight"
             @split-down="handleSplitDown"
             @toggle-zoom="handleToggleZoom"
-            @close-tile="handleCloseTab"
+            @rename-tab="handleTabDblClick"
             @stop-process="handleStopProcess"
             @restart-process="handleRestartProcess"
-            @rename-tab="handleTabDblClick"
             @register-xterm="registerXtermRef"
             @update-ratio="handleRatioUpdate"
             @data="handleTerminalData"
+            @cwd-change="handleTabCwdChange"
+            @title-change="handleTabTitleChange"
+            @phase-change="handleTabPhaseChange"
+            @transfer-tab="handleTransferTab"
           />
         </template>
 
-        <!-- EMPTY STATE: No open terminals -->
+        <!-- EMPTY STATE -->
         <div v-else class="workspace-empty-state">
           <div class="empty-card">
             <div class="empty-icon-wrap">
               <Terminal :size="32" class="empty-icon" />
             </div>
-            <h3 class="empty-title">Không có terminal nào đang mở</h3>
+            <h4 class="empty-title">Không gian làm việc sẵn sàng</h4>
             <p class="empty-desc">
-              Chọn một câu lệnh từ danh sách bên trái hoặc bấm nút bên dưới để mở terminal mới.
+              Chọn lệnh từ danh mục bên trái hoặc mở terminal mới để bắt đầu.
             </p>
             <button
-              class="btn btn-primary btn-md"
+              class="btn btn-primary btn-sm"
               :disabled="openingTerminal"
               @click="openEmptyTerminal()"
             >
@@ -288,59 +351,90 @@
       @cancel="showKillModal = false"
     />
 
-    <!-- Toast Notification for Drops & Broadcast -->
+    <!-- Toast Notification Popup -->
     <div v-if="toastMessage" class="toast-popup" :class="toastType">
       <span>{{ toastMessage }}</span>
     </div>
+
+    <!-- Floating Dragged Tab (follows cursor during tab drag) -->
+    <Teleport to="body">
+      <div
+        v-if="dragState?.isDragging"
+        class="floating-drag-tab"
+        :style="{
+          top: `${dragState.currentY - dragState.grabOffsetY}px`,
+          left: `${dragState.currentX - dragState.grabOffsetX}px`,
+          width: `${dragState.width}px`,
+          height: `${dragState.height}px`,
+        }"
+      >
+        <span
+          class="tab-status-dot"
+          :class="[getProcessStatus(dragState.tab.commandId), { active: getProcessStatus(dragState.tab.commandId) === 'running' }]"
+        />
+        <span class="tab-title-text">{{ dragState.tab.title || dragState.tab.name }}</span>
+      </div>
+    </Teleport>
+
+    <!-- Tab Drag Guard (protects against xterm/canvas swallowing mouse events) -->
+    <Teleport to="body">
+      <div
+        v-if="dragState?.isDragging"
+        class="tab-drag-guard"
+      />
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import {
-  FolderKanban,
+  Square,
   Columns2,
   Rows2,
+  Columns3,
   Grid2x2,
   LayoutTemplate,
-  Columns3,
-  Square,
   Plus,
   Link2,
-  Minimize2,
   ChevronDown,
   Terminal,
+  FolderKanban,
+  Minimize2,
+  Monitor,
+  X,
   LoaderCircle,
 } from 'lucide-vue-next';
-import type { OpenTabItem } from '@/composables/useSplitLayout';
+import RenameTerminalModal from '@/components/dialogs/RenameTerminalModal.vue';
+import KillPanelModal from '@/components/dialogs/KillPanelModal.vue';
+import TilingNodeView from './tiling/TilingNodeView.vue';
+import TilingPanel, { type OpenTabItem } from './tiling/TilingPanel.vue';
+import SessionsDrawer from './tiling/SessionsDrawer.vue';
+import XtermPane from '@/components/terminal/XtermPane.vue';
+import {
+  createPanel,
+  buildPresetTree,
+  splitPanelInTree,
+  removePanelFromTree,
+  addTabToPanel,
+  removeTabFromPanel,
+  findPanelById,
+  findPanelByTabId,
+  collectAllPanels,
+  collectAllTabIds,
+  updateRatioInTree,
+  transferTabBetweenPanels,
+} from '@/composables/useTilingTree';
 import type {
-  TilingNode,
   LayoutPreset,
   SyncInputMode,
   WorkspaceSessionItem,
+  WorkspaceWindowItem,
 } from '@/types/tiling';
-import {
-  createLeaf,
-  buildPresetTree,
-  splitLeafInTree,
-  removeLeafFromTree,
-  updateRatioInTree,
-  collectLeafTabIds,
-} from '@/composables/useTilingTree';
-import TilingNodeView from './tiling/TilingNodeView.vue';
-import TilingTile from './tiling/TilingTile.vue';
-import SessionsDrawer from './tiling/SessionsDrawer.vue';
-import RenameTerminalModal from '@/components/dialogs/RenameTerminalModal.vue';
-import KillPanelModal from '@/components/dialogs/KillPanelModal.vue';
-import { useRunSession } from '@/composables/useRunSession';
-import { ipcClient } from '@/ipc/client';
 import type { ProcessLifecycleStatus } from '@/types/models';
-
-export type { OpenTabItem };
-
-const props = defineProps<{
-  initialTabs?: OpenTabItem[];
-}>();
+import { useRunSession } from '@/composables/useRunSession';
+import { useTabDrag } from '@/composables/useTabDrag';
+import { ipcClient } from '@/ipc/client';
 
 const emit = defineEmits<{
   (e: 'request-stop-process', commandId: number): void;
@@ -348,45 +442,788 @@ const emit = defineEmits<{
 
 const { getProcessStatus, getProcessInfo, refreshProcesses, updateProcessName } = useRunSession();
 
-// ----------------------------------------------------
-// Core Tiling State
-// ----------------------------------------------------
-const PRESET_KEY = 'cm_tilix_preset_v2';
-const savedPreset = (typeof window !== 'undefined' ? localStorage.getItem(PRESET_KEY) : null) as LayoutPreset | null;
-
-const currentPreset = ref<LayoutPreset>(savedPreset || '1+2-tiled');
-const syncMode = ref<SyncInputMode>('off');
-const showPresetMenu = ref(false);
-const showSessionsDrawer = ref(false);
-
-const allOpenTabs = ref<OpenTabItem[]>([...(props.initialTabs || [])]);
-const activeTabId = ref<string>(allOpenTabs.value[0]?.id || '');
-const zoomedTabId = ref<string | null>(null);
-
-const tilingRoot = ref<TilingNode | null>(null);
-
+// Terminal Appearance Settings
 const ghostTextEnabled = ref(true);
 const terminalFontFamily = ref('JetBrains Mono');
 const terminalFontSize = ref(13);
-const openingTerminal = ref(false);
 const restartingCmdId = ref<number | null>(null);
+const openingTerminal = ref(false);
 
-// Lookup map for instant tab retrieval
-const tabsMap = computed(() => {
-  const map = new Map<string, OpenTabItem>();
-  allOpenTabs.value.forEach(t => map.set(t.id, t));
-  return map;
-});
+// Active Tab reference for QuickAccessPanel / keyboard input
+const activeTabId = ref<string>('');
 
-const zoomedTab = computed(() => {
-  if (!zoomedTabId.value) return null;
-  return tabsMap.value.get(zoomedTabId.value) || null;
-});
-
-const allOpenTabCommandIds = computed(() => allOpenTabs.value.map(t => t.commandId));
+// Master tabs list
+const allOpenTabs = ref<OpenTabItem[]>([]);
+const tabsMap = computed(() => new Map(allOpenTabs.value.map(t => [t.id, t])));
 
 // ----------------------------------------------------
-// Sessions Management
+// Level 1: Multi-Window Management
+// ----------------------------------------------------
+const windows = ref<WorkspaceWindowItem[]>([
+  {
+    id: 'win-1',
+    name: 'Cửa Sổ 1',
+    tilingRoot: null,
+    activePanelId: '',
+    zoomedPanelId: null,
+    layoutPreset: 'single',
+  },
+]);
+
+const activeWindowId = ref<string>('win-1');
+
+const activeWindow = computed(() => {
+  return windows.value.find(w => w.id === activeWindowId.value) || windows.value[0];
+});
+
+const currentTilingRoot = computed({
+  get: () => activeWindow.value?.tilingRoot || null,
+  set: (val) => {
+    if (activeWindow.value) activeWindow.value.tilingRoot = val;
+  },
+});
+
+const currentActivePanelId = computed({
+  get: () => activeWindow.value?.activePanelId || '',
+  set: (val) => {
+    if (activeWindow.value) activeWindow.value.activePanelId = val;
+  },
+});
+
+const currentZoomedPanelId = computed({
+  get: () => activeWindow.value?.zoomedPanelId || null,
+  set: (val) => {
+    if (activeWindow.value) activeWindow.value.zoomedPanelId = val;
+  },
+});
+
+const currentPreset = computed(() => activeWindow.value?.layoutPreset || 'single');
+
+const zoomedPanel = computed(() => {
+  if (!currentZoomedPanelId.value) return null;
+  return findPanelById(currentTilingRoot.value, currentZoomedPanelId.value);
+});
+
+const getWindowPanelCount = (win: WorkspaceWindowItem): number => {
+  return collectAllPanels(win.tilingRoot).length;
+};
+
+const switchWindow = (winId: string) => {
+  activeWindowId.value = winId;
+  const targetWin = windows.value.find(w => w.id === winId);
+  if (targetWin && targetWin.tilingRoot) {
+    const panels = collectAllPanels(targetWin.tilingRoot);
+    if (panels.length > 0) {
+      const activeP = panels.find(p => p.id === targetWin.activePanelId) || panels[0];
+      targetWin.activePanelId = activeP.id;
+      activeTabId.value = activeP.activeTabId || activeP.tabIds[0] || '';
+      nextTick(() => {
+        const pane = xtermPaneRefs.get(activeTabId.value);
+        pane?.focusTerminal();
+      });
+    }
+  }
+};
+
+const renamingWindowId = ref<string | null>(null);
+const renamingWindowName = ref('');
+const renameWindowInputRef = ref<HTMLInputElement[] | null>(null);
+
+const startRenameWindow = (win: WorkspaceWindowItem) => {
+  renamingWindowId.value = win.id;
+  renamingWindowName.value = win.name;
+  nextTick(() => {
+    if (renameWindowInputRef.value && renameWindowInputRef.value[0]) {
+      renameWindowInputRef.value[0].focus();
+      renameWindowInputRef.value[0].select();
+    }
+  });
+};
+
+const saveRenameWindow = () => {
+  if (renamingWindowId.value) {
+    const win = windows.value.find(w => w.id === renamingWindowId.value);
+    if (win && renamingWindowName.value.trim()) {
+      win.name = renamingWindowName.value.trim();
+    }
+  }
+  renamingWindowId.value = null;
+};
+
+const closeWindow = (winId: string) => {
+  if (windows.value.length <= 1) return;
+  const idx = windows.value.findIndex(w => w.id === winId);
+  if (idx !== -1) {
+    const targetWin = windows.value[idx];
+    const tabsInWin = collectAllTabIds(targetWin.tilingRoot);
+    // Remove tabs in this window
+    tabsInWin.forEach(tabId => {
+      xtermPaneRefs.delete(tabId);
+      const tabIdx = allOpenTabs.value.findIndex(t => t.id === tabId);
+      if (tabIdx !== -1) allOpenTabs.value.splice(tabIdx, 1);
+    });
+
+    windows.value.splice(idx, 1);
+    if (activeWindowId.value === winId) {
+      const nextWin = windows.value[Math.max(0, idx - 1)];
+      switchWindow(nextWin.id);
+    }
+  }
+};
+
+const createNewWindow = async () => {
+  const newWinId = `win-${Date.now().toString(36)}`;
+  const winNumber = windows.value.length + 1;
+  const focusedTab = tabsMap.value.get(activeTabId.value);
+  const cwd = focusedTab?.cwd;
+
+  try {
+    openingTerminal.value = true;
+    await refreshProcesses();
+    const terminal = await ipcClient.openTerminal(cwd);
+    await refreshProcesses();
+
+    const newTab: OpenTabItem = {
+      id: `terminal-${terminal.commandId}-${Date.now()}`,
+      commandId: terminal.commandId,
+      name: 'Terminal',
+      runEventId: terminal.runEventId,
+      shellKind: terminal.shellKind,
+      historyLevel: terminal.historyLevel,
+      isManual: true,
+      cwd,
+    };
+    allOpenTabs.value.push(newTab);
+
+    const initialPanel = createPanel([newTab.id], newTab.id);
+    const newWin: WorkspaceWindowItem = {
+      id: newWinId,
+      name: `Cửa Sổ ${winNumber}`,
+      tilingRoot: initialPanel,
+      activePanelId: initialPanel.id,
+      zoomedPanelId: null,
+      layoutPreset: 'single',
+    };
+
+    windows.value.push(newWin);
+    switchWindow(newWinId);
+  } catch (error) {
+    console.error('[DockHost] Không thể tạo cửa sổ mới:', error);
+  } finally {
+    openingTerminal.value = false;
+  }
+};
+
+// ----------------------------------------------------
+// UI Controls: Presets, Sync Mode, Sessions
+// ----------------------------------------------------
+const showPresetMenu = ref(false);
+const showSessionsDrawer = ref(false);
+const syncMode = ref<SyncInputMode>('off');
+
+const presetLabel = (preset: LayoutPreset) => {
+  switch (preset) {
+    case '2-columns': return '2 Cột';
+    case '2-rows': return '2 Hàng';
+    case '2x2-grid': return 'Lưới 2x2';
+    case '1+2-tiled': return '1+2 Tiled';
+    case '3-columns': return '3 Cột';
+    default: return 'Single Pane';
+  }
+};
+
+const applyPresetMode = (preset: LayoutPreset) => {
+  showPresetMenu.value = false;
+  if (!activeWindow.value) return;
+  activeWindow.value.layoutPreset = preset;
+
+  const existingTabIds = collectAllTabIds(currentTilingRoot.value);
+  const createFallback = () => {
+    const dummyId = `terminal-fallback-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
+    const newTab: OpenTabItem = {
+      id: dummyId,
+      commandId: 0,
+      name: 'Terminal',
+      isManual: true,
+    };
+    allOpenTabs.value.push(newTab);
+    return dummyId;
+  };
+
+  const panelLists: string[][] = [];
+  if (preset === 'single') {
+    panelLists.push(existingTabIds.length > 0 ? existingTabIds : [createFallback()]);
+  } else if (preset === '2-columns' || preset === '2-rows') {
+    panelLists.push([existingTabIds[0] || createFallback()]);
+    panelLists.push([existingTabIds[1] || createFallback()]);
+  } else if (preset === '1+2-tiled' || preset === '3-columns') {
+    panelLists.push([existingTabIds[0] || createFallback()]);
+    panelLists.push([existingTabIds[1] || createFallback()]);
+    panelLists.push([existingTabIds[2] || createFallback()]);
+  } else if (preset === '2x2-grid') {
+    panelLists.push([existingTabIds[0] || createFallback()]);
+    panelLists.push([existingTabIds[1] || createFallback()]);
+    panelLists.push([existingTabIds[2] || createFallback()]);
+    panelLists.push([existingTabIds[3] || createFallback()]);
+  }
+
+  currentTilingRoot.value = buildPresetTree(preset, panelLists, createFallback);
+  const panels = collectAllPanels(currentTilingRoot.value);
+  if (panels[0]) {
+    currentActivePanelId.value = panels[0].id;
+    activeTabId.value = panels[0].activeTabId || panels[0].tabIds[0] || '';
+  }
+};
+
+// ----------------------------------------------------
+// Synchronized Keystroke Broadcasting (Tilix Model)
+// ----------------------------------------------------
+const toggleSyncMode = () => {
+  if (syncMode.value === 'off') {
+    syncMode.value = 'session';
+    showToast('🔗 Đã bật phát sóng bàn phím đồng bộ tới tất cả terminal trong Session', 'info');
+  } else {
+    syncMode.value = 'off';
+    showToast('Đã tắt phát sóng bàn phím đồng bộ', 'info');
+  }
+};
+
+const handleTerminalData = (sourceTabId: string, chunk: string) => {
+  if (syncMode.value !== 'session') return;
+
+  allOpenTabs.value.forEach(tab => {
+    if (tab.id !== sourceTabId && tab.commandId > 0) {
+      void ipcClient.writePty(tab.commandId, chunk, tab.runEventId).catch(() => undefined);
+    }
+  });
+};
+
+// ----------------------------------------------------
+// Level 2 & 3: Panel and Tab Interactions
+// ----------------------------------------------------
+const handlePanelFocus = (panelId: string) => {
+  currentActivePanelId.value = panelId;
+  const panel = findPanelById(currentTilingRoot.value, panelId);
+  if (panel && panel.activeTabId) {
+    activeTabId.value = panel.activeTabId;
+    const pane = xtermPaneRefs.get(panel.activeTabId);
+    pane?.focusTerminal();
+  }
+};
+
+const handleSelectTab = (panelId: string, tabId: string) => {
+  currentActivePanelId.value = panelId;
+  activeTabId.value = tabId;
+  if (currentTilingRoot.value) {
+    const panel = findPanelById(currentTilingRoot.value, panelId);
+    if (panel) {
+      panel.activeTabId = tabId;
+    }
+  }
+  nextTick(() => {
+    const pane = xtermPaneRefs.get(tabId);
+    pane?.focusTerminal();
+  });
+};
+
+const handleTabCwdChange = (tabId: string, cwd: string) => {
+  const tab = tabsMap.value.get(tabId);
+  if (tab) {
+    tab.cwd = cwd;
+  }
+};
+
+const handleTabTitleChange = (tabId: string, title: string) => {
+  const tab = tabsMap.value.get(tabId);
+  if (tab) {
+    tab.title = title;
+  }
+};
+
+const handleTabPhaseChange = (tabId: string, phase: 'prompt' | 'input' | 'running') => {
+  const tab = tabsMap.value.get(tabId);
+  if (tab) {
+    tab.phase = phase;
+  }
+};
+
+// ----------------------------------------------------
+// Level 2 & 3: SPLIT PANEL & INHERIT CWD (WORKING PATH)
+// ----------------------------------------------------
+const splitActiveRight = () => {
+  if (currentActivePanelId.value) {
+    handleSplitRight(currentActivePanelId.value);
+  } else {
+    const panels = collectAllPanels(currentTilingRoot.value);
+    if (panels[0]) handleSplitRight(panels[0].id);
+  }
+};
+
+const splitActiveDown = () => {
+  if (currentActivePanelId.value) {
+    handleSplitDown(currentActivePanelId.value);
+  } else {
+    const panels = collectAllPanels(currentTilingRoot.value);
+    if (panels[0]) handleSplitDown(panels[0].id);
+  }
+};
+
+const handleSplitRight = async (targetPanelId: string) => {
+  await splitPanelWithNewTerminal(targetPanelId, 'horizontal');
+};
+
+const handleSplitDown = async (targetPanelId: string) => {
+  await splitPanelWithNewTerminal(targetPanelId, 'vertical');
+};
+
+/**
+ * Splits target panel into 2 panels, strictly inheriting the CWD of the source tab!
+ */
+const splitPanelWithNewTerminal = async (
+  targetPanelId: string,
+  orientation: 'horizontal' | 'vertical'
+) => {
+  if (openingTerminal.value) return;
+  openingTerminal.value = true;
+  try {
+    // 1. Determine CWD strictly from the active tab in the target panel
+    const targetPanel = findPanelById(currentTilingRoot.value, targetPanelId);
+    const sourceTab = targetPanel ? tabsMap.value.get(targetPanel.activeTabId) : null;
+    const cwd = sourceTab?.cwd;
+
+    await refreshProcesses();
+    const terminal = await ipcClient.openTerminal(cwd);
+    await refreshProcesses();
+
+    const newTab: OpenTabItem = {
+      id: `terminal-${terminal.commandId}-${Date.now()}`,
+      commandId: terminal.commandId,
+      name: 'Terminal',
+      runEventId: terminal.runEventId,
+      shellKind: terminal.shellKind,
+      historyLevel: terminal.historyLevel,
+      isManual: true,
+      cwd,
+    };
+    allOpenTabs.value.push(newTab);
+
+    const newPanel = createPanel([newTab.id], newTab.id);
+
+    if (!currentTilingRoot.value) {
+      currentTilingRoot.value = newPanel;
+    } else {
+      currentTilingRoot.value = splitPanelInTree(
+        currentTilingRoot.value,
+        targetPanelId,
+        orientation,
+        newPanel
+      );
+    }
+
+    currentActivePanelId.value = newPanel.id;
+    activeTabId.value = newTab.id;
+
+    nextTick(() => {
+      const pane = xtermPaneRefs.get(newTab.id);
+      pane?.focusTerminal();
+    });
+  } catch (error) {
+    console.error('[DockHost] Không thể split panel:', error);
+  } finally {
+    openingTerminal.value = false;
+  }
+};
+
+/**
+ * Opens a new tab inside an existing panel, preserving its current working directory (CWD)
+ */
+const handleNewTabInPanel = async (targetPanelId: string) => {
+  if (openingTerminal.value) return;
+  openingTerminal.value = true;
+  try {
+    const targetPanel = findPanelById(currentTilingRoot.value, targetPanelId);
+    const sourceTab = targetPanel ? tabsMap.value.get(targetPanel.activeTabId) : null;
+    const cwd = sourceTab?.cwd;
+
+    await refreshProcesses();
+    const terminal = await ipcClient.openTerminal(cwd);
+    await refreshProcesses();
+
+    const newTab: OpenTabItem = {
+      id: `terminal-${terminal.commandId}-${Date.now()}`,
+      commandId: terminal.commandId,
+      name: 'Terminal',
+      runEventId: terminal.runEventId,
+      shellKind: terminal.shellKind,
+      historyLevel: terminal.historyLevel,
+      isManual: true,
+      cwd,
+    };
+    allOpenTabs.value.push(newTab);
+
+    if (currentTilingRoot.value) {
+      currentTilingRoot.value = addTabToPanel(
+        currentTilingRoot.value,
+        targetPanelId,
+        newTab.id
+      );
+    }
+
+    currentActivePanelId.value = targetPanelId;
+    activeTabId.value = newTab.id;
+
+    nextTick(() => {
+      const pane = xtermPaneRefs.get(newTab.id);
+      pane?.focusTerminal();
+    });
+  } catch (error) {
+    console.error('[DockHost] Không thể mở tab mới trong panel:', error);
+  } finally {
+    openingTerminal.value = false;
+  }
+};
+
+// ----------------------------------------------------
+// Zoom / Maximize Panel
+// ----------------------------------------------------
+const handleToggleZoom = (panelId: string) => {
+  if (currentZoomedPanelId.value === panelId) {
+    currentZoomedPanelId.value = null;
+  } else {
+    currentZoomedPanelId.value = panelId;
+  }
+};
+
+const handleRatioUpdate = (splitId: string, ratio: number) => {
+  if (currentTilingRoot.value) {
+    currentTilingRoot.value = updateRatioInTree(currentTilingRoot.value, splitId, ratio);
+  }
+};
+
+// ----------------------------------------------------
+// Closing Tabs and Panels
+// ----------------------------------------------------
+const handleCloseTab = (tabId: string) => {
+  xtermPaneRefs.delete(tabId);
+
+  if (currentTilingRoot.value) {
+    const { newTree, removedPanelId } = removeTabFromPanel(currentTilingRoot.value, tabId);
+    currentTilingRoot.value = newTree;
+
+    if (removedPanelId && currentZoomedPanelId.value === removedPanelId) {
+      currentZoomedPanelId.value = null;
+    }
+  }
+
+  const idx = allOpenTabs.value.findIndex(t => t.id === tabId);
+  if (idx !== -1) {
+    allOpenTabs.value.splice(idx, 1);
+  }
+
+  // Update active tab & panel
+  if (activeTabId.value === tabId) {
+    const panels = collectAllPanels(currentTilingRoot.value);
+    if (panels.length > 0) {
+      const activeP = panels.find(p => p.id === currentActivePanelId.value) || panels[0];
+      currentActivePanelId.value = activeP.id;
+      activeTabId.value = activeP.activeTabId || activeP.tabIds[0] || '';
+    } else {
+      currentActivePanelId.value = '';
+      activeTabId.value = '';
+    }
+  }
+};
+
+const handleClosePanel = (panelId: string) => {
+  const panel = findPanelById(currentTilingRoot.value, panelId);
+  if (panel) {
+    panel.tabIds.forEach(tabId => {
+      xtermPaneRefs.delete(tabId);
+      const idx = allOpenTabs.value.findIndex(t => t.id === tabId);
+      if (idx !== -1) allOpenTabs.value.splice(idx, 1);
+    });
+  }
+
+  if (currentZoomedPanelId.value === panelId) {
+    currentZoomedPanelId.value = null;
+  }
+
+  if (currentTilingRoot.value) {
+    currentTilingRoot.value = removePanelFromTree(currentTilingRoot.value, panelId);
+  }
+
+  const panels = collectAllPanels(currentTilingRoot.value);
+  if (panels.length > 0) {
+    currentActivePanelId.value = panels[0].id;
+    activeTabId.value = panels[0].activeTabId || panels[0].tabIds[0] || '';
+  } else {
+    currentActivePanelId.value = '';
+    activeTabId.value = '';
+  }
+};
+
+/**
+ * Handles dragging and dropping a tab between different panels or reordering within the same panel.
+ */
+const handleTransferTab = (payload: {
+  sourcePanelId: string;
+  targetPanelId: string;
+  tabId: string;
+  targetIndex?: number;
+}) => {
+  if (!currentTilingRoot.value) return;
+
+  const newTree = transferTabBetweenPanels(
+    currentTilingRoot.value,
+    payload.sourcePanelId,
+    payload.targetPanelId,
+    payload.tabId,
+    payload.targetIndex
+  );
+  currentTilingRoot.value = newTree;
+
+  // Make the target panel and moved tab active
+  currentActivePanelId.value = payload.targetPanelId;
+  activeTabId.value = payload.tabId;
+
+  // If source panel was zoomed and has been collapsed/removed, reset zoom
+  if (currentZoomedPanelId.value && !findPanelById(newTree, currentZoomedPanelId.value)) {
+    currentZoomedPanelId.value = null;
+  }
+
+  nextTick(() => {
+    const pane = xtermPaneRefs.get(payload.tabId);
+    pane?.focusTerminal();
+  });
+};
+
+const { dragState, registerTransferHandler, registerSelectHandler } = useTabDrag();
+
+registerTransferHandler((payload) => {
+  handleTransferTab(payload);
+});
+
+registerSelectHandler((panelId, tabId) => {
+  handleSelectTab(panelId, tabId);
+});
+
+const closeAllTabs = () => {
+  xtermPaneRefs.clear();
+  currentZoomedPanelId.value = null;
+  currentTilingRoot.value = null;
+  allOpenTabs.value = [];
+  activeTabId.value = '';
+  currentActivePanelId.value = '';
+};
+
+// ----------------------------------------------------
+// Terminal Spawning (Toolbar / Programmatic)
+// ----------------------------------------------------
+const openEmptyTerminal = async () => {
+  const panels = collectAllPanels(currentTilingRoot.value);
+  if (panels.length > 0) {
+    const targetPanelId = currentActivePanelId.value || panels[0].id;
+    await handleNewTabInPanel(targetPanelId);
+  } else {
+    // No panels exist, create first panel in current window
+    if (openingTerminal.value) return;
+    openingTerminal.value = true;
+    try {
+      await refreshProcesses();
+      const terminal = await ipcClient.openTerminal();
+      await refreshProcesses();
+
+      const newTab: OpenTabItem = {
+        id: `terminal-${terminal.commandId}-${Date.now()}`,
+        commandId: terminal.commandId,
+        name: 'Terminal',
+        runEventId: terminal.runEventId,
+        shellKind: terminal.shellKind,
+        historyLevel: terminal.historyLevel,
+        isManual: true,
+      };
+      allOpenTabs.value.push(newTab);
+
+      const panel = createPanel([newTab.id], newTab.id);
+      currentTilingRoot.value = panel;
+      currentActivePanelId.value = panel.id;
+      activeTabId.value = newTab.id;
+    } catch (error) {
+      console.error('[DockHost] Không thể mở terminal mới:', error);
+    } finally {
+      openingTerminal.value = false;
+    }
+  }
+};
+
+const openCommandTab = (
+  commandId: number,
+  commandName: string,
+  runEventId?: string,
+  shellKind?: string
+) => {
+  // Check if already open
+  const existing = allOpenTabs.value.find(t => t.commandId === commandId);
+  if (existing) {
+    const containingPanel = findPanelByTabId(currentTilingRoot.value, existing.id);
+    if (containingPanel) {
+      handleSelectTab(containingPanel.id, existing.id);
+      return;
+    }
+  }
+
+  const newTab: OpenTabItem = {
+    id: `cmd-${commandId}-${Date.now()}`,
+    commandId,
+    name: commandName,
+    runEventId,
+    shellKind,
+    isManual: false,
+  };
+  allOpenTabs.value.push(newTab);
+
+  const panels = collectAllPanels(currentTilingRoot.value);
+  if (panels.length > 0) {
+    const targetPanelId = currentActivePanelId.value || panels[0].id;
+    currentTilingRoot.value = addTabToPanel(currentTilingRoot.value!, targetPanelId, newTab.id);
+    handleSelectTab(targetPanelId, newTab.id);
+  } else {
+    const panel = createPanel([newTab.id], newTab.id);
+    currentTilingRoot.value = panel;
+    currentActivePanelId.value = panel.id;
+    activeTabId.value = newTab.id;
+  }
+};
+
+// ----------------------------------------------------
+// Terminal Process Control & Modals
+// ----------------------------------------------------
+const handleStopProcess = (commandId: number) => {
+  emit('request-stop-process', commandId);
+};
+
+const handleRestartProcess = async (commandId: number) => {
+  restartingCmdId.value = commandId;
+  try {
+    await ipcClient.stopProcess(commandId, false);
+    await refreshProcesses();
+    await ipcClient.runCommand(commandId);
+    await refreshProcesses();
+  } catch (err) {
+    console.error('[DockHost] Không thể khởi động lại lệnh:', err);
+  } finally {
+    restartingCmdId.value = null;
+  }
+};
+
+// Manual Terminal Rename Modal (MOD-14)
+const renameModalVisible = ref(false);
+const renamingTab = ref<OpenTabItem | null>(null);
+
+const handleTabDblClick = (tab: OpenTabItem) => {
+  renamingTab.value = tab;
+  renameModalVisible.value = true;
+};
+
+const handleRenameSave = (tabId: string, newName: string) => {
+  const target = allOpenTabs.value.find(t => t.id === tabId);
+  if (target) {
+    target.name = newName;
+    ipcClient.setTerminalName?.(target.commandId, newName);
+    updateProcessName(target.commandId, newName);
+  }
+  renameModalVisible.value = false;
+  renamingTab.value = null;
+};
+
+const handleRenameCancel = () => {
+  renameModalVisible.value = false;
+  renamingTab.value = null;
+};
+
+// Kill Panel Modal
+const showKillModal = ref(false);
+const killInProgress = ref(false);
+
+const handleConfirmKillAll = async (force: boolean) => {
+  killInProgress.value = true;
+  try {
+    await Promise.allSettled(
+      allOpenTabs.value.map(t => ipcClient.stopProcess(t.commandId, force))
+    );
+    closeAllTabs();
+    await refreshProcesses();
+    showKillModal.value = false;
+  } finally {
+    killInProgress.value = false;
+  }
+};
+
+// ----------------------------------------------------
+// Xterm Pane Instance Registry & Stdin Dispatching
+// ----------------------------------------------------
+const xtermPaneRefs = new Map<string, InstanceType<typeof XtermPane>>();
+
+const registerXtermRef = (tabId: string, instance: unknown) => {
+  const inst = instance as InstanceType<typeof XtermPane> | null;
+  if (inst) {
+    xtermPaneRefs.set(tabId, inst);
+  } else {
+    xtermPaneRefs.delete(tabId);
+  }
+};
+
+export interface QuickAccessTarget {
+  tabId: string;
+  label: string;
+  pane: 'paneA' | 'paneB';
+  status: ProcessLifecycleStatus;
+  busy: boolean;
+  shellKind?: string | null;
+}
+
+export type SendResult = 'sent' | 'stopped' | 'input-not-at-end';
+
+const tabLabel = (tab: OpenTabItem) => {
+  return tab.title || tab.name || `Terminal #${tab.commandId}`;
+};
+
+const quickAccessTarget = computed<QuickAccessTarget | null>(() => {
+  if (!activeTabId.value) return null;
+  const targetTab = tabsMap.value.get(activeTabId.value);
+  if (!targetTab) return null;
+  const status = getProcessStatus(targetTab.commandId);
+  const busy = targetTab.phase === 'running';
+  return {
+    tabId: targetTab.id,
+    label: tabLabel(targetTab),
+    pane: 'paneA',
+    status,
+    busy,
+    shellKind: targetTab.shellKind,
+  };
+});
+
+const sendToFocusedTerminal = (
+  text: string,
+  options: { execute: boolean }
+): SendResult | 'no-target' => {
+  const target = quickAccessTarget.value;
+  if (!target) return 'no-target';
+  const paneInstance = xtermPaneRefs.get(target.tabId);
+  if (!paneInstance) return 'no-target';
+
+  const result = paneInstance.sendCommand(text, options.execute);
+  if (result === 'input-not-at-end') {
+    showToast('Đưa con trỏ về cuối dòng hoặc xoá dòng đang gõ trước khi Run', 'warning');
+  } else if (result === 'stopped') {
+    showToast(`Tiến trình trên tab "${target.label}" đã dừng`, 'warning');
+  }
+  return result;
+};
+
+// ----------------------------------------------------
+// Sessions Management (Drawer)
 // ----------------------------------------------------
 const sessions = ref<WorkspaceSessionItem[]>([
   {
@@ -441,491 +1278,101 @@ const handleCreateSession = () => {
     preset: '1+2-tiled',
     panelCount: 1,
     runningCount: 0,
-    tags: ['Custom'],
+    tags: ['New Workspace'],
+    isActive: true,
   };
+  sessions.value.forEach(s => { s.isActive = false; });
   sessions.value.push(newSess);
-  handleSelectSession(newId);
+  activeSessionId.value = newId;
+  applyPresetMode('1+2-tiled');
 };
 
-// ----------------------------------------------------
-// Quick Access & Xterm registry
-// ----------------------------------------------------
-export interface QuickAccessTarget {
-  tabId: string;
-  label: string;
-  pane: 'paneA' | 'paneB';
-  status: ProcessLifecycleStatus;
-  busy: boolean;
-  shellKind?: string | null;
-}
-
-export type SendResult = 'sent' | 'stopped' | 'input-not-at-end';
-
-export interface XtermPaneInstance {
-  focusTerminal: () => void;
-  pasteText: (text: string) => boolean;
-  sendCommand: (text: string, execute: boolean) => SendResult;
-  inputState: () => { phase: 'prompt' | 'input' | 'running'; hasInput: boolean; cursorAtEnd: boolean };
-}
-
-const xtermPaneRefs = new Map<string, XtermPaneInstance>();
-const registerXtermRef = (tabId: string, inst: unknown) => {
-  if (inst) {
-    xtermPaneRefs.set(tabId, inst as XtermPaneInstance);
-  }
-};
-
-const quickAccessTarget = computed<QuickAccessTarget | null>(() => {
-  const current = tabsMap.value.get(activeTabId.value) || allOpenTabs.value[0];
-  if (!current) return null;
-  const status = getProcessStatus(current.commandId);
-  const busy = current.phase === 'running';
-  return {
-    tabId: current.id,
-    label: current.name,
-    pane: 'paneA',
-    status,
-    busy,
-    shellKind: current.shellKind,
-  };
-});
-
-const sendToFocusedTerminal = (
-  text: string,
-  options: { execute: boolean }
-): SendResult | 'no-target' => {
-  const target = quickAccessTarget.value;
-  if (!target) return 'no-target';
-  const paneInstance = xtermPaneRefs.get(target.tabId);
-  if (!paneInstance) return 'no-target';
-
-  const result = paneInstance.sendCommand(text, options.execute);
-  if (result === 'input-not-at-end') {
-    showToast('Đưa con trỏ về cuối dòng hoặc xoá dòng đang gõ trước khi Run', 'warning');
-  } else if (result === 'stopped') {
-    showToast(`Tiến trình trên tab "${target.label}" đã dừng`, 'warning');
-  }
-  return result;
-};
-
-// ----------------------------------------------------
-// Toast Notification Helper
-// ----------------------------------------------------
+// Toast notification helper
 const toastMessage = ref('');
-const toastType = ref<'info' | 'warning' | 'error'>('info');
-let toastTimer: ReturnType<typeof setTimeout> | null = null;
+const toastType = ref<'info' | 'warning'>('info');
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
-const showToast = (msg: string, type: 'info' | 'warning' | 'error' = 'info') => {
-  if (toastTimer) clearTimeout(toastTimer);
+const showToast = (msg: string, type: 'info' | 'warning' = 'info') => {
   toastMessage.value = msg;
   toastType.value = type;
+  if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     toastMessage.value = '';
-  }, 3200);
+  }, 3500);
 };
 
 // ----------------------------------------------------
-// Tree Layout Initialization & Preset Application
-// ----------------------------------------------------
-const presetLabel = (preset: LayoutPreset) => {
-  switch (preset) {
-    case 'single': return 'Single (100%)';
-    case '2-columns': return '2 Cột (50:50)';
-    case '2-rows': return '2 Hàng (50:50)';
-    case '2x2-grid': return '2x2 Grid';
-    case '1+2-tiled': return '1+2 Tiled';
-    case '3-columns': return '3 Cột';
-  }
-};
-
-const createFallbackTab = (): string => {
-  const id = `terminal-fallback-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
-  const newTab: OpenTabItem = {
-    id,
-    commandId: -Date.now(),
-    name: 'Terminal',
-    isManual: true,
-  };
-  allOpenTabs.value.push(newTab);
-  return id;
-};
-
-const applyPresetMode = (preset: LayoutPreset) => {
-  currentPreset.value = preset;
-  showPresetMenu.value = false;
-  zoomedTabId.value = null;
-
-  try {
-    localStorage.setItem(PRESET_KEY, preset);
-  } catch {}
-
-  const tabIds = allOpenTabs.value.map(t => t.id);
-  tilingRoot.value = buildPresetTree(preset, tabIds, createFallbackTab);
-
-  if (tilingRoot.value) {
-    const leafIds = collectLeafTabIds(tilingRoot.value);
-    if (leafIds.length > 0 && !leafIds.includes(activeTabId.value)) {
-      activeTabId.value = leafIds[0];
-    }
-  }
-};
-
-// ----------------------------------------------------
-// Synchronized Keystroke Broadcasting (Tilix Model)
-// ----------------------------------------------------
-const toggleSyncMode = () => {
-  if (syncMode.value === 'off') {
-    syncMode.value = 'session';
-    showToast('🔗 Đã bật phát sóng bàn phím đồng bộ tới toàn bộ terminal trong Session', 'info');
-  } else {
-    syncMode.value = 'off';
-    showToast('Đã tắt phát sóng bàn phím đồng bộ', 'info');
-  }
-};
-
-const handleTerminalData = (sourceTabId: string, chunk: string) => {
-  if (syncMode.value !== 'session') return;
-
-  // Broadcast typed keystroke to all OTHER running terminals in the session
-  allOpenTabs.value.forEach(tab => {
-    if (tab.id !== sourceTabId && getProcessStatus(tab.commandId) === 'running') {
-      void ipcClient.writePty(tab.commandId, chunk, tab.runEventId).catch(() => undefined);
-    }
-  });
-};
-
-// ----------------------------------------------------
-// Tile Focus, Zoom & Splitting Actions
-// ----------------------------------------------------
-const handleTileFocus = (tabId: string) => {
-  activeTabId.value = tabId;
-  const instance = xtermPaneRefs.get(tabId);
-  instance?.focusTerminal();
-};
-
-const handleToggleZoom = (tabId: string) => {
-  if (zoomedTabId.value === tabId) {
-    zoomedTabId.value = null;
-  } else {
-    zoomedTabId.value = tabId;
-  }
-};
-
-const handleRatioUpdate = (splitId: string, ratio: number) => {
-  if (tilingRoot.value) {
-    tilingRoot.value = updateRatioInTree(tilingRoot.value, splitId, ratio);
-  }
-};
-
-const splitActiveRight = () => {
-  if (activeTabId.value) {
-    handleSplitRight(activeTabId.value);
-  } else if (allOpenTabs.value[0]) {
-    handleSplitRight(allOpenTabs.value[0].id);
-  }
-};
-
-const splitActiveDown = () => {
-  if (activeTabId.value) {
-    handleSplitDown(activeTabId.value);
-  } else if (allOpenTabs.value[0]) {
-    handleSplitDown(allOpenTabs.value[0].id);
-  }
-};
-
-const handleSplitRight = async (targetTabId: string) => {
-  await openEmptyTerminal(undefined, undefined, targetTabId, 'horizontal');
-};
-
-const handleSplitDown = async (targetTabId: string) => {
-  await openEmptyTerminal(undefined, undefined, targetTabId, 'vertical');
-};
-
-// ----------------------------------------------------
-// Tab Closing, Manual Terminal & Rename
-// ----------------------------------------------------
-const handleCloseTab = (tabId: string) => {
-  xtermPaneRefs.delete(tabId);
-
-  if (zoomedTabId.value === tabId) {
-    zoomedTabId.value = null;
-  }
-
-  // Remove from tree
-  if (tilingRoot.value) {
-    tilingRoot.value = removeLeafFromTree(tilingRoot.value, tabId);
-  }
-
-  // Remove from tabs array
-  const idx = allOpenTabs.value.findIndex(t => t.id === tabId);
-  if (idx !== -1) {
-    allOpenTabs.value.splice(idx, 1);
-  }
-
-  // Update active tab
-  if (activeTabId.value === tabId) {
-    const leafIds = collectLeafTabIds(tilingRoot.value);
-    activeTabId.value = leafIds[0] || allOpenTabs.value[0]?.id || '';
-  }
-};
-
-const closeAllTabs = () => {
-  xtermPaneRefs.clear();
-  zoomedTabId.value = null;
-  tilingRoot.value = null;
-  allOpenTabs.value = [];
-  activeTabId.value = '';
-};
-
-// Manual Terminal Rename Modal (MOD-14)
-const renameModalVisible = ref(false);
-const renamingTab = ref<OpenTabItem | null>(null);
-
-const handleTabDblClick = (tab: OpenTabItem) => {
-  renamingTab.value = tab;
-  renameModalVisible.value = true;
-};
-
-const handleRenameSave = (tabId: string, newName: string) => {
-  const target = allOpenTabs.value.find(t => t.id === tabId);
-  if (target) {
-    target.name = newName;
-    ipcClient.setTerminalName?.(target.commandId, newName);
-    updateProcessName(target.commandId, newName);
-  }
-  renameModalVisible.value = false;
-  renamingTab.value = null;
-};
-
-const handleRenameCancel = () => {
-  renameModalVisible.value = false;
-  renamingTab.value = null;
-};
-
-// Kill Panel Modal
-const showKillModal = ref(false);
-const killInProgress = ref(false);
-
-const handleConfirmKillAll = async (force: boolean) => {
-  killInProgress.value = true;
-  try {
-    await Promise.allSettled(
-      allOpenTabs.value.map(t => ipcClient.stopProcess(t.commandId, force))
-    );
-    closeAllTabs();
-    await refreshProcesses();
-    showKillModal.value = false;
-  } finally {
-    killInProgress.value = false;
-  }
-};
-
-const handleStopProcess = (commandId: number) => {
-  emit('request-stop-process', commandId);
-};
-
-const handleRestartProcess = async (commandId: number) => {
-  restartingCmdId.value = commandId;
-  await nextTick();
-  try {
-    try {
-      await ipcClient.stopProcess(commandId, false);
-    } catch {}
-    const result = await ipcClient.runCommand(commandId);
-    const tab = allOpenTabs.value.find(item => item.commandId === commandId);
-    if (tab) tab.runEventId = result.runEventId;
-    await refreshProcesses();
-  } catch (err) {
-    console.error('[DockHost] Không thể khởi động lại lệnh:', err);
-  } finally {
-    restartingCmdId.value = null;
-  }
-};
-
-// ----------------------------------------------------
-// Terminal Spawning (openEmptyTerminal & openCommandTab)
-// ----------------------------------------------------
-const openEmptyTerminal = async (
-  _pane?: unknown,
-  _shellKind?: string,
-  targetTabId?: string,
-  orientation: 'horizontal' | 'vertical' = 'horizontal'
-) => {
-  if (openingTerminal.value) return;
-  openingTerminal.value = true;
-  try {
-    const focusedTab = tabsMap.value.get(activeTabId.value);
-    const cwd = focusedTab?.cwd;
-    await refreshProcesses();
-    const terminal = await ipcClient.openTerminal(cwd);
-    await refreshProcesses();
-
-    const newTab: OpenTabItem = {
-      id: `terminal-${terminal.commandId}-${Date.now()}`,
-      commandId: terminal.commandId,
-      name: 'Terminal',
-      runEventId: terminal.runEventId,
-      shellKind: terminal.shellKind,
-      historyLevel: terminal.historyLevel,
-      isManual: true,
-      cwd,
-    };
-
-    allOpenTabs.value.push(newTab);
-
-    if (!tilingRoot.value) {
-      tilingRoot.value = createLeaf(newTab.id);
-    } else {
-      const splitTarget = targetTabId || activeTabId.value || allOpenTabs.value[0]?.id;
-      tilingRoot.value = splitLeafInTree(tilingRoot.value, splitTarget, orientation, newTab.id);
-    }
-
-    activeTabId.value = newTab.id;
-  } catch (error) {
-    console.error('[DockHost] Không thể mở terminal mới:', error);
-  } finally {
-    openingTerminal.value = false;
-  }
-};
-
-const openCommandTab = (
-  commandId: number,
-  commandName: string,
-  runEventId?: string,
-  shellKind?: string
-) => {
-  const isManual = Boolean(
-    commandId <= 0 ||
-    runEventId?.startsWith('terminal:') ||
-    (shellKind && shellKind !== 'command')
-  );
-
-  const finalName = ipcClient.getTerminalName?.(commandId) || commandName || 'Terminal';
-  const finalShellKind = shellKind || (isManual ? 'powershell' : 'command');
-
-  const newTab: OpenTabItem = {
-    id: isManual ? `terminal-${commandId}-${Date.now()}` : `cmd-${commandId}-${Date.now()}`,
-    commandId,
-    name: finalName,
-    runEventId,
-    shellKind: finalShellKind,
-    historyLevel: isManual ? 2 : 0,
-    isManual,
-  };
-
-  allOpenTabs.value.push(newTab);
-
-  if (!tilingRoot.value) {
-    tilingRoot.value = createLeaf(newTab.id);
-  } else {
-    // If layout is single, replace root or split
-    if (currentPreset.value === 'single') {
-      tilingRoot.value = createLeaf(newTab.id);
-    } else {
-      const splitTarget = activeTabId.value || allOpenTabs.value[0]?.id;
-      tilingRoot.value = splitLeafInTree(tilingRoot.value, splitTarget, 'horizontal', newTab.id);
-    }
-  }
-
-  activeTabId.value = newTab.id;
-};
-
-// ----------------------------------------------------
-// Global Hotkey Navigation & Shortcuts
+// Global Hotkeys Listener
 // ----------------------------------------------------
 const handleGlobalKeydown = (e: KeyboardEvent) => {
-  // Ctrl+Alt+R: Split right
+  // Ctrl+Alt+R: Split Right
   if (e.ctrlKey && e.altKey && (e.key === 'r' || e.key === 'R')) {
     e.preventDefault();
     splitActiveRight();
     return;
   }
-
-  // Ctrl+Alt+D: Split down
+  // Ctrl+Alt+D: Split Down
   if (e.ctrlKey && e.altKey && (e.key === 'd' || e.key === 'D')) {
     e.preventDefault();
     splitActiveDown();
     return;
   }
-
-  // Ctrl+Shift+Z: Toggle zoom
+  // Ctrl+Shift+Z: Toggle Zoom on Active Panel
   if (e.ctrlKey && e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
     e.preventDefault();
-    if (activeTabId.value) {
-      handleToggleZoom(activeTabId.value);
+    if (currentActivePanelId.value) {
+      handleToggleZoom(currentActivePanelId.value);
     }
     return;
   }
-
-  // Ctrl+Alt+S: Toggle sync input
+  // Ctrl+Alt+S: Toggle Synchronized Keystrokes
   if (e.ctrlKey && e.altKey && (e.key === 's' || e.key === 'S')) {
     e.preventDefault();
     toggleSyncMode();
     return;
   }
-
-  // Ctrl+Shift+T: New session
+  // Ctrl+Shift+T: New Window
   if (e.ctrlKey && e.shiftKey && (e.key === 't' || e.key === 'T')) {
     e.preventDefault();
-    handleCreateSession();
+    void createNewWindow();
     return;
   }
-};
-
-const handleWindowClick = (e: MouseEvent) => {
-  const target = e.target as HTMLElement | null;
-  if (!target?.closest('.preset-dropdown-container')) {
-    showPresetMenu.value = false;
+  // Ctrl+N: New terminal tab in active panel
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'n' || e.key === 'N')) {
+    e.preventDefault();
+    void openEmptyTerminal();
+    return;
+  }
+  // Ctrl+Shift+W: Close active panel
+  if (e.ctrlKey && e.shiftKey && (e.key === 'w' || e.key === 'W')) {
+    e.preventDefault();
+    if (currentActivePanelId.value) {
+      handleClosePanel(currentActivePanelId.value);
+    }
   }
 };
 
 onMounted(() => {
   window.addEventListener('keydown', handleGlobalKeydown);
-  window.addEventListener('click', handleWindowClick);
-
-  // Initialize tree based on existing tabs or preset
-  if (allOpenTabs.value.length > 0) {
-    applyPresetMode(currentPreset.value);
-  }
+  const clickOutsideHandler = (ev: MouseEvent) => {
+    const target = ev.target as HTMLElement | null;
+    if (!target?.closest('.preset-dropdown-container')) {
+      showPresetMenu.value = false;
+    }
+  };
+  window.addEventListener('click', clickOutsideHandler);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleGlobalKeydown);
-  window.removeEventListener('click', handleWindowClick);
   if (toastTimer) clearTimeout(toastTimer);
 });
 
-// Backward compatibility bridge for old useSplitLayout props
-const splitMode = computed(() => (currentPreset.value === 'single' ? 'single' : 'horizontal'));
-const splitRatio = ref(50);
-const setSplitMode = (m: string) => { applyPresetMode(m === 'single' ? 'single' : '2-columns'); };
-const toggleSplitHorizontal = () => { applyPresetMode(currentPreset.value === '2-columns' ? 'single' : '2-columns'); };
-const toggleSplitDirection = () => { applyPresetMode(currentPreset.value === '2-columns' ? '2-rows' : '2-columns'); };
-const swapPanes = () => {};
-const resetSplitRatio = () => {
-  if (tilingRoot.value) {
-    applyPresetMode(currentPreset.value);
-  }
-};
-const moveTabToOppositePane = () => {};
-const splitWithTab = () => {};
-const transferTab = () => {};
-
 defineExpose({
-  openEmptyTerminal,
   openCommandTab,
-  openTabCommandIds: allOpenTabCommandIds,
+  openEmptyTerminal,
   openTabs: allOpenTabs,
-  splitMode,
-  splitRatio,
-  setSplitMode,
-  toggleSplitHorizontal,
-  toggleSplitDirection,
-  swapPanes,
-  resetSplitRatio,
-  moveTabToOppositePane,
-  splitWithTab,
-  transferTab,
+  openTabCommandIds: computed(() => allOpenTabs.value.map(t => t.commandId)),
   quickAccessTarget,
   sendToFocusedTerminal,
 });
@@ -937,28 +1384,28 @@ defineExpose({
   flex-direction: column;
   width: 100%;
   height: 100%;
-  background-color: var(--bg-app-base);
   overflow: hidden;
-  position: relative;
+  background-color: var(--bg-app-base, #0c0e14);
 }
 
 /* ----------------------------------------------------
-   Workspace Tilix Split View Toolbar (36px)
+   Workspace Toolbar (36px)
 ---------------------------------------------------- */
 .workspace-split-toolbar {
   height: 36px;
-  background-color: #12151f;
-  border-bottom: 1px solid var(--border-subtle);
+  background-color: var(--bg-surface, #141721);
+  border-bottom: 1px solid var(--border-subtle, #1a1e2b);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px;
-  flex-shrink: 0;
+  padding: 0 12px;
   user-select: none;
+  flex-shrink: 0;
   z-index: 30;
 }
 
-.toolbar-left-controls {
+.toolbar-left-controls,
+.toolbar-right-actions {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -967,84 +1414,195 @@ defineExpose({
 .toolbar-divider {
   width: 1px;
   height: 16px;
-  background-color: var(--border-subtle);
+  background-color: var(--border-subtle, #1a1e2b);
   margin: 0 4px;
 }
 
 .toolbar-action-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  padding: 4px 8px;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
   border-radius: 4px;
-  border: 1px solid transparent;
-  background: transparent;
-  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 500;
   transition: all 0.15s ease;
 }
 
-.toolbar-action-btn:hover {
-  color: var(--text-primary);
-  background-color: var(--bg-surface-hover);
-}
-
 .toolbar-action-btn.active {
+  background-color: rgba(116, 71, 145, 0.25);
+  border: 1px solid var(--primary, #744791);
   color: var(--primary-light, #e4b5ff);
-  background-color: rgba(116, 71, 145, 0.2);
-  border-color: rgba(116, 71, 145, 0.5);
 }
 
-/* Synchronized Input Toggle Button */
-.sync-btn.active {
+.new-term-btn {
+  background-color: var(--primary, #744791);
   color: #ffffff;
-  background-color: var(--primary);
-  border-color: var(--primary-light, #e4b5ff);
-  box-shadow: 0 0 10px rgba(116, 71, 145, 0.5);
-  font-weight: 600;
+  border: none;
 }
 
-/* Preset Dropdown */
+.new-term-btn:hover {
+  background-color: var(--primary-hover, #8a55ac);
+}
+
+/* ----------------------------------------------------
+   Windows Bar (Multiple Windows / Workspaces)
+---------------------------------------------------- */
+.workspace-windows-bar {
+  height: 30px;
+  background-color: #10131d;
+  border-bottom: 1px solid var(--border-subtle, #1a1e2b);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  user-select: none;
+  flex-shrink: 0;
+  z-index: 25;
+}
+
+.windows-tab-list {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 100%;
+  width: 100%;
+}
+
+.window-tab-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 4px;
+  background-color: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary, #94a3b8);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.window-tab-item:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary, #e2e8f0);
+}
+
+.window-tab-item.active {
+  background-color: var(--bg-surface, #141721);
+  border-color: rgba(116, 71, 145, 0.6);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.window-icon {
+  color: var(--primary-light, #e4b5ff);
+  opacity: 0.8;
+}
+
+.window-title {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+}
+
+.window-panels-count {
+  font-size: 9.5px;
+  color: var(--text-muted, #64748b);
+  background-color: rgba(255, 255, 255, 0.06);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.window-close-btn {
+  background: transparent;
+  border: none;
+  padding: 1px;
+  border-radius: 3px;
+  color: var(--text-muted, #64748b);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.window-close-btn:hover {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  opacity: 1;
+}
+
+.window-rename-input {
+  background-color: #0c0e14;
+  border: 1px solid var(--primary, #744791);
+  color: #ffffff;
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  width: 100px;
+  outline: none;
+}
+
+.window-add-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 4px;
+  background-color: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  color: var(--text-muted, #64748b);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.window-add-tab-btn:hover {
+  border-color: var(--primary, #744791);
+  color: var(--primary-light, #e4b5ff);
+  background-color: rgba(116, 71, 145, 0.15);
+}
+
+/* ----------------------------------------------------
+   Preset Dropdown
+---------------------------------------------------- */
 .preset-dropdown-container {
   position: relative;
 }
 
 .preset-btn {
-  border: 1px solid var(--border-subtle);
-  background-color: var(--bg-surface);
-}
-
-.preset-btn:hover {
-  border-color: rgba(116, 71, 145, 0.5);
+  gap: 6px;
 }
 
 .preset-svg-icon {
   width: 14px;
   height: 14px;
-  flex-shrink: 0;
-}
-
-.chevron-icon {
-  color: var(--text-muted);
 }
 
 .preset-dropdown-menu {
   position: absolute;
-  top: 100%;
+  top: calc(100% + 4px);
   left: 0;
-  margin-top: 4px;
-  width: 280px;
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
+  width: 260px;
+  background-color: #141721;
+  border: 1px solid var(--border-medium, #282d3f);
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  z-index: 100;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  z-index: 50;
 }
 
 .preset-item {
@@ -1052,73 +1610,59 @@ defineExpose({
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  font-size: 11px;
-  color: var(--text-secondary);
   border-radius: 4px;
-  border: none;
   background: transparent;
-  cursor: pointer;
+  border: none;
+  color: var(--text-secondary, #94a3b8);
+  font-size: 12px;
   text-align: left;
-  transition: all 0.15s ease;
+  cursor: pointer;
+  transition: all 0.12s ease;
 }
 
 .preset-item:hover {
-  background-color: var(--bg-surface-hover);
-  color: var(--text-primary);
+  background-color: rgba(255, 255, 255, 0.05);
+  color: #ffffff;
 }
 
 .preset-item.active {
-  background-color: rgba(116, 71, 145, 0.2);
+  background-color: rgba(116, 71, 145, 0.25);
   color: var(--primary-light, #e4b5ff);
   font-weight: 600;
 }
 
-/* Zoom pill badge in toolbar */
-.zoom-pill {
-  background-color: rgba(116, 71, 145, 0.25);
-  border-color: var(--primary);
+/* Sync Button and Pill */
+.sync-btn.active {
+  background-color: rgba(116, 71, 145, 0.35);
+  border: 1px solid var(--primary, #744791);
   color: #e4b5ff;
-  font-size: 11px;
-  padding: 3px 8px;
-  animation: pulse-border 2s infinite ease-in-out;
 }
 
-.toolbar-right-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.new-term-btn {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 4px 10px;
-  height: 26px;
+.zoom-pill {
+  animation: pulse-border 2s infinite;
 }
 
 /* ----------------------------------------------------
-   Workspace Tiling Body
+   Main Workspace Body: Sessions Drawer + Tiling Canvas
 ---------------------------------------------------- */
 .workspace-tiling-body {
-  flex: 1;
   display: flex;
+  flex: 1;
   width: 100%;
-  height: calc(100% - 36px);
+  height: calc(100% - 66px);
   overflow: hidden;
   position: relative;
 }
 
 .tiling-canvas-container {
   flex: 1;
-  display: flex;
-  width: 100%;
   height: 100%;
   overflow: hidden;
   position: relative;
-  background-color: var(--bg-app-base);
+  background-color: var(--bg-app-base, #0c0e14);
 }
 
-.zoomed-tile-wrapper {
+.zoomed-panel-wrapper {
   width: 100%;
   height: 100%;
   display: flex;
@@ -1147,8 +1691,8 @@ defineExpose({
   width: 64px;
   height: 64px;
   border-radius: 12px;
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-surface, #141721);
+  border: 1px solid var(--border-subtle, #1a1e2b);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1161,13 +1705,13 @@ defineExpose({
 .empty-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text-primary, #e2e8f0);
   margin: 0;
 }
 
 .empty-desc {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-muted, #64748b);
   line-height: 1.5;
   margin: 0;
 }
@@ -1181,8 +1725,8 @@ defineExpose({
   border-radius: 6px;
   font-size: 11px;
   background-color: #1a1e2b;
-  border: 1px solid var(--border-subtle);
-  color: var(--text-primary);
+  border: 1px solid var(--border-subtle, #1a1e2b);
+  color: var(--text-primary, #e2e8f0);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   z-index: 100;
   animation: fade-in 0.2s ease;
@@ -1205,5 +1749,70 @@ defineExpose({
   50% {
     box-shadow: 0 0 0 2px rgba(116, 71, 145, 0.9), 0 0 10px rgba(116, 71, 145, 0.4);
   }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ----------------------------------------------------
+   Floating Tab & Drag Guard (Global DnD across Panels)
+---------------------------------------------------- */
+.floating-drag-tab {
+  position: fixed;
+  z-index: 99999;
+  pointer-events: none;
+  background-color: #1a1e2e;
+  border: 1px solid var(--primary-light, #e4b5ff);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7), 0 0 16px rgba(116, 71, 145, 0.45);
+  opacity: 0.95;
+  cursor: grabbing;
+  border-radius: 4px;
+  color: #f1f5f9;
+  will-change: left, top;
+  transform: translateY(-2px);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  font-family: var(--font-sans, system-ui);
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.floating-drag-tab .tab-title-text {
+  max-width: 140px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.floating-drag-tab .tab-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #64748b;
+  flex-shrink: 0;
+}
+
+.floating-drag-tab .tab-status-dot.running {
+  background-color: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+}
+
+.tab-drag-guard {
+  position: fixed;
+  inset: 0;
+  z-index: 99998;
+  cursor: grabbing;
+  user-select: none;
+  background: transparent;
 }
 </style>

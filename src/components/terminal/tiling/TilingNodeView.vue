@@ -1,33 +1,35 @@
 <template>
-  <!-- LEAF NODE: Renders a single terminal tile -->
-  <template v-if="node.type === 'leaf'">
-    <div
-      v-if="currentTab"
-      class="tiling-leaf-wrapper"
-    >
-      <TilingTile
-        :tab="currentTab"
-        :is-active="activeTabId === currentTab.id"
-        :is-zoomed="zoomedTabId === currentTab.id"
+  <!-- PANEL NODE: Renders a multi-tab terminal panel -->
+  <template v-if="node.type === 'panel'">
+    <div class="tiling-panel-leaf-wrapper">
+      <TilingPanel
+        :panel="node"
+        :tabs-map="tabsMap"
+        :is-active="activePanelId === node.id"
+        :is-zoomed="zoomedPanelId === node.id"
         :sync-mode="syncMode"
         :ghost-text-enabled="ghostTextEnabled"
         :font-family="fontFamily"
         :font-size="fontSize"
-        :restarting="restartingCmdId === currentTab.commandId"
+        :restarting-cmd-id="restartingCmdId"
         @focus="$emit('focus', $event)"
+        @select-tab="(pId, tId) => $emit('select-tab', pId, tId)"
+        @new-tab="$emit('new-tab', $event)"
+        @close-tab="$emit('close-tab', $event)"
+        @close-panel="$emit('close-panel', $event)"
         @split-right="$emit('split-right', $event)"
         @split-down="$emit('split-down', $event)"
         @toggle-zoom="$emit('toggle-zoom', $event)"
-        @close="$emit('close-tile', $event)"
-        @stop="$emit('stop-process', $event)"
-        @restart="$emit('restart-process', $event)"
-        @rename="$emit('rename-tab', $event)"
+        @rename-tab="$emit('rename-tab', $event)"
+        @stop-process="$emit('stop-process', $event)"
+        @restart-process="$emit('restart-process', $event)"
         @register-xterm="(id, inst) => $emit('register-xterm', id, inst)"
         @data="(id, d) => $emit('data', id, d)"
+        @cwd-change="(id, cwd) => $emit('cwd-change', id, cwd)"
+        @title-change="(id, title) => $emit('title-change', id, title)"
+        @phase-change="(id, phase) => $emit('phase-change', id, phase)"
+        @transfer-tab="$emit('transfer-tab', $event)"
       />
-    </div>
-    <div v-else class="tiling-empty-leaf">
-      <span class="empty-msg">Tab không khả dụng (đã đóng)</span>
     </div>
   </template>
 
@@ -45,24 +47,31 @@
       <TilingNodeView
         :node="node.firstChild"
         :tabs-map="tabsMap"
-        :active-tab-id="activeTabId"
-        :zoomed-tab-id="zoomedTabId"
+        :active-panel-id="activePanelId"
+        :zoomed-panel-id="zoomedPanelId"
         :sync-mode="syncMode"
         :ghost-text-enabled="ghostTextEnabled"
         :font-family="fontFamily"
         :font-size="fontSize"
         :restarting-cmd-id="restartingCmdId"
         @focus="$emit('focus', $event)"
+        @select-tab="(pId, tId) => $emit('select-tab', pId, tId)"
+        @new-tab="$emit('new-tab', $event)"
+        @close-tab="$emit('close-tab', $event)"
+        @close-panel="$emit('close-panel', $event)"
         @split-right="$emit('split-right', $event)"
         @split-down="$emit('split-down', $event)"
         @toggle-zoom="$emit('toggle-zoom', $event)"
-        @close-tile="$emit('close-tile', $event)"
+        @rename-tab="$emit('rename-tab', $event)"
         @stop-process="$emit('stop-process', $event)"
         @restart-process="$emit('restart-process', $event)"
-        @rename-tab="$emit('rename-tab', $event)"
         @register-xterm="(id, inst) => $emit('register-xterm', id, inst)"
         @update-ratio="(splitId, ratio) => $emit('update-ratio', splitId, ratio)"
         @data="(id, d) => $emit('data', id, d)"
+        @cwd-change="(id, cwd) => $emit('cwd-change', id, cwd)"
+        @title-change="(id, title) => $emit('title-change', id, title)"
+        @phase-change="(id, phase) => $emit('phase-change', id, phase)"
+        @transfer-tab="$emit('transfer-tab', $event)"
       />
     </div>
 
@@ -82,24 +91,31 @@
       <TilingNodeView
         :node="node.secondChild"
         :tabs-map="tabsMap"
-        :active-tab-id="activeTabId"
-        :zoomed-tab-id="zoomedTabId"
+        :active-panel-id="activePanelId"
+        :zoomed-panel-id="zoomedPanelId"
         :sync-mode="syncMode"
         :ghost-text-enabled="ghostTextEnabled"
         :font-family="fontFamily"
         :font-size="fontSize"
         :restarting-cmd-id="restartingCmdId"
         @focus="$emit('focus', $event)"
+        @select-tab="(pId, tId) => $emit('select-tab', pId, tId)"
+        @new-tab="$emit('new-tab', $event)"
+        @close-tab="$emit('close-tab', $event)"
+        @close-panel="$emit('close-panel', $event)"
         @split-right="$emit('split-right', $event)"
         @split-down="$emit('split-down', $event)"
         @toggle-zoom="$emit('toggle-zoom', $event)"
-        @close-tile="$emit('close-tile', $event)"
+        @rename-tab="$emit('rename-tab', $event)"
         @stop-process="$emit('stop-process', $event)"
         @restart-process="$emit('restart-process', $event)"
-        @rename-tab="$emit('rename-tab', $event)"
         @register-xterm="(id, inst) => $emit('register-xterm', id, inst)"
         @update-ratio="(splitId, ratio) => $emit('update-ratio', splitId, ratio)"
         @data="(id, d) => $emit('data', id, d)"
+        @cwd-change="(id, cwd) => $emit('cwd-change', id, cwd)"
+        @title-change="(id, title) => $emit('title-change', id, title)"
+        @phase-change="(id, phase) => $emit('phase-change', id, phase)"
+        @transfer-tab="$emit('transfer-tab', $event)"
       />
     </div>
   </div>
@@ -108,11 +124,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { TilingNode, SyncInputMode } from '@/types/tiling';
-import type { OpenTabItem } from '@/composables/useSplitLayout';
-import TilingTile from './TilingTile.vue';
+import type { OpenTabItem } from './TilingPanel.vue';
+import TilingPanel from './TilingPanel.vue';
 import TilingSash from './TilingSash.vue';
 
-// Enable self-referencing recursive component in script setup
 defineOptions({
   name: 'TilingNodeView',
 });
@@ -120,8 +135,8 @@ defineOptions({
 const props = defineProps<{
   node: TilingNode;
   tabsMap: Map<string, OpenTabItem>;
-  activeTabId: string;
-  zoomedTabId: string | null;
+  activePanelId: string;
+  zoomedPanelId: string | null;
   syncMode: SyncInputMode;
   ghostTextEnabled?: boolean;
   fontFamily?: string;
@@ -130,25 +145,30 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'focus', tabId: string): void;
-  (e: 'split-right', tabId: string): void;
-  (e: 'split-down', tabId: string): void;
-  (e: 'toggle-zoom', tabId: string): void;
-  (e: 'close-tile', tabId: string): void;
+  (e: 'focus', panelId: string): void;
+  (e: 'select-tab', panelId: string, tabId: string): void;
+  (e: 'new-tab', panelId: string): void;
+  (e: 'close-tab', tabId: string): void;
+  (e: 'close-panel', panelId: string): void;
+  (e: 'split-right', panelId: string): void;
+  (e: 'split-down', panelId: string): void;
+  (e: 'toggle-zoom', panelId: string): void;
+  (e: 'rename-tab', tab: OpenTabItem): void;
   (e: 'stop-process', commandId: number): void;
   (e: 'restart-process', commandId: number): void;
-  (e: 'rename-tab', tab: OpenTabItem): void;
   (e: 'register-xterm', tabId: string, instance: unknown): void;
   (e: 'update-ratio', splitId: string, ratio: number): void;
   (e: 'data', tabId: string, data: string): void;
+  (e: 'cwd-change', tabId: string, cwd: string): void;
+  (e: 'title-change', tabId: string, title: string): void;
+  (e: 'phase-change', tabId: string, phase: 'prompt' | 'input' | 'running'): void;
+  (e: 'transfer-tab', payload: {
+    sourcePanelId: string;
+    targetPanelId: string;
+    tabId: string;
+    targetIndex?: number;
+  }): void;
 }>();
-
-const currentTab = computed(() => {
-  if (props.node.type === 'leaf') {
-    return props.tabsMap.get(props.node.tabId);
-  }
-  return undefined;
-});
 
 const firstDimensionStyle = computed(() => {
   if (props.node.type !== 'split') return {};
@@ -182,34 +202,19 @@ const handleRatioReset = () => {
 </script>
 
 <style scoped>
-.tiling-leaf-wrapper {
+.tiling-panel-leaf-wrapper {
   width: 100%;
   height: 100%;
-  min-width: 0;
-  min-height: 0;
   overflow: hidden;
   display: flex;
-}
-
-.tiling-empty-leaf {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background-color: var(--bg-terminal);
-  border: 1px dashed var(--border-subtle);
-  color: var(--text-muted);
-  font-size: 11px;
 }
 
 .tiling-split-wrapper {
+  display: flex;
   width: 100%;
   height: 100%;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
   overflow: hidden;
+  position: relative;
 }
 
 .tiling-split-wrapper.split-horizontal {
@@ -221,11 +226,9 @@ const handleRatioReset = () => {
 }
 
 .tiling-child {
-  min-width: 0;
-  min-height: 0;
   overflow: hidden;
+  position: relative;
   display: flex;
-  flex-shrink: 0;
-  flex-grow: 1;
+  flex: 1 1 auto;
 }
 </style>

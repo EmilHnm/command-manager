@@ -26,32 +26,37 @@ Tilix (tiền thân là Terminix) là một trong những ứng dụng Terminal 
 
 ---
 
-## 2. Kiến trúc Hệ thống & Mô hình Dữ liệu (System Architecture & Data Structures)
+## 2. Kiến trúc Hệ thống Phân Cấp 4 Tầng & Mô hình Dữ liệu (4-Level Hierarchy Architecture)
 
-### 2.1. Cấu trúc Cây Nhị phân Phân chia (Binary Tree Tiling Engine)
+Kiến trúc không gian làm việc của ứng dụng được xây dựng theo mô hình phân cấp 4 tầng chặt chẽ:
+```
+[Windows] (Nhiều cửa sổ / Không gian Workspace)
+   └── [Panels] (Cây nhị phân phân chia đệ quy Tiling Tree trong từng Window)
+         └── [Tabs] (Mỗi Panel sở hữu thanh Tab Bar riêng chứa nhiều tab)
+               └── [Terminal] (Mỗi Tab gắn với một instance XtermPane độc lập)
+```
 
-Không gian làm việc trong một Session được biểu diễn bằng một cây nhị phân (Binary Tree). Mỗi node trong cây có thể là:
-- **`LeafNode` (Nút Lá):** Đại diện cho một Panel Terminal thực tế chứa `XtermPane`, gắn với một PTY instance.
-- **`SplitNode` (Nút Phân Nhánh):** Đại diện cho một container chia đôi, xác định hướng chia (`horizontal` hoặc `vertical`), tỉ lệ chia (`ratio: 0.0 - 1.0`), và 2 node con (`firstChild`, `secondChild`).
+### 2.1. Cấu trúc Cây Nhị phân Phân chia (Binary Tree Tiling Engine) & Kế Thừa CWD
+
+Không gian làm việc trong mỗi Window được biểu diễn bằng một cây nhị phân (Binary Tree):
+- **`PanelNode` (Nút Lá - TilingPanelNode):** Đại diện cho một Panel chứa danh sách các Tab terminal (`tabIds: string[]`) và tab đang hiển thị (`activeTabId: string`).
+- **`SplitNode` (Nút Phân Nhánh - TilingSplitNode):** Đại diện cho một container chia đôi, xác định hướng chia (`horizontal` hoặc `vertical`), tỉ lệ chia (`ratio: 0.15 - 0.85`), và 2 node con (`firstChild`, `secondChild`).
+
+**Quy tắc Kế Thừa Thư Mục Làm Việc (Working Path / CWD Inheritance):**
+Khi người dùng bấm **Split Right**, **Split Down** hoặc nhấn **[+] Mở tab mới trong panel**:
+1. Hệ thống truy vấn trực tiếp thuộc tính `cwd` của tab đang active tại Panel mục tiêu (được cập nhật thời gian thực từ shell kernel thông qua mã điều khiển OSC 633 `P;Cwd=<path>`).
+2. Giá trị `cwd` này được truyền trực tiếp vào lời gọi IPC `ipcClient.openTerminal(cwd)`.
+3. Rust backend (`terminal_open_sync`) khởi tạo shell PTY tương tác ngay tại thư mục làm việc đó, bảo đảm ngữ cảnh làm việc không bị gián đoạn.
 
 ```
               [Root: SplitNode (Horizontal, 50%)]
                         /            \
                        /              \
-  [Leaf: Terminal 1 (API Server)]   [SplitNode (Vertical, 60%)]
-                                        /            \
-             [Leaf: Terminal 2 (Vite Frontend)]    [Leaf: Terminal 3 (Docker DB)]
-```
-
-*Kết quả layout thị giác:*
-```
-+---------------------------------------+---------------------------------------+
-|                                       | Terminal 2: Vite Frontend (PID 2841)  |
-|                                       | [◫][⬒][🗖][🔗][✕]                    |
-| Terminal 1: API Server (PID 2845)     +---------------------------------------+
-| [◫][⬒][🗖][🔗][✕]                    | Terminal 3: Docker DB (PID 1904)      |
-|                                       | [◫][⬒][🗖][🔗][✕]                    |
-+---------------------------------------+---------------------------------------+
+       [Panel 1: Dev API]            [SplitNode (Vertical, 60%)]
+       - Tab 1: nest start --watch       /            \
+       - Tab 2: prisma studio   [Panel 2: Web]      [Panel 3: DB & Worker]
+                                - Tab 1: vite       - Tab 1: redis-cli
+                                                    - Tab 2: worker-debug
 ```
 
 ### 2.2. TypeScript Interfaces

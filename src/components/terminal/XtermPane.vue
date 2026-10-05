@@ -119,6 +119,7 @@ const props = withDefaults(
     fontSize?: number;
     restarting?: boolean;
     hideToolbar?: boolean;
+    cwd?: string;
   }>(),
   {
     processStatus: 'idle',
@@ -200,8 +201,14 @@ let promptColumn = 0;
 // same row, then restore the cursor to the input column. Remember where that
 // pre-existing right-side text begins so it is not treated as user input.
 let rightPromptStartColumn: number | undefined;
-let currentCwd: string | undefined;
+let currentCwd: string | undefined = props.cwd;
 let shellPhase: 'prompt' | 'input' | 'running' = 'prompt';
+
+watch(() => props.cwd, (newCwd) => {
+  if (newCwd && !currentCwd) {
+    currentCwd = newCwd;
+  }
+});
 
 function setShellPhase(next: 'prompt' | 'input' | 'running') {
   if (shellPhase === next) return;

@@ -10,11 +10,21 @@ export type LayoutPreset =
   | '1+2-tiled'
   | '3-columns';
 
-export interface TilingLeafNode {
-  type: 'leaf';
-  id: string; // unique node id
-  tabId: string; // references OpenTabItem.id
+/**
+ * A Panel node in the tiling tree.
+ * A single panel can contain multiple tabs, each tab hosting 1 terminal.
+ */
+export interface TilingPanelNode {
+  type: 'panel';
+  id: string; // unique panel id
+  tabIds: string[]; // references OpenTabItem.id
+  activeTabId: string; // active OpenTabItem.id in this panel
 }
+
+/**
+ * Alias for backwards compatibility if needed
+ */
+export type TilingLeafNode = TilingPanelNode;
 
 export interface TilingSplitNode {
   type: 'split';
@@ -25,7 +35,20 @@ export interface TilingSplitNode {
   secondChild: TilingNode;
 }
 
-export type TilingNode = TilingLeafNode | TilingSplitNode;
+export type TilingNode = TilingPanelNode | TilingSplitNode;
+
+/**
+ * Top-level Workspace Window representation.
+ * Allows having multiple independent windows inside the workspace.
+ */
+export interface WorkspaceWindowItem {
+  id: string;
+  name: string;
+  tilingRoot: TilingNode | null;
+  activePanelId: string;
+  zoomedPanelId: string | null;
+  layoutPreset: LayoutPreset;
+}
 
 export interface WorkspaceSessionItem {
   id: string;
