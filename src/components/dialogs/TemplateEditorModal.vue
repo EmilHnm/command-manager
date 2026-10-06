@@ -108,7 +108,6 @@
           </div>
 
           <div class="template-input-wrap">
-            <pre ref="highlightRef" class="template-highlight mono-input" aria-hidden="true"><code v-html="highlightedTemplate"></code></pre>
             <textarea
               v-model="formData.template_string"
               rows="3"
@@ -116,9 +115,9 @@
               :class="{ 'has-error': isFieldInvalid('template_string') }"
               aria-label="Chuỗi template"
               placeholder="ffmpeg -i {{input}} -crf {{crf}} -key {{secret_key}} {{output}}"
+              spellcheck="false"
               @blur="touched.template_string = true"
               @input="touched.template_string = true"
-              @scroll="syncHighlightScroll"
             ></textarea>
           </div>
           <span v-if="isFieldInvalid('template_string')" class="field-error-msg">
@@ -308,25 +307,7 @@ const formData = ref<{
   params: [],
 });
 
-const highlightRef = ref<HTMLElement | null>(null);
 
-const highlightedTemplate = computed(() => {
-  const escaped = formData.value.template_string
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-  return escaped.replace(/\{\{\s*[a-zA-Z0-9_]+\s*\}\}/g, '<mark>$&</mark>') || '&nbsp;';
-});
-
-const syncHighlightScroll = (event: Event) => {
-  const textarea = event.target as HTMLTextAreaElement;
-  if (highlightRef.value) {
-    highlightRef.value.scrollTop = textarea.scrollTop;
-    highlightRef.value.scrollLeft = textarea.scrollLeft;
-  }
-};
 
 const touched = ref<Record<string, boolean>>({});
 const wasSubmitted = ref(false);
@@ -729,49 +710,35 @@ const handleSave = async () => {
 
 .template-input-wrap {
   position: relative;
-  min-height: 74px;
-  overflow: hidden;
-  border-radius: var(--radius-sm);
+  width: 100%;
 }
 
-.template-highlight,
 .form-textarea {
   width: 100%;
-  min-height: 74px;
+  min-height: 80px;
   margin: 0;
   padding: 8px 10px;
+  background-color: var(--bg-app-base);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
+  color: var(--text-primary);
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
   overflow: auto;
   box-sizing: border-box;
-}
-
-.template-highlight {
-  position: absolute;
-  inset: 0;
-  background-color: #0b0d13;
-  color: #d7dbe7;
-  pointer-events: none;
-}
-
-.template-highlight mark {
-  color: #f0c8ff;
-  background: var(--primary-alpha-45, #74479173);
-  border-radius: 2px;
-}
-
-.form-textarea {
-  position: relative;
-  display: block;
-  background: transparent;
-  border: 1px solid var(--border-subtle);
-  color: transparent;
-  caret-color: #4edea3;
   outline: none;
   resize: vertical;
+}
+
+.form-textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-glow);
+}
+
+.form-textarea.has-error {
+  border-color: var(--status-failed, #ef4444) !important;
+  background-color: rgba(239, 68, 68, 0.05);
 }
 
 .mono-input {
