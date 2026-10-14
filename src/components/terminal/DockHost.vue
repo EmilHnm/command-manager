@@ -127,7 +127,7 @@
         <!-- Quick Split Actions for Active Panel -->
         <button
           class="btn btn-ghost btn-sm toolbar-action-btn"
-          title="Chia đôi sang phải panel đang chọn (Ctrl+Alt+R)"
+          :title="'Chia đôi sang phải panel đang chọn ' + keyLabel('workspace.splitRight')"
           @click="splitActiveRight"
         >
           <Columns2 :size="12" />
@@ -136,7 +136,7 @@
 
         <button
           class="btn btn-ghost btn-sm toolbar-action-btn"
-          title="Chia đôi xuống dưới panel đang chọn (Ctrl+Alt+D)"
+          :title="'Chia đôi xuống dưới panel đang chọn ' + keyLabel('workspace.splitDown')"
           @click="splitActiveDown"
         >
           <Rows2 :size="12" />
@@ -147,7 +147,7 @@
         <button
           v-if="zoomedPanel"
           class="btn btn-primary btn-sm toolbar-action-btn zoom-pill"
-          title="Bấm hoặc nhấn Ctrl+Shift+Z để khôi phục bố cục lưới cũ"
+          :title="'Bấm hoặc nhấn ' + keyLabel('workspace.toggleZoom', false) + ' để khôi phục bố cục lưới cũ'"
           @click="currentZoomedPanelId = null"
         >
           <Minimize2 :size="12" />
@@ -219,7 +219,7 @@
         <!-- Add New Window Button -->
         <button
           class="window-add-tab-btn"
-          title="Mở thêm cửa sổ Workspace mới (Ctrl+Shift+T)"
+          :title="'Mở thêm cửa sổ Workspace mới ' + keyLabel('workspace.newWindow')"
           @click="createNewWindow"
         >
           <Plus :size="12" />
@@ -421,6 +421,7 @@ import TilingNodeView from './tiling/TilingNodeView.vue';
 import TilingPanel, { type OpenTabItem } from './tiling/TilingPanel.vue';
 import SessionsDrawer from './tiling/SessionsDrawer.vue';
 import XtermPane from '@/components/terminal/XtermPane.vue';
+import { useKeyCommand, keyLabel } from '@/keybindings/dispatcher';
 import {
   createPanel,
   buildPresetTree,
@@ -1379,64 +1380,45 @@ const showToast = (msg: string, type: 'info' | 'warning' = 'info') => {
 };
 
 // ----------------------------------------------------
-// Global Hotkeys Listener
+// Keybindings Registration (Single Dispatcher)
 // ----------------------------------------------------
-const handleGlobalKeydown = (e: KeyboardEvent) => {
-  // Ctrl+Alt+R: Split Right
-  if (e.ctrlKey && e.altKey && (e.key === 'r' || e.key === 'R')) {
-    e.preventDefault();
-    splitActiveRight();
-    return;
+useKeyCommand('workspace.splitRight', () => {
+  splitActiveRight();
+});
+
+useKeyCommand('workspace.splitDown', () => {
+  splitActiveDown();
+});
+
+useKeyCommand('workspace.balanceSplits', () => {
+  handleResetAllRatios();
+});
+
+useKeyCommand('workspace.toggleZoom', () => {
+  if (currentActivePanelId.value) {
+    handleToggleZoom(currentActivePanelId.value);
   }
-  // Ctrl+Alt+D: Split Down
-  if (e.ctrlKey && e.altKey && (e.key === 'd' || e.key === 'D')) {
-    e.preventDefault();
-    splitActiveDown();
-    return;
+});
+
+useKeyCommand('workspace.toggleSync', () => {
+  toggleSyncMode();
+});
+
+useKeyCommand('workspace.newWindow', () => {
+  void createNewWindow();
+});
+
+useKeyCommand('workspace.newTerminal', () => {
+  void openEmptyTerminal();
+});
+
+useKeyCommand('workspace.closePanel', () => {
+  if (currentActivePanelId.value) {
+    handleClosePanel(currentActivePanelId.value);
   }
-  // Ctrl+Alt+0: Reset all split ratios to 50:50 (Balance)
-  if (e.ctrlKey && e.altKey && (e.key === '0' || e.key === ')')) {
-    e.preventDefault();
-    handleResetAllRatios();
-    return;
-  }
-  // Ctrl+Shift+Z: Toggle Zoom on Active Panel
-  if (e.ctrlKey && e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
-    e.preventDefault();
-    if (currentActivePanelId.value) {
-      handleToggleZoom(currentActivePanelId.value);
-    }
-    return;
-  }
-  // Ctrl+Alt+S: Toggle Synchronized Keystrokes
-  if (e.ctrlKey && e.altKey && (e.key === 's' || e.key === 'S')) {
-    e.preventDefault();
-    toggleSyncMode();
-    return;
-  }
-  // Ctrl+Shift+T: New Window
-  if (e.ctrlKey && e.shiftKey && (e.key === 't' || e.key === 'T')) {
-    e.preventDefault();
-    void createNewWindow();
-    return;
-  }
-  // Ctrl+N: New terminal tab in active panel
-  if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'n' || e.key === 'N')) {
-    e.preventDefault();
-    void openEmptyTerminal();
-    return;
-  }
-  // Ctrl+Shift+W: Close active panel
-  if (e.ctrlKey && e.shiftKey && (e.key === 'w' || e.key === 'W')) {
-    e.preventDefault();
-    if (currentActivePanelId.value) {
-      handleClosePanel(currentActivePanelId.value);
-    }
-  }
-};
+});
 
 onMounted(() => {
-  window.addEventListener('keydown', handleGlobalKeydown);
   const clickOutsideHandler = (ev: MouseEvent) => {
     const target = ev.target as HTMLElement | null;
     if (!target?.closest('.preset-dropdown-container')) {
@@ -1447,7 +1429,6 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', handleGlobalKeydown);
   if (toastTimer) clearTimeout(toastTimer);
 });
 

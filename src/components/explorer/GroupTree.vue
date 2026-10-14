@@ -4,11 +4,11 @@
     <div class="search-box">
       <Search :size="13" class="search-icon" />
       <input
+        ref="searchInput"
         v-model="filterText"
         type="text"
-        placeholder="Lọc nhóm & lệnh... (Ctrl+F)"
+        :placeholder="'Lọc nhóm & lệnh... ' + keyLabel('explorer.focusFilter')"
         class="tree-search-input"
-        ref="searchInput"
       />
     </div>
 
@@ -144,6 +144,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { Search, ChevronDown, ChevronRight, Play, Square, Folder, LoaderCircle } from 'lucide-vue-next';
 import type { CommandGroupWithCommands } from '@/types/models';
 import { useRunSession } from '@/composables/useRunSession';
+import { useKeyCommand, keyLabel } from '@/keybindings/dispatcher';
 
 const props = defineProps<{
   groups: CommandGroupWithCommands[];
@@ -171,17 +172,11 @@ const targetGroup = computed(() => {
 
 const formatOrder = (index: number) => String(index + 1).padStart(2, '0');
 const selectGroup = (groupId: number) => emit('select-group', groupId);
-const handleFindShortcut = (event: KeyboardEvent) => {
-  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'f') return;
-  const target = event.target as HTMLElement | null;
-  if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
-  event.preventDefault();
+
+useKeyCommand('explorer.focusFilter', () => {
   searchInput.value?.focus();
   searchInput.value?.select();
-};
-
-onMounted(() => window.addEventListener('keydown', handleFindShortcut));
-onBeforeUnmount(() => window.removeEventListener('keydown', handleFindShortcut));
+});
 
 const isTargetGroupRunning = computed(() => {
   if (!targetGroup.value) return false;

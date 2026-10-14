@@ -8,6 +8,7 @@ use crate::db::repos::{
 };
 use crate::error::{Error, Result};
 use crate::ipc::events;
+use crate::keybindings::{self, KeybindingOverride};
 use crate::process::manager::{Live, LiveSnapshot};
 use crate::process::{shutdown, spawn};
 use crate::template;
@@ -54,6 +55,7 @@ pub fn commands_list(state: State<AppState>) -> Result<Vec<CommandDef>> {
     state.db.read(cmd_repo::list)
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "snake_case")]
 pub fn commands_create(
     app: AppHandle,
@@ -1622,7 +1624,63 @@ pub fn settings_set(
     confirmed: bool,
 ) -> Result<()> {
     require(confirmed)?;
+    if key == keybindings::SETTING_KEY {
+        return Err(Error::msg("Phím tắt phải lưu qua keybindings_set"));
+    }
     state.db.write(|c| settings::set(c, &key, &value))
+}
+
+#[tauri::command]
+pub fn keybindings_get(state: State<AppState>) -> Result<Vec<KeybindingOverride>> {
+    state.db.read(keybindings::load)
+}
+
+/// Replaces the whole override list; returns it normalized as stored.
+#[tauri::command]
+pub fn keybindings_set(
+    state: State<AppState>,
+    entries: Vec<KeybindingOverride>,
+) -> Result<Vec<KeybindingOverride>> {
+    state.db.write(|c| keybindings::save(c, &entries))
+}
+
+#[tauri::command]
+pub fn keybindings_reset(state: State<AppState>, confirmed: bool) -> Result<()> {
+    require(confirmed)?;
+    state.db.write(keybindings::reset)
+}
+
+/// Validates an imported JSON file without saving it, so the UI can preview
+/// the changes first.
+#[tauri::command]
+pub fn keybindings_parse(json: String) -> Result<keybindings::ParsedKeybindings> {
+    keybindings::parse_lenient(&json)
+}
+
+#[tauri::command]
+pub fn keybindings_export(
+    app: AppHandle,
+    state: State<AppState>,
+    dest: Option<String>,
+) -> Result<String> {
+    let destination = dest
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            app.path()
+                .app_data_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(format!(
+                    "command-manager-keybindings-{}.json",
+                    clock::now_unix()
+                ))
+        });
+    let entries = state.db.read(keybindings::load)?;
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&destination, keybindings::to_export_json(&entries)?)?;
+    Ok(destination.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -1634,6 +1692,44 @@ pub fn autostart_os_is_enabled(app: AppHandle) -> Result<bool> {
 pub fn autostart_os_set(app: AppHandle, enabled: bool, confirmed: bool) -> Result<()> {
     require(confirmed)?;
     app::autostart::os_set(&app, enabled)
+}
+
+#[tauri::command]
+pub fn clipboard_read_text(app: AppHandle) -> Result<String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    app.clipboard()
+        .read_text()
+        .map_err(|error| Error::msg(format!("Không đọc được clipboard: {error}")))
+}
+
+#[tauri::command]
+pub fn clipboard_write_text(app: AppHandle, text: String) -> Result<()> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    app.clipboard()
+        .write_text(text)
+        .map_err(|error| Error::msg(format!("Không ghi được clipboard: {error}")))
+}
+
+/// Toggles the webview inspector. Release builds ship without it.
+#[tauri::command]
+pub fn app_toggle_devtools(app: AppHandle) -> Result<()> {
+    #[cfg(debug_assertions)]
+    {
+        let window = app
+            .get_webview_window("main")
+            .ok_or_else(|| Error::msg("Không tìm thấy cửa sổ chính"))?;
+        if window.is_devtools_open() {
+            window.close_devtools();
+        } else {
+            window.open_devtools();
+        }
+        Ok(())
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = app;
+        Err(Error::msg("Inspect chỉ có trong bản dev"))
+    }
 }
 
 #[tauri::command]

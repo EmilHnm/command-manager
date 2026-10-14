@@ -98,16 +98,16 @@
 
     <!-- Bottom Shortcuts Legend -->
     <div v-if="!isCollapsed" class="drawer-footer">
-      <div class="shortcut-item">
-        <kbd>Ctrl+Alt+R</kbd>
+      <div v-if="keyLabel('workspace.splitRight', false)" class="shortcut-item">
+        <kbd>{{ keyLabel('workspace.splitRight', false) }}</kbd>
         <span>Chia phải</span>
       </div>
-      <div class="shortcut-item">
-        <kbd>Ctrl+Alt+D</kbd>
+      <div v-if="keyLabel('workspace.splitDown', false)" class="shortcut-item">
+        <kbd>{{ keyLabel('workspace.splitDown', false) }}</kbd>
         <span>Chia dưới</span>
       </div>
-      <div class="shortcut-item">
-        <kbd>Ctrl+Shift+Z</kbd>
+      <div v-if="keyLabel('workspace.toggleZoom', false)" class="shortcut-item">
+        <kbd>{{ keyLabel('workspace.toggleZoom', false) }}</kbd>
         <span>Zoom 100%</span>
       </div>
     </div>
@@ -123,6 +123,7 @@ import {
   PanelLeftOpen,
 } from 'lucide-vue-next';
 import type { WorkspaceSessionItem } from '@/types/tiling';
+import { keyLabel } from '@/keybindings/dispatcher';
 
 defineProps<{
   sessions: WorkspaceSessionItem[];

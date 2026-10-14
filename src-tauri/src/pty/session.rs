@@ -996,7 +996,7 @@ mod tests {
             );
             if expected_level == 1 {
                 assert!(
-                    snapshot_text.contains(&format!("E;")) && snapshot_text.contains(&nonce),
+                    snapshot_text.contains("E;") && snapshot_text.contains(&nonce),
                     "{name} did not emit a nonce-bound E marker: {snapshot_text:?}"
                 );
             }

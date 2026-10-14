@@ -54,8 +54,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import Titlebar from '@/components/titlebar/Titlebar.vue';
 import ActivityBar from '@/components/nav/ActivityBar.vue';
 import StatusBar from '@/components/statusbar/StatusBar.vue';
@@ -65,9 +65,28 @@ import CloseConfirmModal from '@/components/dialogs/CloseConfirmModal.vue';
 import { useAppLifecycle } from '@/composables/useAppLifecycle';
 import { useRunSession } from '@/composables/useRunSession';
 import { usePtyStream } from '@/composables/usePtyStream';
+import { ipcClient } from '@/ipc/client';
+import { useKeybindings } from '@/composables/useKeybindings';
+import {
+  initGlobalKeybindingsListener,
+  disposeGlobalKeybindingsListener,
+  setDispatcherRoute,
+  useKeyCommand,
+} from '@/keybindings/dispatcher';
+
+const { fetchKeybindings } = useKeybindings();
 
 const router = useRouter();
+const route = useRoute();
 const showPalette = ref(false);
+
+watch(
+  () => route.path,
+  (path) => {
+    setDispatcherRoute(path);
+  },
+  { immediate: true }
+);
 
 const {
   isShuttingDown,
@@ -94,43 +113,57 @@ const handleHideToTray = () => {
   }
 };
 
-// Global shortcuts based on Section 7.2 matrix in docs/screens.md
-const handleGlobalKeydown = (e: KeyboardEvent) => {
-  const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+// Unified Keybinding Registrations
+useKeyCommand('app.commandPalette', () => {
+  showPalette.value = !showPalette.value;
+});
 
-  // Ctrl+Q: Request app close
-  if (isCtrlOrCmd && (e.key === 'q' || e.key === 'Q')) {
-    e.preventDefault();
-    requestClose();
-    return;
-  }
+useKeyCommand('app.quit', () => {
+  requestClose();
+});
 
-  // Ctrl+K: Toggle Command Palette
-  if (isCtrlOrCmd && (e.key === 'k' || e.key === 'K')) {
-    e.preventDefault();
-    showPalette.value = !showPalette.value;
-    return;
-  }
+useKeyCommand('nav.workspace', () => {
+  router.push('/workspace');
+});
 
-  // Ctrl+1 .. Ctrl+6: Quick navigation between views
-  if (isCtrlOrCmd && !e.shiftKey) {
-    if (e.key === '1') { e.preventDefault(); router.push('/workspace'); }
-    else if (e.key === '2') { e.preventDefault(); router.push('/commands'); }
-    else if (e.key === '3') { e.preventDefault(); router.push('/groups'); }
-    else if (e.key === '4') { e.preventDefault(); router.push('/history'); }
-    else if (e.key === '5') { e.preventDefault(); router.push('/settings'); }
-    else if (e.key === '6') { e.preventDefault(); router.push('/templates'); }
-  }
+useKeyCommand('nav.commands', () => {
+  router.push('/commands');
+});
 
-  // Ctrl+Shift+S: Open Settings
-  if (isCtrlOrCmd && e.shiftKey && (e.key === 'S' || e.key === 's')) {
-    e.preventDefault();
-    router.push('/settings');
-  }
-};
+useKeyCommand('nav.groups', () => {
+  router.push('/groups');
+});
+
+useKeyCommand('nav.history', () => {
+  router.push('/history');
+});
+
+useKeyCommand('nav.settings', () => {
+  router.push('/settings');
+});
+
+useKeyCommand('nav.templates', () => {
+  router.push('/templates');
+});
+
+useKeyCommand('nav.keybindings', () => {
+  router.push('/settings?tab=keybindings');
+});
+
+if (import.meta.env.DEV) {
+  useKeyCommand('app.toggleDevtools', () => {
+    void ipcClient.toggleDevtools().catch(console.error);
+  });
+}
+
+// The webview's own menu (Reload, Inspect Element, ...) does not belong in
+// the app; copy, paste and inspect have keyboard shortcuts instead.
+const blockContextMenu = (event: MouseEvent) => event.preventDefault();
 
 onMounted(async () => {
-  window.addEventListener('keydown', handleGlobalKeydown);
+  window.addEventListener('contextmenu', blockContextMenu);
+  initGlobalKeybindingsListener();
+  void fetchKeybindings().catch(console.error);
   void initLifecycleListener().catch(console.error);
   initIpcListener();
   await refreshProcesses();
@@ -138,7 +171,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   disposeLifecycleListener();
-  window.removeEventListener('keydown', handleGlobalKeydown);
+  disposeGlobalKeybindingsListener();
+  window.removeEventListener('contextmenu', blockContextMenu);
 });
 </script>
 

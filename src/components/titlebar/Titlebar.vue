@@ -25,7 +25,7 @@
       <button class="palette-trigger" @click="$emit('open-palette')">
         <Search class="icon" :size="13" />
         <span class="trigger-label">Tìm kiếm lệnh, nhóm hoặc thao tác...</span>
-        <kbd class="shortcut-tag">Ctrl+K</kbd>
+        <kbd v-if="keyLabel('app.commandPalette', false)" class="shortcut-tag">{{ keyLabel('app.commandPalette', false) }}</kbd>
       </button>
     </div>
 
@@ -54,6 +54,7 @@ import { Search, Minus, PanelTopClose, Square, X } from 'lucide-vue-next';
 import { useAppLifecycle } from '@/composables/useAppLifecycle';
 import { useRunSession } from '@/composables/useRunSession';
 import { APP_VERSION_TAG } from '@/config/version';
+import { keyLabel } from '@/keybindings/dispatcher';
 
 defineEmits<{
   (e: 'open-palette'): void;

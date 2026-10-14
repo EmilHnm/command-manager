@@ -17,6 +17,7 @@ import type {
   BackupIntegrityResult,
 } from '@/types/models';
 import { IPC_EVENTS } from '@/ipc/events';
+import type { KeybindingOverride, ParsedKeybindings } from '@/types/keybindings';
 
 /** Browser preview keeps the mock store; the Tauri runtime always uses the Rust backend. */
 const USE_MOCK_IPC = false;
@@ -392,6 +393,7 @@ const mockPtyDataListeners = new Set<(commandId: number, data: string) => void>(
 const mockHistoryAddedListeners = new Set<() => void>();
 const mockCommandsChangedListeners = new Set<() => void>();
 let mockCommandHistories: CommandHistory[] = [];
+let mockKeybindings: KeybindingOverride[] = [];
 const mockOsHistory = ['git status', 'git log --oneline -10', 'pnpm run build', 'cargo test --lib'];
 mockLogBuffers.set(1, '\x1b[35m[vite]\x1b[0m connecting...\n\x1b[32m  ➜  Local:   http://localhost:3000/\x1b[0m\n\x1b[32m  ➜  Network: http://192.168.1.15:3000/\x1b[0m\n\x1b[90m  ➜  press h + enter to show help\x1b[0m\n');
 mockLogBuffers.set(2, '\x1b[32m[Nest]\x1b[0m 2845  - 09/25/2026, 2:20:10 PM     LOG [NestFactory] Starting Nest application...\n\x1b[32m[Nest]\x1b[0m 2845  - 09/25/2026, 2:20:11 PM     LOG [RoutesResolver] AppController {/api}: +4ms\n\x1b[32m[Nest]\x1b[0m 2845  - 09/25/2026, 2:20:11 PM     LOG [NestApplication] Nest application successfully started on port 4000\n');
@@ -705,6 +707,38 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
       const newSettings = args?.settings as SystemSettings;
       mockSettings = { ...newSettings };
       return true as unknown as T;
+    }
+
+    // Keybindings
+    case 'keybindings_get':
+      return [...mockKeybindings] as unknown as T;
+
+    case 'keybindings_set': {
+      const entries = (args?.entries as KeybindingOverride[]) || [];
+      mockKeybindings = [...entries];
+      return [...mockKeybindings] as unknown as T;
+    }
+
+    case 'keybindings_reset': {
+      mockKeybindings = [];
+      return undefined as unknown as T;
+    }
+
+    case 'keybindings_parse': {
+      const json = (args?.json as string) || '[]';
+      try {
+        const raw = JSON.parse(json);
+        if (Array.isArray(raw)) {
+          return { entries: raw, skipped: [] } as unknown as T;
+        }
+      } catch (e: any) {
+        return { entries: [], skipped: [{ index: 0, reason: e.message }] } as unknown as T;
+      }
+      return { entries: [], skipped: [] } as unknown as T;
+    }
+
+    case 'keybindings_export': {
+      return '/mock/path/keybindings.json' as unknown as T;
     }
 
     default:
@@ -1394,6 +1428,42 @@ export const ipcClient = {
     })));
     await invokeTauri<void>('autostart_os_set', { enabled: settings.autostartApp, confirmed: true });
     return true;
+  },
+
+  readClipboardText: async (): Promise<string> => {
+    if (!usingNativeIpc()) return navigator.clipboard.readText();
+    return invokeTauri<string>('clipboard_read_text');
+  },
+
+  writeClipboardText: async (text: string): Promise<void> => {
+    if (!usingNativeIpc()) return navigator.clipboard.writeText(text);
+    return invokeTauri<void>('clipboard_write_text', { text });
+  },
+
+  toggleDevtools: async (): Promise<void> => {
+    if (!usingNativeIpc()) return;
+    return invokeTauri<void>('app_toggle_devtools');
+  },
+
+  // Keybindings
+  getKeybindings: async (): Promise<KeybindingOverride[]> => {
+    return invokeTauri<KeybindingOverride[]>('keybindings_get');
+  },
+
+  setKeybindings: async (entries: KeybindingOverride[]): Promise<KeybindingOverride[]> => {
+    return invokeTauri<KeybindingOverride[]>('keybindings_set', { entries });
+  },
+
+  resetKeybindings: async (confirmed: boolean): Promise<void> => {
+    return invokeTauri<void>('keybindings_reset', { confirmed });
+  },
+
+  parseKeybindings: async (json: string): Promise<ParsedKeybindings> => {
+    return invokeTauri<ParsedKeybindings>('keybindings_parse', { json });
+  },
+
+  exportKeybindings: async (dest?: string): Promise<string> => {
+    return invokeTauri<string>('keybindings_export', { dest });
   },
 
   onPtyData: async (callback: (commandId: number, data: string) => void) => {

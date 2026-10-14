@@ -9,7 +9,7 @@
         <span class="view-subtitle">Cấu hình PTY, biến môi trường toàn cục, khởi động cùng OS và cơ chế sao lưu SQLite an toàn</span>
       </div>
 
-      <div class="header-right">
+      <div v-if="currentTab !== 'keybindings'" class="header-right">
         <button class="btn btn-primary btn-sm" :disabled="isSaving" @click="handleSaveSettings">
           <LoaderCircle v-if="isSaving" :size="13" class="spin" />
           <Save v-else :size="13" />
@@ -44,6 +44,20 @@
       >
         <Terminal :size="14" />
         <span>Terminal & Hiệu Năng (PTY & Memory)</span>
+      </button>
+
+      <button
+        class="tab-btn"
+        :class="{ active: currentTab === 'keybindings' }"
+        @click="currentTab = 'keybindings'"
+      >
+        <Keyboard :size="14" />
+        <span>⌨ Phím Tắt (Keybindings Editor)</span>
+        <span
+          v-if="conflictCount > 0"
+          class="tab-warning-dot"
+          title="Có xung đột phím tắt"
+        ></span>
       </button>
     </div>
 
@@ -352,6 +366,11 @@
           </div>
         </div>
       </div>
+
+      <!-- TAB 4: KEYBOARD SHORTCUTS (SCR-05 Tab 4) -->
+      <div v-show="currentTab === 'keybindings'" class="tab-panel keybindings-panel">
+        <KeyboardShortcutsTab @toast="(t) => showToast(t.message, t.type === 'error' ? 'error' : 'success')" />
+      </div>
     </main>
 
     <!-- Restore Wizard Modal MOD-08 -->
@@ -385,15 +404,36 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
-import { Save, Cpu, Terminal, Database, Download, Upload, LoaderCircle } from 'lucide-vue-next';
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
+import { useRoute } from 'vue-router';
+import { Save, Cpu, Terminal, Database, Download, Upload, LoaderCircle, Keyboard } from 'lucide-vue-next';
 import RestoreWizard from '@/components/dialogs/RestoreWizard.vue';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
+import KeyboardShortcutsTab from '@/views/settings/KeyboardShortcutsTab.vue';
+import { useKeybindings } from '@/composables/useKeybindings';
 import { ipcClient } from '@/ipc/client';
 import { APP_ENGINE_TAG } from '@/config/version';
 import type { BackupIntegrityResult, OsHistorySource, SystemSettings } from '@/types/models';
 
-const currentTab = ref<'system' | 'terminal' | 'backup'>('system');
+const route = useRoute();
+const { conflictCount } = useKeybindings();
+
+const currentTab = ref<'system' | 'terminal' | 'backup' | 'keybindings'>('system');
+
+onMounted(() => {
+  if (route.query.tab === 'keybindings') {
+    currentTab.value = 'keybindings';
+  }
+});
+
+watch(
+  () => route.query.tab,
+  (tab) => {
+    if (tab === 'keybindings' || tab === 'backup' || tab === 'system' || tab === 'terminal') {
+      currentTab.value = tab;
+    }
+  }
+);
 const isWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
 
 const settings = ref<SystemSettings>({
@@ -659,6 +699,14 @@ const confirmRestoreDatabase = async () => {
   font-weight: 600;
 }
 
+.tab-warning-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--status-starting);
+  margin-left: 2px;
+}
+
 .settings-content {
   flex: 1;
   overflow-y: auto;
@@ -670,6 +718,14 @@ const confirmRestoreDatabase = async () => {
   flex-direction: column;
   gap: 16px;
   max-width: 820px;
+}
+
+.keybindings-panel {
+  max-width: none;
+  height: calc(100% + 40px);
+  margin: -20px;
+  padding: 0;
+  gap: 0;
 }
 
 .backup-layout {

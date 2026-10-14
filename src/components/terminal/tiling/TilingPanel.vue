@@ -108,7 +108,7 @@
         <!-- Split to Right -->
         <button
           class="panel-action-btn"
-          title="Chia đôi panel sang phải (Ctrl+Alt+R)"
+          :title="'Chia đôi panel sang phải ' + keyLabel('workspace.splitRight')"
           @click.stop="$emit('split-right', panel.id)"
         >
           <Columns2 :size="12" />
@@ -117,7 +117,7 @@
         <!-- Split to Down -->
         <button
           class="panel-action-btn"
-          title="Chia đôi panel xuống dưới (Ctrl+Alt+D)"
+          :title="'Chia đôi panel xuống dưới ' + keyLabel('workspace.splitDown')"
           @click.stop="$emit('split-down', panel.id)"
         >
           <Rows2 :size="12" />
@@ -127,7 +127,7 @@
         <button
           class="panel-action-btn"
           :class="{ 'zoom-active': isZoomed }"
-          :title="isZoomed ? 'Khôi phục bố cục lưới (Ctrl+Shift+Z)' : 'Phóng to panel toàn màn hình (Ctrl+Shift+Z)'"
+          :title="isZoomed ? 'Khôi phục bố cục lưới ' + keyLabel('workspace.toggleZoom') : 'Phóng to panel toàn màn hình ' + keyLabel('workspace.toggleZoom')"
           @click.stop="$emit('toggle-zoom', panel.id)"
         >
           <Minimize2 v-if="isZoomed" :size="12" />
@@ -252,6 +252,7 @@ import XtermPane from '@/components/terminal/XtermPane.vue';
 import type { TilingPanelNode, SyncInputMode } from '@/types/tiling';
 import type { ProcessLifecycleStatus } from '@/types/models';
 import { useRunSession } from '@/composables/useRunSession';
+import { keyLabel } from '@/keybindings/dispatcher';
 
 export interface OpenTabItem {
   id: string;

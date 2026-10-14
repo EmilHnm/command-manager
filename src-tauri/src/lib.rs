@@ -3,6 +3,7 @@ pub mod backup;
 pub mod clock;
 pub mod db;
 pub mod error;
+pub mod keybindings;
 pub mod os_history;
 pub mod process;
 pub mod pty;
@@ -39,6 +40,7 @@ mod desktop {
                 MacosLauncher::LaunchAgent,
                 Some(vec![app::autostart::AUTOSTART_ARG]),
             ))
+            .plugin(tauri_plugin_clipboard_manager::init())
             .setup(|app| {
                 let show_item =
                     MenuItem::with_id(app, "show", "Mở Command Manager", true, None::<&str>)?;
@@ -181,8 +183,16 @@ mod desktop {
                 ipc::commands::backup_import_bytes,
                 ipc::commands::settings_get,
                 ipc::commands::settings_set,
+                ipc::commands::keybindings_get,
+                ipc::commands::keybindings_set,
+                ipc::commands::keybindings_reset,
+                ipc::commands::keybindings_parse,
+                ipc::commands::keybindings_export,
                 ipc::commands::autostart_os_is_enabled,
                 ipc::commands::autostart_os_set,
+                ipc::commands::clipboard_read_text,
+                ipc::commands::clipboard_write_text,
+                ipc::commands::app_toggle_devtools,
                 ipc::commands::app_hide,
                 ipc::commands::app_shutdown,
                 ipc::commands::open_url,

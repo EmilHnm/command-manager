@@ -21,3 +21,8 @@ pub fn all(conn: &Connection) -> Result<Vec<(String, String)>> {
     let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
+
+pub fn delete(conn: &Connection, key: &str) -> Result<()> {
+    conn.execute("DELETE FROM app_setting WHERE key = ?1", [key])?;
+    Ok(())
+}

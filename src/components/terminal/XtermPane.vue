@@ -68,6 +68,41 @@
         </button>
         <span v-if="suggestionItems.length === 0" class="suggestion-empty">Chưa có lịch sử phù hợp</span>
       </div>
+      <div v-if="searchOpen" class="terminal-search" @click.stop @mousedown.stop>
+        <input
+          ref="searchInput"
+          v-model="searchQuery"
+          class="terminal-search-input"
+          type="text"
+          placeholder="Tìm trong terminal"
+          spellcheck="false"
+          @keydown="handleSearchKeydown"
+        />
+        <span class="terminal-search-count">{{ searchCountLabel }}</span>
+        <button
+          type="button"
+          class="terminal-search-btn"
+          :class="{ active: searchCaseSensitive }"
+          title="Phân biệt hoa thường"
+          @click="searchCaseSensitive = !searchCaseSensitive"
+        >Aa</button>
+        <button
+          type="button"
+          class="terminal-search-btn"
+          :class="{ active: searchRegex }"
+          title="Biểu thức chính quy"
+          @click="searchRegex = !searchRegex"
+        >.*</button>
+        <button type="button" class="terminal-search-btn" title="Kết quả trước (Shift+Enter)" @click="runSearch('previous')">
+          <ChevronUp :size="13" />
+        </button>
+        <button type="button" class="terminal-search-btn" title="Kết quả sau (Enter)" @click="runSearch('next')">
+          <ChevronDown :size="13" />
+        </button>
+        <button type="button" class="terminal-search-btn" title="Đóng (Esc)" @click="closeSearch">
+          <X :size="13" />
+        </button>
+      </div>
     </div>
 
     <!-- Link Hover Tooltip (Ctrl+Click hint) -->
@@ -94,18 +129,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { markSessionShown } from './shownSessions';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { RefreshCw, Trash2, Square, RotateCw, LoaderCircle, ExternalLink } from 'lucide-vue-next';
+import { RefreshCw, Trash2, Square, RotateCw, LoaderCircle, ExternalLink, ChevronUp, ChevronDown, X } from 'lucide-vue-next';
+import { SearchAddon, type ISearchOptions } from '@xterm/addon-search';
 import { usePtyStream } from '@/composables/usePtyStream';
-import type { ProcessLifecycleStatus } from '@/types/models';
-import type { CommandHistory } from '@/types/models';
+import type { ProcessLifecycleStatus, CommandHistory } from '@/types/models';
 import { ipcClient } from '@/ipc/client';
 import { useSuggestions } from '@/composables/useSuggestions';
+import { matchesBinding, setSuggestScope, useKeyCommand } from '@/keybindings/dispatcher';
 
 const props = withDefaults(
   defineProps<{
@@ -196,6 +232,131 @@ let ghostQuery: string | undefined;
 const terminalError = ref('');
 const suggestionText = ref('');
 const suggestionPopup = ref(false);
+watch([suggestionPopup, suggestionText], ([isOpen, text]) => {
+  setSuggestScope(terminalElement.value, Boolean(isOpen || text));
+});
+
+const isPaneFocused = (): boolean => {
+  return Boolean(
+    terminalElement.value &&
+    document.activeElement &&
+    (terminalElement.value === document.activeElement || terminalElement.value.contains(document.activeElement))
+  );
+};
+
+useKeyCommand('terminal.toggleSuggest', () => {
+  if (!isPaneFocused()) return;
+  suggestionPopup.value = !suggestionPopup.value;
+  lastSuggestionQuery = undefined;
+  if (suggestionPopup.value) void refreshSuggestions();
+});
+
+useKeyCommand('terminal.copy', () => {
+  if (!isPaneFocused() || !term?.hasSelection()) return;
+  void ipcClient.writeClipboardText(term.getSelection()).catch(console.error);
+});
+
+useKeyCommand('terminal.paste', () => {
+  if (!isPaneFocused()) return;
+  void ipcClient.readClipboardText()
+    .then((text) => { if (text) pasteText(text); })
+    .catch(console.error);
+});
+
+useKeyCommand('terminal.find', () => {
+  if (!isPaneFocused()) return;
+  openSearch();
+});
+
+useKeyCommand('terminal.kill', () => {
+  if (!isPaneFocused() || props.processStatus !== 'running') return;
+  emit('stop-process', props.commandId);
+});
+
+const searchOpen = ref(false);
+const searchQuery = ref('');
+const searchCaseSensitive = ref(false);
+const searchRegex = ref(false);
+const searchResult = ref<{ index: number; count: number } | null>(null);
+const searchInput = ref<HTMLInputElement | null>(null);
+let searchAddon: SearchAddon | undefined;
+
+const SEARCH_DECORATIONS: ISearchOptions['decorations'] = {
+  matchBackground: '#74479166',
+  matchOverviewRuler: '#a855f7',
+  activeMatchBackground: '#f59e0b99',
+  activeMatchColorOverviewRuler: '#f59e0b',
+};
+
+const runSearch = (direction: 'next' | 'previous', incremental = false) => {
+  if (!searchAddon) return;
+  const query = searchQuery.value;
+  if (!query) {
+    searchAddon.clearDecorations();
+    searchResult.value = null;
+    return;
+  }
+  const options: ISearchOptions = {
+    caseSensitive: searchCaseSensitive.value,
+    regex: searchRegex.value,
+    incremental,
+    decorations: SEARCH_DECORATIONS,
+  };
+  try {
+    if (direction === 'next') searchAddon.findNext(query, options);
+    else searchAddon.findPrevious(query, options);
+  } catch {
+    // An unfinished regex such as "(" while typing.
+    searchAddon.clearDecorations();
+    searchResult.value = { index: -1, count: 0 };
+  }
+};
+
+watch([searchQuery, searchCaseSensitive, searchRegex], () => runSearch('next', true));
+
+const searchCountLabel = computed(() => {
+  const result = searchResult.value;
+  if (!searchQuery.value || !result) return '';
+  if (result.count === 0) return 'Không có';
+  if (result.index < 0) return `${result.count}+`;
+  return `${result.index + 1}/${result.count}`;
+});
+
+const openSearch = () => {
+  const selection = term?.getSelection() ?? '';
+  if (selection && !selection.includes('\n')) searchQuery.value = selection;
+  searchOpen.value = true;
+  void nextTick(() => {
+    searchInput.value?.focus();
+    searchInput.value?.select();
+    runSearch('next', true);
+  });
+};
+
+const closeSearch = () => {
+  searchOpen.value = false;
+  searchAddon?.clearDecorations();
+  searchResult.value = null;
+  focusTerminal();
+};
+
+const handleSearchKeydown = (event: KeyboardEvent) => {
+  if (event.isComposing) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeSearch();
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    runSearch(event.shiftKey ? 'previous' : 'next');
+  }
+};
+
+useKeyCommand('terminal.acceptSuggestWord', () => {
+  if (!isPaneFocused()) return;
+  if (!suggestionText.value) return;
+  const word = suggestionText.value.match(/^\s*\S+\s*/)?.[0] || suggestionText.value;
+  acceptSuggestion(currentInput() + word);
+});
 const suggestionItems = ref<CommandHistory[]>([]);
 const suggestionIndex = ref(0);
 const suggestionPosition = ref<{ left: string; top: string; height?: string; lineHeight?: string; maxWidth?: string }>({ left: '18px', top: '12px' });
@@ -374,6 +535,11 @@ onMounted(async () => {
   // in-place redraws land one column off per emoji and overwrite each other.
   term.loadAddon(new Unicode11Addon());
   term.unicode.activeVersion = '11';
+  searchAddon = new SearchAddon();
+  searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
+    searchResult.value = { index: resultIndex, count: resultCount };
+  });
+  term.loadAddon(searchAddon);
 
   webLinksAddon = new WebLinksAddon(
     (event: MouseEvent, uri: string) => {
@@ -491,18 +657,11 @@ onMounted(async () => {
   // onKey for an event it is told not to process.
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true;
-    // Ctrl+N opens a new terminal (handled by DockHost on window); keep it
-    // from reaching the shell as ^N.
-    if (event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey
-      && event.key.toLowerCase() === 'n') {
-      return false;
-    }
-    if (event.ctrlKey && (event.code === 'Space' || event.key === ' ')) {
-      event.preventDefault();
-      event.stopPropagation();
-      suggestionPopup.value = !suggestionPopup.value;
-      lastSuggestionQuery = undefined;
-      if (suggestionPopup.value) void refreshSuggestions();
+
+    // Check with unified keybindings dispatcher first.
+    // If the event matches a registered action, return false so xterm
+    // does not translate it into PTY data (e.g. ^N or ESC ^R).
+    if (matchesBinding(event)) {
       return false;
     }
     if (suggestionPopup.value && event.key === 'Escape') {
@@ -553,16 +712,10 @@ onMounted(async () => {
     if (suggestionText.value && (
       event.key === 'End'
       || event.key === 'ArrowRight'
-      || (event.ctrlKey && event.key === 'ArrowRight')
     )) {
       event.preventDefault();
       event.stopPropagation();
-      if (event.key === 'ArrowRight' && event.ctrlKey) {
-        const word = suggestionText.value.match(/^\s*\S+\s*/)?.[0] || suggestionText.value;
-        acceptSuggestion(currentInput() + word);
-      } else {
-        acceptSuggestion(currentInput() + suggestionText.value);
-      }
+      acceptSuggestion(currentInput() + suggestionText.value);
       return false;
     }
     return true;
@@ -694,6 +847,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  setSuggestScope(terminalElement.value, false);
   window.removeEventListener('keydown', handleWindowKeyDown);
   window.removeEventListener('keyup', handleWindowKeyUp);
   if (ctrlNoticeTimer) clearTimeout(ctrlNoticeTimer);
@@ -1234,6 +1388,72 @@ defineExpose({
   border-radius: 6px;
   box-shadow: 0 8px 24px #00000059;
   transform: translateY(calc(-100% - 4px));
+}
+
+.terminal-search {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: #171b27;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px #00000059;
+}
+
+.terminal-search-input {
+  width: 200px;
+  padding: 3px 6px;
+  font-size: 12px;
+  color: #f1f5f9;
+  background: #0b0d13;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  outline: none;
+}
+
+.terminal-search-input:focus {
+  border-color: #8956aa;
+}
+
+.terminal-search-count {
+  min-width: 52px;
+  padding: 0 4px;
+  font-size: 11px;
+  color: #94a3b8;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.terminal-search-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #94a3b8;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.terminal-search-btn:hover {
+  color: #f1f5f9;
+  background: #ffffff14;
+}
+
+.terminal-search-btn.active {
+  color: #cda8ee;
+  border-color: #8956aa;
+  background: #74479133;
 }
 
 .suggestion-item {

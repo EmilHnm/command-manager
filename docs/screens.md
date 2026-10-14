@@ -89,6 +89,8 @@ graph TD
 
     SCR05 --> MOD07[MOD-07: Backup Export Verification Modal]
     SCR05 --> MOD08[MOD-08: Restore Database Wizard & Rollback Protection]
+    SCR05 --> KEYS[SCR-05 Tab Phím Tắt - Keyboard Shortcuts Editor]
+    KEYS --> MOD16[MOD-16: Keybinding Capture Modal - Ghi Phím Tắt]
     
     App --> MOD09[MOD-09: Graceful Shutdown Progress Overlay]
     App --> MOD12[MOD-12: Single-Instance Alert Toast]
@@ -487,6 +489,205 @@ Quản lý cấu hình cấp ứng dụng, cơ chế tự khởi động cùng O
 | Tự khởi động cùng Hệ điều hành (OS Boot):  [ BẬT (ON)   ▼ ] (tauri-plugin-autostart)               |
 +----------------------------------------------------------------------------------------------------+
 ```
+
+#### 3. Tab 4: Phím Tắt (Keyboard Shortcuts Editor)
+
+##### 3.1. Mục đích & Phạm vi
+Cho phép người dùng xem, tìm, đổi, thêm, gỡ và khôi phục phím tắt của mọi tác vụ trong ứng dụng, theo mô hình của VS Code (`Ctrl+K Ctrl+S`). Tab này thay cho bảng tĩnh ở mục 7.2: bảng đó chỉ còn là **danh sách mặc định**.
+
+Hiện phím tắt nằm rải rác ở `AppShell.vue`, `DockHost.vue`, `GroupTree.vue` và `XtermPane.vue`, và nhãn gợi ý (`title="... (Ctrl+N)"`) được viết cứng. Để tính năng này hoạt động, mọi phím tắt phải đi qua **một registry và một bộ điều phối duy nhất** (mục 3.7).
+
+**Ngoài phạm vi v1:**
+* Chord hai bước kiểu `Ctrl+K Ctrl+S`. Định dạng dữ liệu vẫn để chỗ cho chord (mục 3.5).
+* Biểu thức `when` tự do. Chỉ dùng danh sách phạm vi cố định ở mục 3.4.
+* Phím tắt toàn hệ điều hành khi app không có focus.
+
+* **Stitch Screen Reference:** Screen ID `1e3f3759e99e4a67a1fb95b6304db408` tại Project `14914224436748087443`.
+
+##### 3.2. Wireframe Tab Phím Tắt
+
+```
++----------------------------------------------------------------------------------------------------+
+| [=] Settings & Data Management                                                                     |
++----------------------------------------------------------------------------------------------------+
+| [Sao Lưu & Phục Hồi]  [Hệ Thống & Khởi Động]  [Terminal & Hiệu Năng]  [⌨ Phím Tắt]                |
++----------------------------------------------------------------------------------------------------+
+| [🔍 Tìm theo tên tác vụ, ID hoặc phím...                                     ] [⌨ Ghi phím] [⋯]   |
+| Lọc: (● Tất cả 28) ( Đã tùy chỉnh 3 ) ( ⚠ Xung đột 1 )      Phạm vi: [ Tất cả phạm vi      ▼ ]   |
+|----------------------------------------------------------------------------------------------------|
+| TÁC VỤ                              | PHÍM TẮT              | PHẠM VI            | NGUỒN              |
+|----------------------------------------------------------------------------------------------------|
+| ▾ ỨNG DỤNG & ĐIỀU HƯỚNG                                                                            |
+|   Mở Command Palette                | [Ctrl] + [K]          | Toàn ứng dụng      | Mặc định           |
+|   Thoát ứng dụng                    | [Ctrl] + [Q]          | Toàn ứng dụng      | Mặc định           |
+|   Đi đến Cài đặt                    | [Ctrl] + [5]          | Toàn ứng dụng      | Mặc định           |
+|                                     | [Ctrl]+[Shift]+[S]    | Toàn ứng dụng      | Mặc định           |
+| ▾ WORKSPACE TERMINAL                                                                               |
+| ● Mở terminal mới (cùng cwd)        | [Ctrl] + [T]          | Workspace          | Người dùng   ✎ ↺ ✕ |  <- hàng đã sửa: chấm xanh bên trái
+| ⚠ Chia đôi panel sang phải          | [Ctrl]+[Alt]+[R]      | Workspace          | Mặc định           |  <- xung đột: icon vàng, hover xem chi tiết
+|   Phóng to / khôi phục panel        | [Ctrl]+[Shift]+[Z]    | Workspace          | Mặc định           |
+|   Đóng panel đang chọn              | —                     | Workspace          | Đã gỡ        ↺     |  <- binding mặc định bị gỡ: chữ mờ, gạch ngang
+| ▾ TERMINAL                                                                                         |
+|   Bật / tắt gợi ý lệnh              | [Ctrl] + [Space]      | Terminal đang gõ   | Mặc định           |
+|   Nhận toàn bộ gợi ý mờ             | [End]  ·  [→]         | Terminal có gợi ý  | Cố định 🔒          |  <- phím cố định: chỉ xem
+|----------------------------------------------------------------------------------------------------|
+| ⓘ Phím tắt áp dụng ngay khi thay đổi, không cần bấm "Lưu Cài Đặt".                                 |
++----------------------------------------------------------------------------------------------------+
+
+Menu [⋯]:  Xuất ra JSON...  |  Nhập từ JSON...  |  Khôi phục toàn bộ về mặc định
+```
+
+* **Ô tìm kiếm:** Lọc theo tên tác vụ, ID (`workspace.splitRight`) hoặc chuỗi phím (`ctrl+alt`). Kết quả khớp cập nhật ngay khi gõ, có debounce 100ms.
+* **Nút `⌨ Ghi phím`:** Bật chế độ ghi. Khi bật, ô tìm kiếm không nhận ký tự mà ghi lại tổ hợp phím vừa nhấn, rồi lọc các tác vụ đang dùng đúng tổ hợp đó. Dùng để trả lời câu hỏi "phím này đang làm gì?". Bấm lại hoặc nhấn `Esc` để tắt.
+* **Bộ lọc:** *Tất cả* · *Đã tùy chỉnh* (gồm hàng nguồn Người dùng và Đã gỡ) · *Xung đột*. Dropdown Phạm vi lọc theo mục 3.4.
+* **Nhóm:** Tác vụ được nhóm theo danh mục của registry. Mỗi nhóm thu gọn được.
+* **Một tác vụ có nhiều phím:** Hiển thị mỗi phím một dòng con, tên tác vụ chỉ ghi ở dòng đầu (ví dụ "Đi đến Cài đặt").
+* **Thao tác trên hàng** (hiện khi hover hoặc focus):
+  * `✎` hoặc nháy đúp: mở MOD-16 để đổi phím.
+  * `+` (trong menu chuột phải): thêm một phím nữa cho tác vụ.
+  * `↺`: khôi phục hàng đó về mặc định.
+  * `✕`: gỡ phím. Tác vụ vẫn chạy được từ Command Palette.
+* **Hàng có phạm vi Cố định 🔒:** Chỉ hiển thị để người dùng biết, không có thao tác. Đây là các phím của popup gợi ý (`↑ ↓ Enter Esc`) và `Esc` đóng modal.
+* **Bàn phím:** `↑ ↓` di chuyển giữa các hàng, `Enter` mở MOD-16, `Delete` gỡ phím, `Ctrl+F` focus ô tìm kiếm.
+
+##### 3.3. Dữ liệu Hiển thị (Data Binding)
+
+| Cột | Nguồn | Ghi chú |
+| :--- | :--- | :--- |
+| Tác vụ | `KeyCommand.title` | Tooltip hiển thị `KeyCommand.id` để người dùng copy vào JSON. |
+| Phím tắt | Binding hiệu lực | Render từng phím thành `<kbd>`. Hiển thị `Cmd` thay cho `Ctrl` trên macOS khi binding dùng `mod`. |
+| Phạm vi | `binding.when` | Nhãn tiếng Việt lấy theo bảng 3.4. |
+| Nguồn | So với mặc định | *Mặc định* / *Người dùng* / *Đã gỡ* / *Cố định*. |
+
+##### 3.4. Phạm vi Áp dụng (`when`)
+
+Danh sách phạm vi cố định. Phạm vi hẹp hơn được ưu tiên khi trùng phím.
+
+| ID | Nhãn | Hoạt động khi | Độ ưu tiên |
+| :--- | :--- | :--- | :--- |
+| `global` | Toàn ứng dụng | Luôn luôn, trừ khi đang có modal | 1 |
+| `workspace` | Workspace | Route hiện tại là `/workspace` | 2 |
+| `explorer` | Cây nhóm lệnh | Focus nằm trong `GroupTree` | 3 |
+| `terminal` | Terminal đang gõ | Focus nằm trong một `XtermPane` | 3 |
+| `suggest` | Terminal có gợi ý | Focus ở terminal **và** đang có popup hoặc ghost text | 4 (Cố định) |
+| `modal` | Modal | Đang có modal hoặc dialog mở | 5 (Cố định) |
+
+* Khi đang có modal, mọi binding ngoài phạm vi `modal` đều bị bỏ qua, tức là không thể tạo terminal mới khi dialog đang mở.
+* Phạm vi `terminal` cũng thỏa `workspace`, vì terminal chỉ nằm trong workspace. Vì vậy `Ctrl+N` khai báo ở `workspace` vẫn chạy khi đang gõ trong terminal, giống hành vi hiện tại.
+
+##### 3.5. Lưu trữ & Định dạng
+
+* **Không cần migration.** Ghi vào bảng `app_setting` có sẵn với key `keybindings`. Giá trị là JSON và **chỉ lưu phần khác mặc định**, như `keybindings.json` của VS Code. Nhờ vậy, khi phiên bản sau đổi phím mặc định, người dùng chưa tùy chỉnh phím đó sẽ tự nhận phím mới.
+* **Định dạng** (cũng là định dạng Xuất/Nhập JSON):
+  ```json
+  [
+    { "key": "ctrl+t",       "command": "workspace.newTerminal", "when": "workspace" },
+    { "key": "ctrl+n",       "command": "-workspace.newTerminal" },
+    { "key": "ctrl+shift+w", "command": "-workspace.closePanel" }
+  ]
+  ```
+  * `command` có tiền tố `-` nghĩa là gỡ binding mặc định trùng `key` (và trùng `when` nếu có ghi).
+  * `key` là chuỗi chữ thường, các modifier theo thứ tự cố định `mod+ctrl+shift+alt+meta+<phím>`. Alias `mod` nghĩa là `ctrl` trên Linux/Windows và `meta` trên macOS, nên không được dùng chung với `ctrl` hoặc `meta`. Mục thêm phím bắt buộc có `when` (`global`/`workspace`/`explorer`/`terminal`/`suggest`); mục gỡ (`-id`) có thể bỏ `when`. Chord sau này sẽ ghi dạng `"ctrl+k ctrl+s"`, cách nhau bằng dấu cách.
+* **Nhập JSON:**
+  * Kiểm tra schema. Bỏ qua mục có `command` không tồn tại và báo số mục bị bỏ qua.
+  * Không ghi đè ngay: hiện bảng xem trước "thêm X / gỡ Y / xung đột Z", người dùng xác nhận rồi mới lưu.
+* **Lưu:** Mỗi thao tác sửa, gỡ hay khôi phục được lưu ngay qua `keybindings_set` (không đi qua nút "Lưu Cài Đặt" ở header). Khi đang ở tab này, nút header ẩn đi để tránh hiểu lầm. Lưu lỗi thì hoàn tác thay đổi trên UI và hiện toast lỗi.
+
+* **IPC backend (`src-tauri/src/keybindings.rs`):**
+
+  | Lệnh | Vai trò |
+  | :--- | :--- |
+  | `keybindings_get()` | Trả danh sách override đã chuẩn hóa. Giá trị lưu bị hỏng (backup cũ, sửa DB tay) thì chỉ trả các mục còn hợp lệ, không báo lỗi. |
+  | `keybindings_set(entries)` | Ghi đè toàn bộ danh sách. Kiểm tra chặt: một mục sai thì từ chối cả lần lưu và báo `Mục #n: ...`. Trả về danh sách đã chuẩn hóa. |
+  | `keybindings_reset(confirmed)` | Xóa toàn bộ tùy chỉnh. |
+  | `keybindings_parse(json)` | Kiểm tra file nhập mà không lưu. Trả `{ entries, skipped: [{ index, reason }] }` để UI dựng bảng xem trước. |
+  | `keybindings_export(dest?)` | Ghi file JSON và trả đường dẫn. Mặc định ghi vào thư mục dữ liệu app, giống `backup_export`. |
+
+  * `settings_set` từ chối key `keybindings`, để mọi lần ghi phải qua bước kiểm tra.
+  * Backend kiểm tra cú pháp (phím, modifier, phạm vi, định dạng ID) và các quy tắc ở mục 3.6. ID có tồn tại hay không là việc của registry ở frontend.
+  * Tối đa 500 mục. Mục trùng hoàn toàn chỉ giữ lần xuất hiện cuối.
+
+##### 3.6. Quy tắc Nhận & Chuẩn hóa Phím
+
+1. **Không bao giờ bắt phím khi đang gõ IME** (ibus-unikey, xem các lỗi IME đã gặp):
+   * Bỏ qua nếu `event.isComposing`, `event.key === 'Process'` hoặc `keyCode === 229`.
+   * Không đổi giá trị textarea của xterm.
+2. **Dùng `event.code`, không dùng `event.key`, để xác định phím chính:**
+   * Không phụ thuộc layout bàn phím và Shift. Ví dụ code hiện tại phải viết `e.key === '0' || e.key === ')'`.
+   * `KeyN` → `n`, `Digit0` → `0`, `Backslash` → `\`, `Space` → `space`.
+   * Nhãn hiển thị cũng sinh từ `code`.
+3. **Ràng buộc khi gán phím:**
+   * Mọi binding (ở mọi phạm vi gán được) phải có ít nhất một trong `Ctrl/Alt/Meta`, trừ `F1`–`F24`. Shift đơn lẻ không đủ, để không cướp ký tự khi gõ trong terminal hay ô lọc.
+   * Không cho gán phím chỉ gồm modifier.
+   * Phím bị khóa, không gán được vì app không nhận được hoặc gán sẽ làm hỏng UI: `Tab`, `Shift+Tab`, `Esc` đơn, `Ctrl+Alt+Del`, `Ctrl+Alt+F1..F12` (đổi TTY trên Linux).
+4. **Cảnh báo phím dành cho shell** (vẫn cho gán nhưng hiện cảnh báo vàng trong MOD-16):
+   * Phạm vi bao trùm terminal (`global`, `workspace`, `terminal`) và phím là `Ctrl+C/D/Z/L/R/A/E/U/W/K` hoặc `Ctrl+Left/Right`.
+   * Nội dung: "Shell và các chương trình như vim, htop đang dùng phím này (ví dụ `^C` = dừng lệnh). Gán sẽ khiến terminal không nhận được phím đó nữa."
+5. **Xung đột:**
+   * Hai binding hiệu lực cùng `key` và phạm vi chồng nhau (cùng phạm vi, hoặc một bên là `global`) thì cả hai hàng hiện icon ⚠.
+   * Khi chạy: phạm vi ưu tiên cao hơn thắng. Nếu cùng phạm vi thì binding Người dùng thắng Mặc định, và binding Người dùng sau thắng binding trước.
+
+##### 3.7. Kiến trúc Triển khai (Ràng buộc Kỹ thuật)
+
+* **Registry `src/keybindings/registry.ts`:**
+  * Khai báo `KeyCommand { id, title, category, defaults: { key, when }[], locked?: boolean }`.
+  * Đây là nguồn sự thật duy nhất. Bảng 7.2 sinh ra từ đây, hoặc ít nhất phải khớp với đây.
+* **Đăng ký handler:** Mỗi component đăng ký handler cho tác vụ của mình khi mount và hủy khi unmount, qua `useKeyCommand('workspace.splitRight', handler)`. Tác vụ không có handler đang sống (ví dụ đang không ở workspace) thì không khớp, phím được trả về luồng bình thường.
+* **Một listener duy nhất:**
+  * Gắn `window.addEventListener('keydown', ..., { capture: true })`.
+  * Thay cho các `handleGlobalKeydown` trong `AppShell.vue` và `DockHost.vue`, và phần `Ctrl+F` trong `GroupTree.vue`.
+* **Terminal:** `attachCustomKeyEventHandler` của `XtermPane` hỏi dispatcher "phím này có khớp binding nào không".
+  * Có khớp: `return false` để xterm không gửi phím vào PTY. Thay cho đoạn chặn `Ctrl+N` viết cứng hiện tại.
+  * Đồng thời sửa lỗi hiện có: `Ctrl+Alt+R` vừa chia panel vừa gửi `ESC ^R` vào shell.
+* **Nhãn gợi ý động:**
+  * Thay mọi chuỗi cứng `(Ctrl+Alt+R)` trong `title=` và `<kbd>` bằng `keyLabel('workspace.splitRight')`.
+  * Áp dụng cho TilingPanel, DockHost, SessionsDrawer, CommandPalette, Titlebar và GroupTree.
+  * Tác vụ không có phím thì không hiện phần ngoặc.
+* **Command Palette:** Liệt kê mọi `KeyCommand` có handler đang sống, hiển thị phím bên phải. Nhờ vậy, tác vụ bị gỡ phím vẫn chạy được.
+* **Tạm dừng dispatcher khi đang ghi phím** (MOD-16 và nút `⌨ Ghi phím`), để `Ctrl+N` không mở terminal trong lúc người dùng đang gán phím.
+
+##### 3.8. Danh sách Tác vụ Khởi đầu (Lấy từ Code Hiện Tại)
+
+| ID | Tác vụ | Mặc định | Phạm vi |
+| :--- | :--- | :--- | :--- |
+| `app.commandPalette` | Mở / đóng Command Palette | `Ctrl+K` | global |
+| `app.quit` | Thoát ứng dụng (Graceful Shutdown) | `Ctrl+Q` | global |
+| `app.toggleDevtools` | Mở / đóng Inspect. Chỉ có trong bản dev: không xuất hiện trong registry của bản build, và lệnh `app_toggle_devtools` báo lỗi ở bản release | `Ctrl+Shift+I` | global |
+| `nav.workspace` | Đi đến Workspace | `Ctrl+1` | global |
+| `nav.commands` | Đi đến Thư viện lệnh | `Ctrl+2` | global |
+| `nav.groups` | Đi đến Nhóm lệnh | `Ctrl+3` | global |
+| `nav.history` | Đi đến Lịch sử | `Ctrl+4` | global |
+| `nav.settings` | Đi đến Cài đặt | `Ctrl+5`, `Ctrl+Shift+S` | global |
+| `nav.templates` | Đi đến Mẫu lệnh | `Ctrl+6` | global |
+| `nav.keybindings` | Mở trang Phím tắt | `Ctrl+Shift+K` | global |
+| `explorer.focusFilter` | Focus ô lọc nhóm & lệnh | `Ctrl+F` | explorer |
+| `workspace.newTerminal` | Mở terminal mới (cùng cwd) | `Ctrl+N` | workspace |
+| `workspace.newWindow` | Mở Cửa Sổ workspace mới | `Ctrl+Shift+T` | workspace |
+| `workspace.splitRight` | Chia đôi panel sang phải | `Ctrl+Alt+R` | workspace |
+| `workspace.splitDown` | Chia đôi panel xuống dưới | `Ctrl+Alt+D` | workspace |
+| `workspace.balanceSplits` | Cân bằng tỉ lệ chia 50:50 | `Ctrl+Alt+0` | workspace |
+| `workspace.toggleZoom` | Phóng to / khôi phục panel | `Ctrl+Shift+Z` | workspace |
+| `workspace.toggleSync` | Bật / tắt phát phím đồng bộ | `Ctrl+Alt+S` | workspace |
+| `workspace.closePanel` | Đóng panel đang chọn | `Ctrl+Shift+W` | workspace |
+| `terminal.toggleSuggest` | Bật / tắt popup gợi ý | `Ctrl+Space` | terminal |
+| `terminal.copy` | Sao chép vùng chọn (không có vùng chọn thì không làm gì, phím không lọt vào shell) | `Ctrl+Shift+C` | terminal |
+| `terminal.paste` | Dán clipboard vào terminal (đọc qua `clipboard_read_text` ở Rust, có bracketed paste) | `Ctrl+Shift+V` | terminal |
+| `terminal.find` | Mở thanh tìm kiếm của terminal (`@xterm/addon-search`): Enter / Shift+Enter đi tới kết quả sau / trước, Esc đóng, có phân biệt hoa thường và regex | `Ctrl+Shift+F` | terminal |
+| `terminal.kill` | Mở MOD-01 để chọn Dừng mềm (SIGTERM) hoặc Cưỡng bức (SIGKILL) cho terminal đang focus | `Ctrl+Shift+X` | terminal |
+| `terminal.acceptSuggestWord` | Nhận một từ của gợi ý mờ | `Ctrl+→` | suggest |
+| `terminal.acceptSuggest` | Nhận toàn bộ gợi ý mờ | `End`, `→` | suggest (🔒) |
+| `suggest.navigate` / `suggest.accept` / `suggest.close` | Di chuyển, chọn, đóng popup gợi ý | `↑ ↓` / `Enter` / `Esc` | suggest (🔒) |
+
+* `nav.keybindings` là phím mới, mở thẳng `/settings?tab=keybindings`.
+* Menu chuột phải mặc định của webview bị chặn trên toàn ứng dụng, ở cả bản dev. Sao chép, dán và Inspect dùng các phím tắt ở trên.
+* Bảng 7.2 hiện ghi một số phím không có trong code: `Ctrl+\`, `Ctrl+Alt+←/→`, `Ctrl+Alt+M`, `Ctrl+W`, `Ctrl+R`, `Ctrl+Shift+C/V`. Bảng này cần được viết lại theo registry khi triển khai. Phím nào chưa có handler thì không đưa vào registry.
+
+##### 3.9. Trạng thái Giao diện (UI States)
+* **Không có kết quả tìm:** "Không có tác vụ nào khớp `<từ khóa>`". Kèm nút *Xóa bộ lọc*.
+* **Có xung đột:** Badge `⚠ n` trên chip lọc Xung đột. Tab "⌨ Phím Tắt" ở thanh tab Settings cũng có chấm vàng.
+* **Đang ghi phím:** Ô tìm kiếm viền màu accent, placeholder "Nhấn tổ hợp phím... (Esc để dừng)".
+* **Lưu thất bại:** Hàng quay về giá trị cũ, kèm toast lỗi theo `.settings-toast.error`.
+* **Khôi phục toàn bộ:** Mở `ConfirmDialog` (MOD-13) với nội dung "Xóa n tùy chỉnh phím tắt và quay về mặc định?".
 
 ---
 
@@ -965,6 +1166,62 @@ Thay thế triệt để các hộp thoại mặc định của trình duyệt (
 
 ---
 
+### MOD-16: Hộp Thoại Ghi Phím Tắt (Keybinding Capture Modal)
+
+#### 1. Mục đích & Vai trò
+Ghi một tổ hợp phím mới cho một tác vụ ở tab Phím Tắt (SCR-05 mục 3), kiểm tra hợp lệ và báo xung đột trước khi lưu. Modal mở khi bấm `✎`, nháy đúp vào hàng, nhấn `Enter` trên hàng, hoặc chọn "Thêm phím" (lúc đó modal thêm binding mới thay vì thay binding cũ).
+
+#### 2. Kích thước & Vị trí
+Rộng 460px, căn giữa màn hình, nền mờ. Dùng chung khung modal với MOD-14 và MOD-15.
+* **Stitch Screen Reference:** Screen ID `aa0bb46697ef4c088513deb9076db865` tại Project `14914224436748087443`.
+
+#### 3. Wireframe Chi tiết
+
+```
++------------------------------------------------------------+
+| Đổi phím tắt: Chia đôi panel sang phải                 [X] |
+| workspace.splitRight                                       |
++------------------------------------------------------------+
+|  Nhấn tổ hợp phím mong muốn, rồi nhấn Enter để lưu.        |
+|                                                            |
+|        +------------------------------------------+        |
+|        |      [Ctrl]  +  [Shift]  +  [R]          |        |  <- vùng ghi, autofocus
+|        +------------------------------------------+        |
+|                                                            |
+|  Phạm vi:  [ Workspace                    ▼ ]              |
+|                                                            |
+|  ⚠ Phím này đang được dùng bởi:                            |
+|     • Mở terminal mới — Workspace (Người dùng)             |
+|     Lưu sẽ khiến tác vụ trên không chạy bằng phím này.     |
+|                                                            |
++------------------------------------------------------------+
+|                        [ Hủy (Esc) ]   [ Lưu (Enter) ]     |
++------------------------------------------------------------+
+```
+
+#### 4. Quy tắc Tương tác
+1. **Ghi phím:**
+   * Vùng ghi nhận mọi `keydown` và hiển thị tổ hợp **mới nhất** đủ modifier + phím chính.
+   * Khi người dùng mới giữ modifier, vùng ghi hiện tạm `[Ctrl] + …`.
+   * Mọi phím bị `preventDefault`, kể cả `Ctrl+W` và `Ctrl+Q`. Dispatcher toàn cục tạm dừng trong lúc modal mở.
+   * Bỏ qua sự kiện IME (`isComposing`, `Process`, `229`).
+2. **Phím điều khiển modal:**
+   * `Enter` và `Esc` **đơn** (không kèm modifier) là Lưu và Hủy, không bị ghi thành phím tắt.
+   * Muốn gán `Ctrl+Enter` thì vẫn ghi được, vì có modifier.
+3. **Kiểm tra hợp lệ** theo SCR-05 mục 3.6, chạy lại mỗi khi phím hoặc phạm vi thay đổi:
+   * Phím bị khóa, hoặc thiếu modifier ở phạm vi `global`/`workspace`: hiện thông báo đỏ và vô hiệu nút Lưu.
+   * Phím dành cho shell: hiện cảnh báo vàng nhưng vẫn cho lưu.
+   * Có xung đột: hiện cảnh báo vàng liệt kê các tác vụ đang dùng phím đó. Vẫn cho lưu, sau đó hai hàng hiện ⚠ trong bảng.
+   * Phím trùng đúng binding hiện tại: nút Lưu đổi thành "Không đổi", và bấm sẽ chỉ đóng modal.
+4. **Phạm vi:**
+   * Mặc định lấy phạm vi của binding đang sửa.
+   * Dropdown chỉ cho các phạm vi mà tác vụ có handler, ví dụ `workspace.*` không thể chọn `explorer`.
+5. **Lưu:**
+   * Ghi override (mục 3.5) và áp dụng ngay.
+   * Đóng modal, cuộn bảng tới hàng vừa sửa và highlight hàng đó 1.5 giây.
+
+---
+
 ## 5. Quy cách Vòng đời Tab Terminal Dockview & PTY Reattach
 
 Bảng ma trận hành vi giữa tương tác giao diện và tiến trình thực thi tại Rust Backend:
@@ -1103,6 +1360,8 @@ Hệ màu tối ưu cho Dark Theme với phong cách kỹ thuật cao cấp:
 
 ### 7.2. Danh mục Phím Tắt Toàn Cục (Global Keyboard Shortcuts)
 
+> **Lưu ý:** Đây là phím **mặc định**. Người dùng có thể đổi tại SCR-05 → tab Phím Tắt (mục 3). Khi triển khai, bảng này phải khớp với registry `src/keybindings/registry.ts` (xem SCR-05 mục 3.8 về các dòng hiện không có trong code).
+
 | Phím tắt | Tác vụ (Action) | Phạm vi áp dụng |
 | :--- | :--- | :--- |
 | `Ctrl + K` / `Cmd + K` | Mở Command Palette tìm kiếm nhanh lệnh / nhóm / template | Toàn bộ ứng dụng |
@@ -1137,4 +1396,5 @@ Hệ màu tối ưu cho Dark Theme với phong cách kỹ thuật cao cấp:
 - [x] Mô hình hóa quy trình Sao lưu (VACUUM INTO) và Khôi phục 7 bước kèm Rollback an toàn.
 - [x] Thiết kế cảnh báo an toàn cho vùng tin cậy (Trusted Zone) và kiểm soát quyền đặc quyền.
 - [x] Tích hợp chuẩn thiết kế xterm.js và Dockview cho trải nghiệm PTY chân thực.
+- [ ] Trang chỉnh sửa phím tắt kiểu VS Code (SCR-05 tab Phím Tắt + MOD-16): registry + dispatcher duy nhất, chỉ lưu override vào `app_setting.keybindings`, phát hiện xung đột, bỏ qua sự kiện IME, nhãn gợi ý phím động, Xuất/Nhập JSON.
 

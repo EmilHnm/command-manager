@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="modal-backdrop" @click.self="$emit('close')">
+  <div v-if="visible" class="modal-backdrop palette-backdrop" @click.self="$emit('close')">
     <div class="palette-modal">
       <div class="palette-input-wrap">
         <Search class="palette-icon" :size="16" />
@@ -52,6 +52,7 @@ import { useGroups } from '@/composables/useGroups';
 import { useTemplates } from '@/composables/useTemplates';
 import { useRunSession } from '@/composables/useRunSession';
 import { useSuggestions } from '@/composables/useSuggestions';
+import { keyLabel } from '@/keybindings/dispatcher';
 
 const props = defineProps<{
   visible: boolean;
@@ -88,7 +89,7 @@ const paletteItems = computed(() => {
   const items: any[] = [
     {
       id: 'nav-workspace',
-      title: 'Đi đến Workspace Terminal (Ctrl+1)',
+      title: 'Đi đến Workspace Terminal ' + keyLabel('nav.workspace'),
       subtitle: 'Xem các tab PTY và bảng điều khiển phiên chạy',
       icon: Terminal,
       category: 'nav',
@@ -97,7 +98,7 @@ const paletteItems = computed(() => {
     },
     {
       id: 'nav-commands',
-      title: 'Mở Thư Viện Lệnh (Ctrl+2)',
+      title: 'Mở Thư Viện Lệnh ' + keyLabel('nav.commands'),
       subtitle: 'Quản trị và định nghĩa các lệnh CLI',
       icon: Terminal,
       category: 'nav',
@@ -106,7 +107,7 @@ const paletteItems = computed(() => {
     },
     {
       id: 'nav-templates',
-      title: 'Mở Thư Viện Mẫu Lệnh (Ctrl+6)',
+      title: 'Mở Thư Viện Mẫu Lệnh ' + keyLabel('nav.templates'),
       subtitle: 'Định nghĩa template {{param}} và preset tham số',
       icon: Puzzle,
       category: 'nav',
@@ -115,7 +116,7 @@ const paletteItems = computed(() => {
     },
     {
       id: 'nav-groups',
-      title: 'Quản Lý Nhóm Lệnh & Sequencer (Ctrl+3)',
+      title: 'Quản Lý Nhóm Lệnh & Sequencer ' + keyLabel('nav.groups'),
       subtitle: 'Sắp xếp thứ tự chạy và cờ autostart',
       icon: Folder,
       category: 'nav',
@@ -124,7 +125,7 @@ const paletteItems = computed(() => {
     },
     {
       id: 'nav-history',
-      title: 'Lịch Sử Phiên Chạy (Ctrl+4)',
+      title: 'Lịch Sử Phiên Chạy ' + keyLabel('nav.history'),
       subtitle: 'Xem lại các run_session và mã thoát exit code',
       icon: History,
       category: 'nav',
@@ -133,12 +134,21 @@ const paletteItems = computed(() => {
     },
     {
       id: 'nav-settings',
-      title: 'Cài Đặt & Sao Lưu DB (Ctrl+5)',
+      title: 'Cài Đặt & Sao Lưu DB ' + keyLabel('nav.settings'),
       subtitle: 'Xuất/nhập SQLite, cấu hình timeout dừng mềm',
       icon: Settings,
       category: 'nav',
       categoryLabel: 'Cài đặt',
       action: () => router.push('/settings'),
+    },
+    {
+      id: 'nav-keybindings',
+      title: 'Mở Cài Đặt Phím Tắt ' + keyLabel('nav.keybindings'),
+      subtitle: 'Xem và tùy biến các phím tắt trong ứng dụng',
+      icon: Settings,
+      category: 'nav',
+      categoryLabel: 'Cài đặt',
+      action: () => router.push('/settings?tab=keybindings'),
     },
   ];
 
