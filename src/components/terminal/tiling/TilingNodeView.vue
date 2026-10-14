@@ -167,6 +167,7 @@ const emit = defineEmits<{
     targetPanelId: string;
     tabId: string;
     targetIndex?: number;
+    splitPosition?: 'right' | 'bottom';
   }): void;
 }>();
 

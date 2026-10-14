@@ -13,6 +13,7 @@ export interface TabPointerDragState {
   fromPanelId: string;
   hoverPanelId: string | null;
   hoverSlotIndex: number | null;
+  dropPosition: 'right' | 'bottom' | null;
   startX: number;
   startY: number;
   currentX: number;
@@ -29,6 +30,7 @@ export type TabTransferCallback = (payload: {
   targetPanelId: string;
   tabId: string;
   targetIndex?: number;
+  splitPosition?: 'right' | 'bottom';
 }) => void;
 
 export type TabSelectCallback = (panelId: string, tabId: string) => void;
@@ -75,30 +77,54 @@ const onPointerMove = (e: PointerEvent) => {
     const targetPanelId = targetPanelEl.dataset.tilingPanelId;
     dragState.value.hoverPanelId = targetPanelId;
 
-    const tabsListEl = targetPanelEl.querySelector('.panel-tabs-list') as HTMLElement | null;
-    if (tabsListEl) {
-      const tabElements = Array.from(
-        tabsListEl.querySelectorAll<HTMLElement>('.panel-tab-item:not(.tab-placeholder)')
-      ).filter(el => el.dataset.tabId !== dragState.value?.tab.id);
+    const panelRect = targetPanelEl.getBoundingClientRect();
+    const relX = (e.clientX - panelRect.left) / panelRect.width;
+    const relY = (e.clientY - panelRect.top) / panelRect.height;
 
-      const midpoints = tabElements.map(el => {
-        const r = el.getBoundingClientRect();
-        return r.left + r.width / 2;
-      });
+    // Check if pointer is in 1/5 right (relX >= 0.8) or 1/5 bottom (relY >= 0.8)
+    const inRightZone = relX >= 0.8;
+    const inBottomZone = relY >= 0.8;
 
-      let slot = 0;
-      for (let i = 0; i < midpoints.length; i++) {
-        if (e.clientX > midpoints[i]) {
-          slot = i + 1;
-        }
-      }
-      dragState.value.hoverSlotIndex = slot;
-    } else {
+    if (inRightZone && inBottomZone) {
+      const distToRight = Math.max(0, 1 - relX);
+      const distToBottom = Math.max(0, 1 - relY);
+      dragState.value.dropPosition = distToRight <= distToBottom ? 'right' : 'bottom';
       dragState.value.hoverSlotIndex = null;
+    } else if (inRightZone) {
+      dragState.value.dropPosition = 'right';
+      dragState.value.hoverSlotIndex = null;
+    } else if (inBottomZone) {
+      dragState.value.dropPosition = 'bottom';
+      dragState.value.hoverSlotIndex = null;
+    } else {
+      dragState.value.dropPosition = null;
+
+      const tabsListEl = targetPanelEl.querySelector('.panel-tabs-list') as HTMLElement | null;
+      if (tabsListEl) {
+        const tabElements = Array.from(
+          tabsListEl.querySelectorAll<HTMLElement>('.panel-tab-item:not(.tab-placeholder)')
+        ).filter(el => el.dataset.tabId !== dragState.value?.tab.id);
+
+        const midpoints = tabElements.map(el => {
+          const r = el.getBoundingClientRect();
+          return r.left + r.width / 2;
+        });
+
+        let slot = 0;
+        for (let i = 0; i < midpoints.length; i++) {
+          if (e.clientX > midpoints[i]) {
+            slot = i + 1;
+          }
+        }
+        dragState.value.hoverSlotIndex = slot;
+      } else {
+        dragState.value.hoverSlotIndex = null;
+      }
     }
   } else {
     dragState.value.hoverPanelId = null;
     dragState.value.hoverSlotIndex = null;
+    dragState.value.dropPosition = null;
   }
 };
 
@@ -109,7 +135,7 @@ const onPointerUp = (_e: PointerEvent) => {
 
   if (!dragState.value) return;
 
-  const { isDragging, fromPanelId, hoverPanelId, tab, hoverSlotIndex } = dragState.value;
+  const { isDragging, fromPanelId, hoverPanelId, tab, hoverSlotIndex, dropPosition } = dragState.value;
   dragState.value = null;
 
   if (isDragging) {
@@ -119,6 +145,7 @@ const onPointerUp = (_e: PointerEvent) => {
         targetPanelId: hoverPanelId,
         tabId: tab.id,
         targetIndex: hoverSlotIndex ?? undefined,
+        splitPosition: dropPosition ?? undefined,
       });
     }
   } else {
@@ -151,6 +178,7 @@ export function useTabDrag() {
       fromPanelId,
       hoverPanelId: fromPanelId,
       hoverSlotIndex: null,
+      dropPosition: null,
       startX: e.clientX,
       startY: e.clientY,
       currentX: e.clientX,

@@ -182,7 +182,7 @@
 
     <!-- Windows Bar: Multiple Windows / Workspaces Tabs -->
     <div class="workspace-windows-bar">
-      <div class="windows-tab-list custom-scrollbar">
+      <div class="windows-tab-list custom-scrollbar" @wheel="handleTabsWheel">
         <div
           v-for="win in windows"
           :key="win.id"
@@ -994,6 +994,93 @@ const handleClosePanel = (panelId: string) => {
   }
 };
 
+const handleTabsWheel = (e: WheelEvent) => {
+  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+    return;
+  }
+  const el = e.currentTarget as HTMLElement | null;
+  if (!el) return;
+  const delta = e.deltaMode === 1 ? e.deltaY * 24 : e.deltaY;
+  if (delta !== 0) {
+    el.scrollLeft += delta;
+    if (e.cancelable) {
+      e.preventDefault();
+    }
+  }
+};
+
+/**
+ * Splits target panel and moves the dragged tab into the newly created panel.
+ */
+const handleSplitPanelWithTab = async (
+  sourcePanelId: string,
+  targetPanelId: string,
+  tabId: string,
+  orientation: 'horizontal' | 'vertical'
+) => {
+  if (!currentTilingRoot.value) return;
+
+  const targetPanel = findPanelById(currentTilingRoot.value, targetPanelId);
+  const sourcePanel = findPanelById(currentTilingRoot.value, sourcePanelId);
+  if (!targetPanel || !sourcePanel) return;
+
+  // If source and target are the same panel, and this tab is the ONLY tab in it:
+  // To avoid leaving an empty panel or immediately collapsing it,
+  // spawn a new replacement terminal in the source panel first!
+  if (sourcePanelId === targetPanelId && sourcePanel.tabIds.length <= 1) {
+    const currentTab = tabsMap.value.get(tabId);
+    const cwd = currentTab?.cwd;
+    try {
+      await refreshProcesses();
+      const terminal = await ipcClient.openTerminal(cwd);
+      await refreshProcesses();
+
+      const replacementTab: OpenTabItem = {
+        id: `terminal-${terminal.commandId}-${Date.now()}`,
+        commandId: terminal.commandId,
+        name: 'Terminal',
+        runEventId: terminal.runEventId,
+        shellKind: terminal.shellKind,
+        historyLevel: terminal.historyLevel,
+        isManual: true,
+        cwd,
+      };
+      allOpenTabs.value.push(replacementTab);
+      currentTilingRoot.value = addTabToPanel(
+        currentTilingRoot.value,
+        sourcePanelId,
+        replacementTab.id
+      );
+    } catch (err) {
+      console.error('[DockHost] Không thể tạo terminal thay thế khi split tab duy nhất:', err);
+      return;
+    }
+  }
+
+  // 1. Remove the tab from the source panel
+  const { newTree } = removeTabFromPanel(currentTilingRoot.value, tabId);
+  if (!newTree) return;
+
+  // 2. Create the new panel containing only the dragged tab
+  const newPanel = createPanel([tabId], tabId);
+
+  // 3. Split the target panel in the tree, attaching the new panel
+  const updatedTree = splitPanelInTree(newTree, targetPanelId, orientation, newPanel);
+  currentTilingRoot.value = updatedTree;
+
+  // 4. Activate the newly created panel and the transferred tab
+  currentActivePanelId.value = newPanel.id;
+  activeTabId.value = tabId;
+
+  // 5. If zoomed panel was closed or affected, reset zoom
+  currentZoomedPanelId.value = null;
+
+  nextTick(() => {
+    const pane = xtermPaneRefs.get(tabId);
+    pane?.focusTerminal();
+  });
+};
+
 /**
  * Handles dragging and dropping a tab between different panels or reordering within the same panel.
  */
@@ -1002,7 +1089,18 @@ const handleTransferTab = (payload: {
   targetPanelId: string;
   tabId: string;
   targetIndex?: number;
+  splitPosition?: 'right' | 'bottom';
 }) => {
+  if (payload.splitPosition) {
+    void handleSplitPanelWithTab(
+      payload.sourcePanelId,
+      payload.targetPanelId,
+      payload.tabId,
+      payload.splitPosition === 'right' ? 'horizontal' : 'vertical'
+    );
+    return;
+  }
+
   if (!currentTilingRoot.value) return;
 
   const newTree = transferTabBetweenPanels(

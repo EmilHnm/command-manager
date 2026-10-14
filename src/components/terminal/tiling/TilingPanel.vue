@@ -13,7 +13,7 @@
     <!-- Panel Header: Tab Strip on the Left, Panel Controls on the Right -->
     <div class="panel-headerbar" :class="{ 'header-active': isActive }">
       <!-- Left: Tabs List + New Tab Button -->
-      <div class="panel-tabs-scroll custom-scrollbar">
+      <div class="panel-tabs-scroll custom-scrollbar" @wheel="handleTabsWheel">
         <div class="panel-tabs-list">
           <template v-for="item in displayedTabs" :key="item.key">
             <!-- Tab Placeholder (shows insertion target while dragging) -->
@@ -187,6 +187,22 @@
           <span class="drop-overlay-text">Thả để chuyển Tab vào Panel này</span>
         </div>
       </div>
+
+      <!-- Split Overlay when dragging tab to 1/5 right -->
+      <div v-if="isSplitRightTarget" class="panel-split-overlay split-overlay-right">
+        <div class="split-overlay-card">
+          <Columns2 :size="24" class="split-overlay-icon" />
+          <span class="split-overlay-text">Chia đôi sang phải</span>
+        </div>
+      </div>
+
+      <!-- Split Overlay when dragging tab to 1/5 bottom -->
+      <div v-if="isSplitBottomTarget" class="panel-split-overlay split-overlay-bottom">
+        <div class="split-overlay-card">
+          <Rows2 :size="24" class="split-overlay-icon" />
+          <span class="split-overlay-text">Chia đôi xuống dưới</span>
+        </div>
+      </div>
       <template v-for="tabId in panel.tabIds" :key="tabId">
         <div
           v-show="tabId === panel.activeTabId"
@@ -313,6 +329,7 @@ const emit = defineEmits<{
     targetPanelId: string;
     tabId: string;
     targetIndex?: number;
+    splitPosition?: 'right' | 'bottom';
   }): void;
 }>();
 
@@ -450,11 +467,43 @@ const handleTabPointerDown = (e: PointerEvent, tabId: string) => {
   );
 };
 
+const handleTabsWheel = (e: WheelEvent) => {
+  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+    return;
+  }
+  const el = e.currentTarget as HTMLElement | null;
+  if (!el) return;
+  const delta = e.deltaMode === 1 ? e.deltaY * 24 : e.deltaY;
+  if (delta !== 0) {
+    el.scrollLeft += delta;
+    if (e.cancelable) {
+      e.preventDefault();
+    }
+  }
+};
+
+const isSplitRightTarget = computed(() => {
+  return Boolean(
+    dragState.value?.isDragging &&
+    dragState.value?.hoverPanelId === props.panel.id &&
+    dragState.value?.dropPosition === 'right'
+  );
+});
+
+const isSplitBottomTarget = computed(() => {
+  return Boolean(
+    dragState.value?.isDragging &&
+    dragState.value?.hoverPanelId === props.panel.id &&
+    dragState.value?.dropPosition === 'bottom'
+  );
+});
+
 const isPanelDropTarget = computed(() => {
   return Boolean(
     dragState.value?.isDragging &&
     dragState.value?.hoverPanelId === props.panel.id &&
-    dragState.value?.fromPanelId !== props.panel.id
+    dragState.value?.fromPanelId !== props.panel.id &&
+    !dragState.value?.dropPosition
   );
 });
 
@@ -487,7 +536,7 @@ const displayedTabs = computed<DisplayedTabItem[]>(() => {
 
   const remainingTabIds = currentTabIds.filter(id => id !== draggedTabId);
 
-  if (!isHoveredPanel) {
+  if (!isHoveredPanel || dragState.value.dropPosition) {
     const tabsToRender = isSourcePanel ? remainingTabIds : currentTabIds;
     return tabsToRender.map(id => ({
       key: id,
@@ -942,5 +991,59 @@ defineExpose({
   to {
     transform: translateY(-4px);
   }
+}
+
+/* Split Drop Overlay on Panel Viewport (Right 50% or Bottom 50%) */
+.panel-split-overlay {
+  position: absolute;
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  animation: fadeInDropOverlay 0.15s ease-out;
+  backdrop-filter: blur(3px);
+}
+
+.panel-split-overlay.split-overlay-right {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 50%;
+  background: color-mix(in srgb, var(--primary, #744791) 20%, transparent);
+  border-left: 2px dashed var(--primary-accent, #e4b5ff);
+}
+
+.panel-split-overlay.split-overlay-bottom {
+  top: 50%;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: color-mix(in srgb, var(--primary, #744791) 20%, transparent);
+  border-top: 2px dashed var(--primary-accent, #e4b5ff);
+}
+
+.split-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 20px;
+  border-radius: 8px;
+  background: var(--surface-card, #1a1e2bf2);
+  border: 1px solid var(--primary-accent, #e4b5ff);
+  box-shadow: var(--shadow-lg, 0 10px 15px -3px #0000008c);
+}
+
+.split-overlay-icon {
+  color: var(--primary-accent, #e4b5ff);
+  animation: bounceDropIcon 1s infinite alternate ease-in-out;
+}
+
+.split-overlay-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f1f5f9;
+  letter-spacing: 0.3px;
 }
 </style>
