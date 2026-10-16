@@ -28,6 +28,12 @@ impl IpcPipe {
     pub fn push(&self, run_event_id: String, bytes: Vec<u8>) {
         let _ = self.tx.blocking_send((run_event_id, bytes));
     }
+
+    /// [`IpcPipe::push`] for async readers (SSH channels): waits for room
+    /// without blocking the runtime thread.
+    pub async fn send(&self, run_event_id: String, bytes: Vec<u8>) {
+        let _ = self.tx.send((run_event_id, bytes)).await;
+    }
 }
 
 /// Queued chunks merged per terminal, keeping each terminal's byte order.

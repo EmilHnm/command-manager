@@ -5,3 +5,6 @@ pub const INSTANCE: &str = "app://instance";
 pub const HISTORY_ADDED: &str = "history://added";
 pub const CLOSE_REQUESTED: &str = "app://close-requested";
 pub const COMMANDS_CHANGED: &str = "commands://changed";
+pub const SSH_STATUS: &str = "ssh://status";
+pub const SSH_HOSTKEY_REQUEST: &str = "ssh://hostkey-request";
+pub const SSH_AUTH_REQUEST: &str = "ssh://auth-request";

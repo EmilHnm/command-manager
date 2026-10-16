@@ -83,6 +83,7 @@ pub fn shutdown_all_with_control(
 ) {
     let forcing = force.load(Ordering::SeqCst);
     progress(if forcing { 0 } else { timeout.as_secs() }, forcing);
+    mgr.stop_remote(forcing);
     for pid in mgr.pids() {
         if force.load(Ordering::SeqCst) {
             break;
@@ -105,6 +106,7 @@ pub fn shutdown_all_with_control(
         std::thread::sleep(Duration::from_millis(100));
     }
     progress(0, true);
+    mgr.stop_remote(true);
     for pid in mgr.pids() {
         kill_pid(pid);
     }

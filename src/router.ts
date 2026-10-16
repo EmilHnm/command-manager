@@ -32,6 +32,12 @@ const router = createRouter({
       meta: { title: 'Thư Viện Mẫu Lệnh - Command Manager' },
     },
     {
+      path: '/servers',
+      name: 'servers',
+      component: () => import('@/views/servers/SshServersView.vue'),
+      meta: { title: 'Máy Chủ SSH - Command Manager' },
+    },
+    {
       path: '/groups',
       name: 'groups',
       component: GroupsView,

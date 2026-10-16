@@ -34,7 +34,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
-import { Terminal, Zap, Puzzle, Layers, History, Settings } from 'lucide-vue-next';
+import { Terminal, Zap, Puzzle, Globe, Layers, History, Settings } from 'lucide-vue-next';
 import { useRunSession } from '@/composables/useRunSession';
 
 const route = useRoute();
@@ -68,6 +68,12 @@ const navItems = computed(() => [
     label: 'Thư viện Mẫu Lệnh (SCR-06)',
     shortLabel: 'Template',
     icon: Puzzle,
+  },
+  {
+    path: '/servers',
+    label: 'Máy chủ SSH & Quản lý Kết nối (SCR-07)',
+    shortLabel: 'Máy chủ',
+    icon: Globe,
   },
   {
     path: '/groups',

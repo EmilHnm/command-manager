@@ -49,6 +49,7 @@ Cấu trúc cửa sổ tuân thủ mô hình chuẩn của một Desktop IDE/Wor
   * 🖥️ **Dashboard & Workspace (`/workspace`):** Không gian quản lý phiên chạy và Tabs Terminal.
   * ⚡ **Command Library (`/commands`):** Thư viện lệnh, cấu hình argv/shell.
   * 🧩 **Command Templates (`/templates`):** Thư viện mẫu lệnh có tham số (`{{param}}`), tạo preset và xem trước lệnh.
+  * 🌐 **SSH Servers (`/servers`):** Danh sách máy chủ SSH, mở terminal từ xa và trình quản lý file trên server (SCR-07, SCR-08).
   * 📁 **Groups & Workflows (`/groups`):** Quản lý nhóm lệnh và thứ tự thực thi (`execution_order`).
   * 📜 **Session History & Logs (`/history`):** Lịch sử các `run_session` và sự kiện `run_event`.
   * ⚙️ **Settings & Backup (`/settings`):** Cấu hình Autostart, dung lượng Buffer, Sao lưu & Khôi phục SQLite.
@@ -68,6 +69,7 @@ graph TD
     MainShell --> SCR01[SCR-01: Terminal Workspace & Execution Dashboard]
     MainShell --> SCR02[SCR-02: Command Library - Danh mục Lệnh]
     MainShell --> SCR06[SCR-06: Command Templates - Thư viện Mẫu Lệnh]
+    MainShell --> SCR07[SCR-07: SSH Servers - Quản lý Máy chủ SSH]
     MainShell --> SCR03[SCR-03: Command Groups & Workflow Sequencer]
     MainShell --> SCR04[SCR-04: Session History & Run Event Logs]
     MainShell --> SCR05[SCR-05: System Settings, Backup & Restore]
@@ -75,6 +77,12 @@ graph TD
     SCR01 --> MOD01[MOD-01: Quick Process Stop / Terminate Modal]
     SCR01 --> DOCK01[Dockview Tab Controller & Reattach Buffer View]
     DOCK01 --> MOD14[MOD-14: Rename Manual Terminal Modal - Hộp thoại Đổi tên Terminal Thủ công]
+    DOCK01 --> SCR08[SCR-08: Files Pane & Kéo Thả Truyền File]
+    SCR08 --> MOD20[MOD-20: Transfer Conflict - Xung đột Tệp]
+    SCR08 --> XFER[Ngăn Transfers - Hàng đợi Truyền File]
+
+    SCR07 --> MOD17[MOD-17: SSH Host Editor - Thêm/Sửa Máy chủ]
+    SCR07 --> DOCK01
 
     SCR02 --> MOD02[MOD-02: Command Editor Modal - Create/Edit is_shell]
     SCR02 --> MOD03[MOD-03: Delete Command Confirmation Modal]
@@ -96,6 +104,8 @@ graph TD
     App --> MOD12[MOD-12: Single-Instance Alert Toast]
     App --> MOD13[MOD-13: Privileged Action & Confirmation Modal - ConfirmDialog]
     App --> MOD15[MOD-15: Interactive Prompt & Quick Input Modal - PromptDialog]
+    App --> MOD18[MOD-18: SSH Host Key Verification]
+    App --> MOD19[MOD-19: SSH Auth Prompt - Mật khẩu / Passphrase / OTP]
 ```
 
 ---
@@ -569,11 +579,12 @@ Danh sách phạm vi cố định. Phạm vi hẹp hơn được ưu tiên khi t
 | `workspace` | Workspace | Route hiện tại là `/workspace` | 2 |
 | `explorer` | Cây nhóm lệnh | Focus nằm trong `GroupTree` | 3 |
 | `terminal` | Terminal đang gõ | Focus nằm trong một `XtermPane` | 3 |
+| `files` | Trình quản lý file | Focus nằm trong một Files pane (SCR-08), không tính ô đổi tên / ô đường dẫn đang sửa | 3 |
 | `suggest` | Terminal có gợi ý | Focus ở terminal **và** đang có popup hoặc ghost text | 4 (Cố định) |
 | `modal` | Modal | Đang có modal hoặc dialog mở | 5 (Cố định) |
 
 * Khi đang có modal, mọi binding ngoài phạm vi `modal` đều bị bỏ qua, tức là không thể tạo terminal mới khi dialog đang mở.
-* Phạm vi `terminal` cũng thỏa `workspace`, vì terminal chỉ nằm trong workspace. Vì vậy `Ctrl+N` khai báo ở `workspace` vẫn chạy khi đang gõ trong terminal, giống hành vi hiện tại.
+* Phạm vi `terminal` và `files` cũng thỏa `workspace`, vì cả hai chỉ nằm trong workspace. Vì vậy `Ctrl+N` khai báo ở `workspace` vẫn chạy khi đang gõ trong terminal, giống hành vi hiện tại.
 
 ##### 3.5. Lưu trữ & Định dạng
 
@@ -587,7 +598,7 @@ Danh sách phạm vi cố định. Phạm vi hẹp hơn được ưu tiên khi t
   ]
   ```
   * `command` có tiền tố `-` nghĩa là gỡ binding mặc định trùng `key` (và trùng `when` nếu có ghi).
-  * `key` là chuỗi chữ thường, các modifier theo thứ tự cố định `mod+ctrl+shift+alt+meta+<phím>`. Alias `mod` nghĩa là `ctrl` trên Linux/Windows và `meta` trên macOS, nên không được dùng chung với `ctrl` hoặc `meta`. Mục thêm phím bắt buộc có `when` (`global`/`workspace`/`explorer`/`terminal`/`suggest`); mục gỡ (`-id`) có thể bỏ `when`. Chord sau này sẽ ghi dạng `"ctrl+k ctrl+s"`, cách nhau bằng dấu cách.
+  * `key` là chuỗi chữ thường, các modifier theo thứ tự cố định `mod+ctrl+shift+alt+meta+<phím>`. Alias `mod` nghĩa là `ctrl` trên Linux/Windows và `meta` trên macOS, nên không được dùng chung với `ctrl` hoặc `meta`. Mục thêm phím bắt buộc có `when` (`global`/`workspace`/`explorer`/`terminal`/`files`/`suggest`); mục gỡ (`-id`) có thể bỏ `when`. Chord sau này sẽ ghi dạng `"ctrl+k ctrl+s"`, cách nhau bằng dấu cách.
 * **Nhập JSON:**
   * Kiểm tra schema. Bỏ qua mục có `command` không tồn tại và báo số mục bị bỏ qua.
   * Không ghi đè ngay: hiện bảng xem trước "thêm X / gỡ Y / xung đột Z", người dùng xác nhận rồi mới lưu.
@@ -660,6 +671,10 @@ Danh sách phạm vi cố định. Phạm vi hẹp hơn được ưu tiên khi t
 | `nav.settings` | Đi đến Cài đặt | `Ctrl+5`, `Ctrl+Shift+S` | global |
 | `nav.templates` | Đi đến Mẫu lệnh | `Ctrl+6` | global |
 | `nav.keybindings` | Mở trang Phím tắt | `Ctrl+Shift+K` | global |
+| `nav.servers` | Đi đến Máy chủ SSH (SCR-07) — *mới* | `Ctrl+7` | global |
+| `ssh.connect` | Mở Command Palette lọc sẵn danh sách host SSH — *mới* | `Ctrl+Shift+H` | global |
+| `transfers.toggle` | Mở / đóng ngăn Transfers — *mới* | `Ctrl+Shift+J` | global |
+| `files.open` | Mở Files pane theo ngữ cảnh: terminal SSH → host đó tại cwd; terminal local → local tại cwd; còn lại → home local — *mới* | `Ctrl+Shift+E` | workspace |
 | `explorer.focusFilter` | Focus ô lọc nhóm & lệnh | `Ctrl+F` | explorer |
 | `workspace.newTerminal` | Mở terminal mới (cùng cwd) | `Ctrl+N` | workspace |
 | `workspace.newWindow` | Mở Cửa Sổ workspace mới | `Ctrl+Shift+T` | workspace |
@@ -674,11 +689,19 @@ Danh sách phạm vi cố định. Phạm vi hẹp hơn được ưu tiên khi t
 | `terminal.paste` | Dán clipboard vào terminal (đọc qua `clipboard_read_text` ở Rust, có bracketed paste) | `Ctrl+Shift+V` | terminal |
 | `terminal.find` | Mở thanh tìm kiếm của terminal (`@xterm/addon-search`): Enter / Shift+Enter đi tới kết quả sau / trước, Esc đóng, có phân biệt hoa thường và regex | `Ctrl+Shift+F` | terminal |
 | `terminal.kill` | Mở MOD-01 để chọn Dừng mềm (SIGTERM) hoặc Cưỡng bức (SIGKILL) cho terminal đang focus | `Ctrl+Shift+X` | terminal |
+| `files.rename` | Đổi tên mục đang chọn — *mới* | `F2` | files |
+| `files.refresh` | Làm mới danh sách — *mới* | `F5` | files |
+| `files.newFolder` | Tạo thư mục — *mới* | `Ctrl+Shift+N` | files |
+| `files.toggleHidden` | Hiện / ẩn file ẩn — *mới* | `Ctrl+H` | files |
+| `files.selectAll` | Chọn tất cả — *mới* | `Ctrl+A` | files |
+| `files.copy` / `files.paste` | Sao chép mục đang chọn / dán vào thư mục đang mở (bộ nhớ tạm nội bộ, tạo job truyền) — *mới* | `Ctrl+C` / `Ctrl+V` | files |
+| `files.open` / `files.up` / `files.delete` | Mở mục / lên thư mục cha / xóa (qua MOD-13) — *mới* | `Enter` / `Backspace` / `Delete` | files (🔒) |
 | `terminal.acceptSuggestWord` | Nhận một từ của gợi ý mờ | `Ctrl+→` | suggest |
 | `terminal.acceptSuggest` | Nhận toàn bộ gợi ý mờ | `End`, `→` | suggest (🔒) |
 | `suggest.navigate` / `suggest.accept` / `suggest.close` | Di chuyển, chọn, đóng popup gợi ý | `↑ ↓` / `Enter` / `Esc` | suggest (🔒) |
 
 * `nav.keybindings` là phím mới, mở thẳng `/settings?tab=keybindings`.
+* Các dòng *mới* thuộc SCR-07/SCR-08, chỉ thêm vào registry khi có handler. `Enter`/`Backspace`/`Delete` trong Files pane là phím cố định (🔒) vì không có modifier (mục 3.6). Backend phải thêm `files` vào `SCOPES` trong `src-tauri/src/keybindings.rs`.
 * Menu chuột phải mặc định của webview bị chặn trên toàn ứng dụng, ở cả bản dev. Sao chép, dán và Inspect dùng các phím tắt ở trên.
 * Bảng 7.2 hiện ghi một số phím không có trong code: `Ctrl+\`, `Ctrl+Alt+←/→`, `Ctrl+Alt+M`, `Ctrl+W`, `Ctrl+R`, `Ctrl+Shift+C/V`. Bảng này cần được viết lại theo registry khi triển khai. Phím nào chưa có handler thì không đưa vào registry.
 
@@ -742,6 +765,319 @@ Quản lý các mẫu lệnh tái sử dụng chứa các tham số linh hoạt 
 * **Empty State:** Chưa tạo template nào: Hiển thị hình minh họa mẫu lệnh, thông điệp *"Chưa có Template nào. Tạo mẫu lệnh đầu tiên để tự động hóa công việc lặp đi lặp lại với tham số động"*.
 * **Validation Warning State:** Khi template string chứa placeholder chưa được khai báo loại param trong bảng: Hiển thị badge cảnh báo màu vàng `⚠️ 1 placeholder chưa khai báo` cạnh tên template.
 
+
+---
+
+### Màn hình 7: SCR-07 — Quản lý Máy chủ SSH (SSH Hosts)
+
+#### 1. Mục đích & Vai trò
+Lưu danh sách máy chủ SSH (host profile) để mở terminal từ xa và duyệt file trên server chỉ bằng một cú bấm. Route `/servers`, biểu tượng 🌐 trên Activity Bar, nằm sau 🧩 Templates. Terminal SSH chạy trong Workspace (SCR-01) như mọi terminal khác, nên hưởng sẵn tiling, đổi tên, tìm kiếm, copy/paste và reattach buffer.
+* **Stitch Screen Reference:** Screen ID `aa57f380bdf34671ad2bc10f3036aede` tại Project `14914224436748087443`.
+
+#### 2. Quyết định Kỹ thuật (chốt trước khi triển khai)
+
+| Vấn đề | Lựa chọn | Lý do |
+| :--- | :--- | :--- |
+| Thư viện SSH | **`russh` + `russh-sftp`** (Rust thuần, chạy trên tokio sẵn có của Tauri) | Terminal và SFTP dùng **chung một kết nối** nên chỉ xác thực một lần; chạy giống nhau trên Linux/Windows/macOS; không phụ thuộc OpenSSH cài trên máy hay libssh2/OpenSSL. |
+| Thoát hiểm cho cấu hình lạ | Cờ profile **"Dùng OpenSSH hệ thống"**: chạy `ssh <alias>` trong PTY local như một terminal thường | Bao được `ProxyCommand`, `Match`, thẻ bảo mật FIDO… mà parser riêng không đọc. Đổi lại profile này **không có Files pane** (ẩn nút 📁). |
+| Mật khẩu & passphrase | Người dùng chọn qua checkbox **"Lưu mật khẩu"** và nơi lưu: **OS keyring** (crate `keyring`: Secret Service / Windows Credential Manager / macOS Keychain, khuyến nghị) hoặc **SQLite của app** (bảng `ssh_secret`, mã hóa AES-256-GCM). Không chọn lưu thì hỏi lại mỗi lần kết nối. | Keyring an toàn hơn nhưng không phải máy nào cũng có (vd. Linux không chạy Secret Service); SQLite luôn dùng được. Không bao giờ ghi mật khẩu vào log hay trả về frontend. |
+| Host key | TOFU: đọc `~/.ssh/known_hosts` (chỉ đọc) + `known_hosts` riêng trong `app_data_dir` (đọc/ghi) | Khóa lạ → MOD-18 hỏi. Khóa **đã đổi** → chặn cứng, không có nút "kết nối tiếp". |
+| Phạm vi đọc `~/.ssh/config` | Chỉ dùng khi **Nhập**: `Host`, `HostName`, `Port`, `User`, `IdentityFile`, `ProxyJump` (1 cấp) | Profile sau khi nhập là bản sao độc lập; sửa config sau đó không tự đồng bộ. |
+| Thứ tự xác thực (chế độ `Tự động`) | agent → khóa trong profile → `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa` → keyboard-interactive / mật khẩu | Giống OpenSSH. Agent: Unix socket `SSH_AUTH_SOCK`; Windows named pipe `\\.\pipe\openssh-ssh-agent` (cần kiểm chứng hỗ trợ của russh khi triển khai). |
+
+**Mô hình kết nối:**
+* Một `SshConnection` cho mỗi host, đếm tham chiếu theo số channel đang mở (mỗi terminal là 1 channel `session` + `pty-req`; Files pane dùng 1 channel `sftp` chung cho cả host).
+* Hết channel → giữ kết nối thêm 60 giây rồi đóng, để mở lại tab không phải xác thực lại.
+* Keepalive mỗi 30 giây; 3 lần không phản hồi → trạng thái `Mất kết nối`.
+* Vòng đời trạng thái: `Đang kết nối → Kiểm tra host key → Xác thực → Sẵn sàng → Mất kết nối`.
+
+**Ghép vào hạ tầng PTY hiện có:**
+* Tách trait `TerminalIo { write, resize, clone_reader }`. `PtySession` (local) và `SshChannelIo` (remote) cùng triển khai trait này.
+* Nhờ đó ring buffer, backpressure, `pty_reattach`, `pty_write`, `pty_resize` dùng lại nguyên vẹn. `run_event_id` của terminal SSH có tiền tố `ssh:<uuid>`.
+* Không tiêm shell integration lên server. Nếu shell phía server tự phát OSC 7 hoặc OSC 633 `P;Cwd` thì app vẫn đọc để biết cwd; không có thì cwd = `null`.
+* Không ghi lịch sử lệnh của terminal SSH và tắt gợi ý (đúng nguyên tắc plan.md: không thấy marker thì không đoán).
+
+#### 3. Wireframe Chi tiết
+
+```
++----------------------------------------------------------------------------------------------------+
+| 🌐 Máy chủ SSH                    [🔍 Lọc tên / host / tag...]   [⇩ Nhập ~/.ssh/config] [+ Thêm]   |
++----------------------------------------------------------------------------------------------------+
+| ▌ TÊN               | ĐỊA CHỈ                       | XÁC THỰC   | TAG          | LẦN CUỐI   |        |
+|----------------------------------------------------------------------------------------------------|
+| ▌ prod-api          | deploy@10.0.4.12:22           | 🔑 Khóa    | prod         | 2 giờ trước| [⌨][📁][⋯] |
+| ▌ prod-db  ● 2 tab  | postgres@10.0.4.20:22  ⤳ bastion | 🔐 Agent | prod, db     | Đang mở    | [⌨][📁][⋯] |
+| ▌ bastion           | emil@bastion.example.com:2222 | 🔐 Agent   | prod         | Hôm qua    | [⌨][📁][⋯] |
+| ▌ raspberry         | pi@192.168.1.40:22            | •••• Mật khẩu | home     | 5 ngày     | [⌨][📁][⋯] |
+| ▌ legacy-box  ⚙     | legacy (OpenSSH hệ thống)     | —          | old          | Chưa       | [⌨]    [⋯] |
++----------------------------------------------------------------------------------------------------+
+| 5 máy chủ · 1 đang kết nối (2 terminal, 1 SFTP) · known_hosts: 14 khóa                              |
++----------------------------------------------------------------------------------------------------+
+```
+
+* `▌` đầu hàng là **màu nhận diện** của host. Màu này lặp lại ở viền trái tab và header pane, để không gõ nhầm vào máy prod.
+* `● 2 tab`: số terminal SSH đang mở tới host. `⤳ bastion`: đi qua jump host. `⚙`: profile dùng OpenSSH hệ thống.
+* `[⌨]` mở terminal SSH vào khung đang focus của Workspace (chuyển sang `/workspace`). `[📁]` mở Files pane của host ở thư mục mặc định.
+* `[⋯]` (menu của app, không phải menu chuột phải của webview): Sửa · Nhân bản · Kiểm tra kết nối · Sao chép lệnh `ssh …` · Quên mật khẩu đã lưu · Xóa.
+
+#### 4. Quy tắc Tương tác
+1. **Mở nhanh khi không ở `/servers`:**
+   * Command Palette (`Ctrl+K`) tìm được host theo tên/tag, có tiền tố hiển thị `🌐`. `Enter` mở terminal, `Ctrl+Enter` mở Files pane.
+   * Phím `ssh.connect` (`Ctrl+Shift+H`) mở Palette đã lọc sẵn chỉ còn host.
+   * Menu `+` trên tab strip của panel có thêm mục "Terminal SSH…" và "Trình quản lý file".
+2. **Nháy đúp hàng** = `[⌨]`. `Enter` trên hàng đang chọn cũng vậy.
+3. **Xóa host:**
+   * Dùng MOD-13 (ConfirmDialog). Nội dung nêu số tab đang mở; xóa sẽ ngắt các tab đó.
+   * Xóa luôn mật khẩu đã lưu (keyring hoặc `ssh_secret`), **giữ** khóa trong `known_hosts` (khóa thuộc về máy, không thuộc profile).
+4. **Nhập `~/.ssh/config`:**
+   * Hiện danh sách `Host` đọc được, kèm ô chọn. Alias có ký tự đại diện (`*`, `?`) bị bỏ qua.
+   * Alias đã có trong danh sách bị đánh dấu "Đã có" và mặc định không chọn.
+   * Chỉ thị không hỗ trợ (`ProxyCommand`, `Match`, `LocalForward`…) hiện cảnh báo vàng ở từng hàng, kèm gợi ý bật "Dùng OpenSSH hệ thống".
+5. **Kiểm tra kết nối:** chạy đủ các bước (host key → xác thực → mở SFTP) và hiện kết quả từng bước ✓/✗ ngay dưới hàng. Không mở terminal.
+6. **Sao lưu (SCR-05):**
+   * Bảng `ssh_host` và `ssh_secret` đi theo bản sao lưu, nhưng `ssh_secret` chỉ là bản mã. Khóa giải mã `secret.key` **không** nằm trong bản sao lưu.
+   * Khôi phục trên cùng máy: mật khẩu dùng được ngay. Khôi phục sang máy khác (hoặc đã mất `secret.key`): không giải mã được → coi như chưa lưu, MOD-19 hỏi lại kèm ghi chú "Mật khẩu đã lưu không đọc được trên máy này".
+   * Mật khẩu trong keyring không đi theo bản sao lưu.
+
+#### 5. Terminal SSH trong Workspace (bổ sung SCR-01)
+
+```
+| ▌[●] prod-api · deploy@10.0.4.12 · ~/app  [📁] [◫][⬒][🗖][✕] |   <- header pane: màu host + user@host + cwd (nếu server báo)
+|--------------------------------------------------------------|
+| deploy@prod-api:~/app$ systemctl status api                  |
+| ● api.service - API                                          |
+|                                                              |
+| ┌──────────────────────────────────────────────────────────┐ |
+| │ ⚠ Mất kết nối tới prod-api (14:22:08) · Thử lại sau 4s   │ |   <- banner phủ đáy terminal, không xóa output cũ
+| │                      [Kết nối lại ngay]  [Đóng tab]      │ |
+| └──────────────────────────────────────────────────────────┘ |
+```
+
+* **Tab:** biểu tượng 🌐 thay cho ⚡, viền trái mang màu host, tooltip `deploy@10.0.4.12:22 · ed25519 SHA256:…`.
+* **Trong lúc kết nối:** terminal in dòng mờ `Đang kết nối deploy@10.0.4.12…`, `Xác thực bằng khóa ~/.ssh/id_ed25519…`. Hỏi mật khẩu/OTP thì dùng MOD-19, không gõ vào terminal.
+* **Mất kết nối:**
+  * Tự thử lại 3 lần (2s, 4s, 8s), sau đó dừng và chờ người dùng bấm.
+  * Kết nối lại mở **shell mới**: chương trình chạy dở trên server không quay lại được.
+  * Output cũ được giữ, chèn dòng ngăn cách `──── kết nối lại 14:23:10 ────`.
+* **Dừng (`terminal.kill`, MOD-01)** đổi nhãn cho phù hợp:
+  * **Đóng phiên:** gửi EOF rồi đóng channel; shell ở xa thoát bình thường.
+  * **Ngắt ngay:** đóng channel lập tức.
+  * Cả hai **không** ảnh hưởng các tab khác dùng chung kết nối.
+* **Đóng tab ≠ đóng phiên:** giữ đúng nguyên tắc 1.1.3. Channel vẫn sống và buffer vẫn nhận dữ liệu; mở lại từ Palette/SCR-07 thì reattach.
+* **Thoát app:** MOD-09 đóng mọi channel và kết nối SSH trong cùng `shutdown_timeout_secs`.
+* **Nút `[📁]` trên header:** mở Files pane của cùng host tại cwd hiện tại. Không biết cwd thì mở thư mục mặc định của profile, không có nữa thì mở home.
+
+#### 6. Dữ liệu & IPC
+
+**Migration `011_ssh_hosts.sql`:**
+
+```sql
+CREATE TABLE ssh_host (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  host TEXT NOT NULL,
+  port INTEGER NOT NULL DEFAULT 22 CHECK (port BETWEEN 1 AND 65535),
+  username TEXT NOT NULL,
+  auth_method TEXT NOT NULL DEFAULT 'auto' CHECK (auth_method IN ('auto', 'agent', 'key', 'password')),
+  key_path TEXT,
+  jump_host_id TEXT REFERENCES ssh_host(id) ON DELETE SET NULL,
+  use_system_ssh INTEGER NOT NULL DEFAULT 0 CHECK (use_system_ssh IN (0, 1)),
+  agent_forwarding INTEGER NOT NULL DEFAULT 0 CHECK (agent_forwarding IN (0, 1)),
+  default_dir TEXT,
+  secret_store TEXT NOT NULL DEFAULT 'none' CHECK (secret_store IN ('none', 'keyring', 'sqlite')),
+  color TEXT,
+  tags TEXT NOT NULL DEFAULT '',          -- phân tách bằng dấu phẩy
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  last_connected_at TEXT
+);
+```
+
+**Lưu mật khẩu trong SQLite** (cùng migration 011):
+
+```sql
+CREATE TABLE ssh_secret (
+  host_id TEXT NOT NULL REFERENCES ssh_host(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('password', 'passphrase')),
+  nonce BLOB NOT NULL,                    -- 12 byte ngẫu nhiên, mới cho mỗi lần ghi
+  ciphertext BLOB NOT NULL,               -- AES-256-GCM, AAD = host_id || kind
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (host_id, kind)
+);
+```
+
+* Khóa mã hóa: 32 byte ngẫu nhiên trong `<app_data_dir>/secret.key`, tạo ở lần lưu đầu tiên, quyền `0600` (Windows: ACL chỉ user hiện tại). File này không nằm trong DB nên không theo bản sao lưu.
+* Mức bảo vệ cần nói rõ: chống lộ khi **chỉ** file DB hoặc bản sao lưu bị lấy đi. Ai đọc được cả thư mục dữ liệu app của user trên máy này vẫn giải mã được. Đó là lý do keyring vẫn là lựa chọn khuyến nghị.
+* AAD gắn `host_id` để không chép bản mã của host này sang host khác được.
+
+**Lưu trong keyring:** service `command-manager`, account `ssh:<host_id>:password` hoặc `ssh:<host_id>:passphrase`.
+
+Cột `ssh_host.secret_store TEXT NOT NULL DEFAULT 'none' CHECK (secret_store IN ('none', 'keyring', 'sqlite'))` ghi nơi đang lưu. Đổi nơi lưu thì chuyển mật khẩu sang nơi mới rồi xóa ở nơi cũ, trong cùng một lệnh.
+
+| Lệnh IPC | Đầu vào | Kết quả / Ghi chú |
+| :--- | :--- | :--- |
+| `ssh_hosts_list` | — | `SshHost[]` kèm `open_channels` (số channel đang mở trên kết nối dùng chung) |
+| `ssh_hosts_create` | `host: SshHostInput`, `secrets?: SecretsInput` | Trả `SshHost`. Lưu mật khẩu lỗi thì không tạo host. |
+| `ssh_hosts_update` | `id`, `host`, `secrets?` | Trả `SshHost`. Bỏ `secrets` = không đụng tới mật khẩu đã lưu. |
+| `ssh_hosts_delete` | `id`, `confirmed` | Dừng các terminal SSH của host, ngắt kết nối, xóa mật khẩu đã lưu (keyring và `ssh_secret`) |
+| `ssh_secret_status` | — | `{ keyring_available }` để UI bật/tắt lựa chọn keyring |
+| `ssh_config_scan` | — | `{ path, hosts: ConfigHost[] }`; mỗi host có `unsupported[]` để hiện cảnh báo |
+| `ssh_test_connection` | `host: SshHostInput`, `host_id?`, `password?`, `passphrase?`, `private_key?` | Chạy với giá trị đang nhập (chưa lưu), xong thì ngắt. Trả `{ ok, failed_stage: 'network' \| 'host_key' \| 'auth' \| null, error }` |
+| `ssh_terminal_open` | `host_id`, `cols?`, `rows?` | `TerminalInfo` (giống `terminal_open`, `pid = 0`, `shell_kind = 'ssh'`). Host "OpenSSH hệ thống" chạy `ssh` trong PTY local. |
+| `ssh_terminal_reconnect` | `run_event_id` | Mở shell mới cho tab đang `disconnected`; output cũ giữ nguyên, có dòng ngăn cách |
+| `ssh_disconnect` | `host_id` | Đóng kết nối ngay |
+| `ssh_forget_secret` | `host_id` | Xóa mật khẩu/passphrase đã lưu |
+| `ssh_forget_host_key` | `host_id` | Xóa khóa của host trong `known_hosts` của app, trả số dòng đã xóa |
+| `ssh_hostkey_respond` | `request_id`, `trust`, `remember?` (mặc định `true`) | Trả lời MOD-18 |
+| `ssh_auth_respond` | `request_id`, `answers[]`, `store?: 'none' \| 'keyring' \| 'sqlite'` | Trả lời MOD-19; `answers` rỗng = hủy |
+
+`SecretsInput = { store, password?: { action: 'keep' } \| { action: 'set', value } \| { action: 'clear' }, passphrase?: (như password), private_key?: (như password) }`. Migration `012_ssh_private_key.sql` thêm `ssh_host.key_source` (`file` \| `content`) và cho phép `ssh_secret.kind = 'private_key'`. `store = 'none'` xóa mọi mật khẩu đã lưu của host.
+
+Sự kiện:
+* `ssh://status { host_id, state, error }`, `state` ∈ `connecting`, `verifying`, `authenticating`, `ready`, `lost`, `closed`.
+* `ssh://hostkey-request { request_id, prompt: { host_id, label, algorithm, fingerprint, changed } }`. `changed` khác `null` nghĩa là kết nối đã bị chặn, không cần trả lời.
+* `ssh://auth-request { request_id, prompt: { host_id, label, kind, name, instructions, prompts: [{ text, echo }], storable, store, error, attempt } }`.
+* Hai sự kiện request chờ tối đa 5 phút, hết giờ coi như hủy.
+* Terminal SSH dùng chung `process://status`; có thêm trạng thái `disconnected` khi mất kết nối (tab và output được giữ, gọi `ssh_terminal_reconnect` để mở lại).
+
+---
+
+### Màn hình 8: SCR-08 — Trình Quản lý File & Kéo Thả Truyền File (Files Pane + Transfers)
+
+#### 1. Mục đích & Vai trò
+Duyệt file trên máy local và trên các server SSH, rồi chuyển file giữa chúng bằng kéo thả. Files pane **không phải route riêng**: nó là một **loại tab mới** trong tiling của Workspace (SCR-01), nên đặt được cạnh terminal SSH, chia khung, kéo tab sang panel khác như terminal.
+
+* `OpenTabItem` có thêm `kind: 'terminal' | 'files'`. Tab `files` mang `location: { kind: 'local' } | { kind: 'ssh', hostId }` và `path`.
+* Layout gợi ý khi mở Files pane lần đầu cho một host: chia phải panel hiện tại thành **Local | Server**, kiểu WinSCP/FileZilla nhưng mỗi bên là một tab độc lập.
+* **Stitch Screen Reference:** Screen ID `7813737d88334282b99d4ed4d24d7cd0` tại Project `14914224436748087443`.
+
+#### 2. Wireframe Chi tiết
+
+##### 2.1. Hai Files pane cạnh nhau, đang kéo 3 file từ local lên server
+
+```
++-----------------------------------------------+------------------------------------------------+
+| [📁 Local · ~/build] [x] [+]                  | ▌[📁 prod-api · /var/www/app] [x] [+]          |
+|-----------------------------------------------+------------------------------------------------|
+| [↑] [⟳] [＋📁]  ~ / build /            [👁 ẩn] | [↑] [⟳] [＋📁]  / var / www / app /    [👁 ẩn] |  <- breadcrumb, bấm để sửa đường dẫn
+|-----------------------------------------------+------------------------------------------------|
+| TÊN ▲               KÍCH THƯỚC   SỬA ĐỔI       | TÊN ▲           KÍCH THƯỚC  SỬA ĐỔI    QUYỀN   |
+| 📁 assets                  —     14:02         | 📁 releases          —     Hôm qua   drwxr-x |
+| ▓ 📄 app.js           1.2 MB     14:05 ▓       | ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓|
+| ▓ 📄 app.js.map       3.4 MB     14:05 ▓       | ┃ 📁 public       —     3 ngày   drwxr-x     ┃|  <- thư mục đích được tô sáng
+| ▓ 📄 index.html       2.1 KB     14:05 ▓       | ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛|
+| 📄 README.md          4.0 KB     Hôm qua        | ↪ current → releases/42   —   Hôm qua  lrwxrwx |
+|                                               |  ┌───────────────────────────────────────┐     |
+|                                               |  │ 📄×3  Tải lên → prod-api:/var/www/app/ │     |  <- nhãn đi theo con trỏ
+|                                               |  │       public/   (4.7 MB) · Shift = Di chuyển│ |
+|                                               |  └───────────────────────────────────────┘     |
+|-----------------------------------------------+------------------------------------------------|
+| 4 mục · 3 đã chọn (4.7 MB)                    | 3 mục · sftp deploy@10.0.4.12 · ed25519        |
++-----------------------------------------------+------------------------------------------------+
+| ● 2 running | ⇅ 1 đang chuyển · 38% · 3.1 MB/s   | Ring Buffer: 680KB/2MB | ...                  |  <- status bar
++-----------------------------------------------------------------------------------------------+
+```
+
+##### 2.2. Ngăn Transfers (mở từ status bar `⇅` hoặc `Ctrl+Shift+J`)
+
+```
++-----------------------------------------------------------------------------------------------+
+| ⇅ TRUYỀN FILE                                   [Xóa mục đã xong] [⏸ Tạm dừng hàng đợi] [✕]   |
+|-----------------------------------------------------------------------------------------------|
+| ▾ Local ~/build → prod-api:/var/www/app/public     3 tệp · 4.7 MB      ██████░░░░ 62%  [✕]   |
+|     ✓ index.html                 2.1 KB                                  Xong                  |
+|     ⇡ app.js.map                 3.4 MB   ███████░░░ 71%  2.8 MB/s · còn 1s          [✕]       |
+|     ⇡ app.js                     1.2 MB   ██░░░░░░░░ 18%                             [✕]       |
+| ▸ prod-db:/var/backups/db.sql.gz → Local ~/Downloads     812 MB  ████████████ ✓ Xong 14:01      |
+| ▸ prod-api:/etc/nginx → staging:/etc/nginx  ⇄ qua máy này   12 tệp   ✗ 1 lỗi   [↻ Thử lại]     |
+|     ✗ nginx.conf   Permission denied (/etc/nginx/nginx.conf)                                   |
++-----------------------------------------------------------------------------------------------+
+```
+
+* Ngăn trượt lên từ status bar, cao 240px, kéo được mép trên. `Esc` đóng.
+* Mỗi lần thả là **một job**; mở job (`▾`) để thấy từng tệp. Job xong được giữ tới khi bấm "Xóa mục đã xong" hoặc tắt app (không lưu DB).
+* Thông báo toast khi job xong lúc ngăn đang đóng: "Đã tải lên 3 tệp tới prod-api" hoặc "1 tệp lỗi, xem ⇅".
+
+#### 3. Nguồn kéo & Đích thả
+
+| Kéo từ | Thả vào | Kết quả |
+| :--- | :--- | :--- |
+| Files pane (local) | Files pane (server) | **Tải lên** |
+| Files pane (server) | Files pane (local) | **Tải xuống** |
+| Files pane (server A) | Files pane (server B) | **Chuyển server → server**, stream qua máy này (không ghi tạm ra đĩa). Nhãn kéo ghi rõ `⇄ qua máy này`. |
+| Files pane (server A) | Files pane (cùng server A, thư mục khác) | Copy/di chuyển phía server bằng SFTP (`rename` khi di chuyển, copy thì stream lại qua máy này). |
+| Files pane (local) | Files pane (local) | Copy/di chuyển local. |
+| Trình quản lý file của OS (Nautilus, Explorer, Finder) | Files pane server / local | Tải lên / copy local. |
+| OS hoặc Files pane local | **Terminal SSH** | Tải lên vào **cwd của terminal** (chỉ khi server báo cwd), xong thì chèn đường dẫn ở xa đã quote vào dòng lệnh. Không biết cwd → hỏi bằng MOD-15 (PromptDialog), điền sẵn thư mục mặc định của host. |
+| Files pane server A | Terminal SSH cùng server A | **Không truyền**, chỉ chèn đường dẫn ở xa vào dòng lệnh. |
+| OS hoặc Files pane local | Terminal local | Giữ hành vi hiện tại: chèn đường dẫn (`formatDroppedPath`). |
+| Files pane server | Terminal local, hoặc kéo ra ngoài OS | **Chưa hỗ trợ** (con trỏ 🚫, nhãn giải thích). Kéo ra OS để Giai đoạn 3. |
+
+**Đích thả cụ thể trong Files pane:** thả lên **hàng thư mục** = vào thư mục đó; thả lên vùng trống = thư mục đang mở. Giữ chuột trên một hàng thư mục 800ms thì mở thư mục đó (spring-loaded) để thả sâu hơn.
+
+#### 4. Quy tắc Tương tác
+1. **Cơ chế kéo:**
+   * **Kéo trong app** (Files pane → pane/terminal) dùng pointer events như kéo tab (`useTabDrag`), **không** dùng HTML5 DnD. Lý do: trên Windows, khi `dragDropEnabled` của Tauri bật (cần để nhận file từ OS), HTML5 DnD trong webview không chạy.
+   * **Kéo từ OS vào** dùng `getCurrentWebview().onDragDropEvent()`:
+     * `over` cho vị trí con trỏ (đơn vị **physical pixel**, chia `devicePixelRatio` trước khi `document.elementFromPoint`) để tô sáng đích.
+     * `drop` cho danh sách đường dẫn tuyệt đối.
+     * Một listener duy nhất ở `AppShell`, phát cho pane nằm dưới con trỏ.
+   * Ngưỡng bắt đầu kéo: 4px. `Esc` trong lúc kéo = hủy.
+2. **Copy hay di chuyển:**
+   * Mặc định **copy**. Giữ `Shift` khi thả = **di chuyển**; nhãn kéo đổi ngay "Di chuyển".
+   * Di chuyển giữa hai nơi khác nhau = copy toàn bộ thành công rồi mới xóa nguồn. Có tệp lỗi thì không xóa nguồn của tệp đó.
+   * Kéo từ OS luôn là copy (không xóa file của người dùng ngoài app).
+3. **Thả nhiều/thư mục lớn:** job bắt đầu bằng pha "Đang quét… 1.204 tệp · 380 MB" rồi mới truyền, để thanh tiến trình có tổng dung lượng thật.
+4. **Xung đột tên:** tệp đích đã tồn tại thì mở MOD-20 cho tệp đầu tiên, có lựa chọn áp dụng cho các xung đột còn lại. Các tệp không xung đột vẫn chạy tiếp trong lúc chờ.
+5. **Thao tác trong Files pane:**
+   * Chọn: click, `Ctrl+click`, `Shift+click`, `Ctrl+A`, kéo khung chọn từ vùng trống.
+   * Mở: nháy đúp/`Enter` vào thư mục; `Backspace` hoặc `[↑]` lên thư mục cha.
+   * Nháy đúp vào **tệp** local thì mở bằng ứng dụng mặc định của OS. Tệp trên server thì không làm gì ở Giai đoạn 2 (tải về & mở để sau).
+   * `F2` đổi tên tại chỗ, `Ctrl+Shift+N` tạo thư mục, `F5` làm mới, `Ctrl+H` bật/tắt file ẩn.
+   * `Delete` mở MOD-13. Xóa **thư mục trên server** là xóa đệ quy, không có thùng rác, nên dùng kiểu nguy hiểm (nút đỏ, phải gõ tên thư mục khi xóa > 1 thư mục).
+   * `Ctrl+C` / `Ctrl+V` giữa hai Files pane = kéo thả bằng bàn phím (bộ nhớ tạm nội bộ của app, không dùng clipboard OS).
+6. **Menu chuột phải:** menu gốc của webview vẫn bị chặn toàn app. Files pane vẽ **menu riêng** (cùng mục với nút `⋯` của hàng): Mở · Tải xuống tới… · Tải lên vào đây… · Đổi tên · Xóa · Sao chép đường dẫn · Mở terminal tại đây.
+7. **Hiển thị:**
+   * Thư mục lên trước, sắp theo tên tự nhiên (`file2` < `file10`). Bấm tiêu đề cột để đổi kiểu sắp.
+   * Danh sách > 500 mục dùng cuộn ảo.
+   * Symlink hiện `↪ tên → đích`. Nháy đúp vào symlink thư mục thì đi theo. Khi **truyền**, symlink không được đi theo: tệp được bỏ qua, có cảnh báo trong job.
+   * Tên không phải UTF-8 trên server hiện bằng ký tự thay thế `�` và khóa đổi tên.
+   * Lỗi quyền (`Permission denied`) hiện ngay trong vùng danh sách với nút "Thử lại", không mở modal.
+8. **Mất kết nối giữa chừng:** Files pane hiện banner giống terminal SSH. Job đang chạy chuyển "Tạm dừng – mất kết nối", tự tiếp tục khi kết nối lại; tệp đang ghi dở thì làm lại từ đầu.
+
+#### 5. Động cơ Truyền File (Rust)
+* **Hàng đợi:** tối đa 3 tệp song song mỗi kết nối, 6 tệp toàn app. Đọc/ghi theo khối 256 KB, pipeline nhiều request SFTP để không bị giới hạn bởi độ trễ mạng.
+* **Ghi an toàn:** ghi vào `<tên>.cm-part` cạnh đích, xong mới `rename` đè. Hủy hoặc lỗi → xóa `.cm-part`. Tệp đích cũ không bao giờ bị hỏng dở.
+* **Giữ thuộc tính:** giữ thời gian sửa đổi. Quyền (`chmod`) chỉ giữ khi truyền giữa hai server, hoặc lên server từ local Unix. Từ Windows lên thì dùng mặc định của server.
+* **Sự kiện tiến trình:** gộp và phát tối đa 4 lần/giây mỗi job, để không đè lên kênh `pty-data`.
+* **Tắt app khi đang truyền:** MOD-09 liệt kê job đang chạy. Chờ thì chờ tới hết `shutdown_timeout_secs`; thoát ngay thì hủy và dọn `.cm-part`.
+
+| Lệnh IPC | Đầu vào | Kết quả / Ghi chú |
+| :--- | :--- | :--- |
+| `fs_list` | `location`, `path`, `show_hidden` | `FsEntry[] { name, kind, size, mtime, mode?, link_target? }` |
+| `fs_home` | `location` | Thư mục home (local hoặc trên server) |
+| `fs_mkdir` / `fs_rename` | `location`, đường dẫn | — |
+| `fs_delete` | `location`, `paths[]`, `confirmed` | Đệ quy với thư mục |
+| `fs_open_local` | `path` | Mở bằng ứng dụng mặc định của OS |
+| `transfer_start` | `sources: {location, path}[]`, `dest: {location, path}`, `mode: 'copy' \| 'move'` | `job_id` |
+| `transfer_resolve` | `job_id`, `item_id`, `action`, `apply_to_rest` | Trả lời MOD-20 |
+| `transfer_cancel` / `transfer_retry` | `job_id`, `item_id?` | Cả job hoặc từng tệp |
+| `transfer_list` / `transfer_clear_finished` | — | — |
+
+Sự kiện: `transfer-progress`, `transfer-conflict`, `transfer-done`.
+
+**Bảo vệ đường dẫn:**
+* Mọi đường dẫn tới IPC đều là tuyệt đối và đã chuẩn hóa ở Rust.
+* Tên tệp chứa `/`, `\0` hay đúng bằng `..` bị từ chối.
+* Không có lệnh nào ghép đường dẫn vào chuỗi shell; mọi thao tác đi qua SFTP hoặc `std::fs`.
+
+#### 6. Lộ trình Triển khai
+
+| Giai đoạn | Phạm vi | Ghi chú |
+| :--- | :--- | :--- |
+| **1. SSH terminal** | SCR-07, MOD-17/18/19, migration 011, trait `TerminalIo`, `ssh_terminal_open`, lưu mật khẩu (keyring / SQLite mã hóa), banner mất kết nối | Dùng được ngay, chưa có file. |
+| **2. Files & kéo thả** | Tab `kind: 'files'`, SCR-08, MOD-20, ngăn Transfers, `fs_*`, `transfer_*`, kéo từ OS vào, thả vào terminal SSH | Phần chính của yêu cầu kéo thả. |
+| **3. Mở rộng** | Kéo **ra** OS (`tauri-plugin-drag`, tải về thư mục tạm trước), tải về & mở tệp server, ProxyJump nhiều cấp, chạy Command/Group trên server (`command_definition.ssh_host_id`), resume tệp lớn | Đánh giá lại sau giai đoạn 2. |
 
 ---
 
@@ -1222,6 +1558,218 @@ Rộng 460px, căn giữa màn hình, nền mờ. Dùng chung khung modal với 
 
 ---
 
+### MOD-17: Modal Thêm / Sửa Máy Chủ SSH (SSH Host Editor)
+
+#### 1. Mục đích & Vai trò
+Tạo hoặc sửa một host profile ở SCR-07. Mở từ `[+ Thêm]`, `⋯ → Sửa`, `⋯ → Nhân bản` (điền sẵn, tên thêm hậu tố "(bản sao)"), hoặc từ hàng đã chọn trong màn Nhập `~/.ssh/config`.
+
+#### 2. Kích thước & Vị trí
+Rộng 560px, căn giữa, nền mờ, dùng chung khung modal với MOD-02.
+* **Stitch Screen Reference:** Screen ID `1cc2e20a0651434d8304fc6f64c6755d` tại Project `14914224436748087443`.
+
+#### 3. Wireframe Chi tiết
+
+```
++------------------------------------------------------------------+
+| Thêm máy chủ SSH                                             [X] |
++------------------------------------------------------------------+
+|  Tên hiển thị *   [ prod-api                                   ] |
+|  Máy chủ *        [ 10.0.4.12                ]  Cổng [ 22    ]   |
+|  Người dùng *     [ deploy                                     ] |
+|                                                                  |
+|  Xác thực         (•) Tự động  ( ) Agent  ( ) Khóa  ( ) Mật khẩu |
+|  Khóa riêng       [ Tệp khóa | Dán nội dung khóa ]               |  <- hiện khi Tự động / Khóa
+|  Tệp khóa         [ ~/.ssh/id_ed25519                 ] [Chọn…]  |  <- nguồn = Tệp khóa
+|  Nội dung khóa    +--------------------------------------------+ |  <- nguồn = Dán nội dung khóa
+|                   | -----BEGIN OPENSSH PRIVATE KEY-----        | |
+|                   +--------------------------------------------+ |
+|  Passphrase       [ ••••••••                              ] [👁] |  <- hiện khi Tự động / Khóa
+|  Mật khẩu         [ ••••••••                              ] [👁] |  <- hiện khi Tự động / Mật khẩu
+|                   [x] Lưu mật khẩu                               |
+|                       Nơi lưu: (•) Keyring hệ điều hành          |
+|                                ( ) Cơ sở dữ liệu của app (SQLite)|
+|                       ⓘ Mã hóa bằng khóa riêng của máy này, không |  <- hiện khi chọn SQLite
+|                         theo bản sao lưu sang máy khác.          |
+|                                                                  |
+|  Đi qua (jump)    [ — Không —                               ▼ ]  |
+|  Thư mục mặc định [ /var/www/app                               ] |
+|  Màu nhận diện    (●)(●)(●)(●)(●)(●)( ) Không                    |
+|  Tag              [ prod ×] [ api ×] [ thêm tag…   ]             |
+|                                                                  |
+|  ▸ Nâng cao                                                      |
+|     [ ] Chuyển tiếp agent (agent forwarding)                     |
+|         ⚠ Người có root trên máy này dùng được agent của bạn.    |
+|     [ ] Dùng OpenSSH hệ thống (không có trình quản lý file)      |
+|         Lệnh chạy: ssh -p 22 deploy@10.0.4.12                    |
+|     [Quên host key]  (chỉ xóa trong known_hosts của app)         |
++------------------------------------------------------------------+
+| [Kiểm tra kết nối]  ✓ Host key · ✓ Xác thực · ✓ SFTP             |
+|                                         [ Hủy ]   [ Lưu (Ctrl+Enter) ] |
++------------------------------------------------------------------+
+```
+
+#### 4. Quy tắc Tương tác
+1. **Ô bắt buộc:** Tên, Máy chủ, Người dùng.
+   * `Máy chủ` nhận hostname, IPv4 hoặc IPv6 (không cần ngoặc vuông). Dán `user@host:port` vào ô này thì tự tách sang 3 ô.
+   * Cổng 1–65535.
+   * Tên trùng host khác chỉ là cảnh báo vàng, vẫn cho lưu.
+2. **Mật khẩu:**
+   * Checkbox **"Lưu mật khẩu"** mặc định **tắt** (trừ khi dùng nội dung khóa dán vào). Tắt = không lưu ở đâu cả, mỗi lần kết nối app hỏi bằng MOD-19.
+   * Bật thì chọn nơi lưu. Mặc định là Keyring nếu khả dụng (`ssh_secret_status`); nếu không, lựa chọn Keyring bị mờ kèm chú thích "Không tìm thấy keyring trên máy này" và chọn sẵn SQLite.
+   * Ô mật khẩu chỉ gửi xuống Rust khi bấm Lưu; Rust ghi vào nơi đã chọn và **không** trả về frontend.
+   * Khi sửa host đã có mật khẩu, ô hiện `••••••••` giả. Để nguyên = giữ mật khẩu cũ; xóa trắng rồi lưu hoặc bỏ checkbox = quên mật khẩu.
+   * Đổi nơi lưu (Keyring ⇄ SQLite) với ô để nguyên: Rust chuyển mật khẩu cũ sang nơi mới, không cần nhập lại.
+   * Áp dụng tương tự cho **passphrase** của khóa.
+   * Ô mật khẩu và passphrase luôn hiện theo phương thức xác thực. Khi không lưu, giá trị chỉ dùng cho "Kiểm tra kết nối"; lúc kết nối thật, app hỏi bằng MOD-19.
+3. **Nguồn khóa riêng** (`key_source`):
+   * **Tệp khóa** (`file`): dùng `key_path`, để trống thì thử `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa`.
+   * **Dán nội dung khóa** (`content`): nội dung khóa OpenSSH/PEM được lưu như mật khẩu (`ssh_secret.kind = 'private_key'`), nên checkbox "Lưu" bị khóa ở trạng thái bật. Khóa được kiểm tra trước khi lưu; khóa có passphrase vẫn nhận, passphrase hỏi khi đăng nhập. Khóa PuTTY `.ppk` bị từ chối kèm hướng dẫn xuất sang OpenSSH.
+   * Windows Credential Manager chỉ chứa được ~2,5 KB, nên khóa RSA 4096 phải lưu trong SQLite.
+   * "Dùng OpenSSH hệ thống" chỉ đi với Tệp khóa.
+   * Chuyển về Tệp khóa thì nội dung khóa đã lưu bị xóa.
+4. **Jump host:** dropdown chỉ liệt kê host khác không dùng OpenSSH hệ thống, và loại các host sẽ tạo vòng lặp.
+5. **Kiểm tra kết nối:**
+   * Chạy với giá trị **đang nhập** (chưa lưu), kể cả mật khẩu, passphrase và nội dung khóa. Có thể mở MOD-18/MOD-19 trong lúc kiểm tra.
+   * Đang chạy thì nút đổi thành `[Hủy kiểm tra]`.
+6. **Lưu:** `Ctrl+Enter` hoặc nút Lưu. `Esc` hủy; nếu form đã sửa thì hỏi "Bỏ thay đổi?".
+
+---
+
+### MOD-18: Hộp Thoại Xác Minh Host Key (Host Key Verification)
+
+#### 1. Mục đích & Vai trò
+Chặn kết nối khi khóa của server chưa từng thấy hoặc đã thay đổi, đúng tinh thần "Vùng tin cậy" (1.1.5). Do sự kiện `ssh-hostkey-request` mở ra, ở bất kỳ màn hình nào.
+* **Stitch Screen Reference:** Screen ID `508a57936ad841b49bac016c9094a9ca` tại Project `14914224436748087443`.
+
+#### 2. Wireframe Chi tiết
+
+**a) Khóa lạ (lần đầu kết nối):**
+
+```
++------------------------------------------------------------+
+| Xác minh máy chủ mới                                   [X] |
++------------------------------------------------------------+
+|  Lần đầu kết nối tới prod-api (10.0.4.12:22).              |
+|  Hãy đối chiếu dấu vân tay với quản trị viên máy chủ:      |
+|                                                            |
+|    Loại khóa:  ED25519                                     |
+|    SHA256:     nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8 |  <- mono, chọn & copy được
+|                                                            |
+|  [x] Ghi nhớ khóa này                                      |
++------------------------------------------------------------+
+|                         [ Hủy kết nối ]   [ Tin cậy & kết nối ] |
++------------------------------------------------------------+
+```
+
+**b) Khóa đã thay đổi:**
+
+```
++------------------------------------------------------------+
+| ⛔ Khóa máy chủ đã thay đổi                            [X] |
++------------------------------------------------------------+
+|  Khóa của 10.0.4.12:22 KHÁC với khóa đã lưu.               |
+|  Có thể server vừa cài lại, hoặc có kẻ đang chặn kết nối.  |
+|                                                            |
+|    Đã lưu:  ED25519  SHA256:nThbg6kX…5SY8  (~/.ssh/known_hosts:14) |
+|    Hiện tại: ED25519 SHA256:Qm9yZWQg…bG9s                  |
+|                                                            |
+|  Kết nối đã bị hủy. Nếu chắc chắn server đã đổi khóa, xóa  |
+|  khóa cũ trong Sửa máy chủ → Nâng cao → Quên host key.     |
++------------------------------------------------------------+
+|                                               [ Đóng ]     |
++------------------------------------------------------------+
+```
+
+#### 3. Quy tắc Tương tác
+1. **Khóa lạ:**
+   * Nút mặc định (focus khi mở) là **Hủy kết nối**, không phải "Tin cậy", để `Enter` vô tình không chấp nhận khóa.
+   * Bỏ chọn "Ghi nhớ" = tin cậy cho lần này, không ghi file.
+2. **Khóa đổi:**
+   * Không có nút kết nối. "Quên host key" chỉ xóa dòng trong `known_hosts` **của app**.
+   * Nếu khóa cũ nằm trong `~/.ssh/known_hosts` thì hiện đường dẫn và số dòng để người dùng tự sửa; app không ghi vào file đó.
+3. **Nhiều yêu cầu cùng lúc** (mở nhiều tab tới cùng host): chỉ hiện một hộp; câu trả lời áp dụng cho mọi yêu cầu đang chờ của host đó.
+
+---
+
+### MOD-19: Hộp Thoại Xác Thực SSH (Password / Passphrase / OTP)
+
+#### 1. Mục đích & Vai trò
+Hỏi thông tin bí mật khi kết nối: mật khẩu, passphrase của khóa, hoặc các câu hỏi keyboard-interactive (mã OTP, 2FA). Do sự kiện `ssh-auth-request` mở ra. Mở rộng từ khung PromptDialog (MOD-15), có hỗ trợ nhiều ô.
+* **Stitch Screen Reference:** Screen ID `1a27bb7ff77b47f4815808cc4c034f15` tại Project `14914224436748087443`.
+
+#### 2. Wireframe Chi tiết
+
+```
++------------------------------------------------------------+
+| Đăng nhập deploy@prod-api                              [X] |
++------------------------------------------------------------+
+|  Máy chủ yêu cầu:                                          |
+|    Password:              [ ••••••••••              ] [👁] |
+|    Verification code:     [ 482913                  ]      |  <- echo = true thì hiện chữ
+|                                                            |
+|  [x] Lưu mật khẩu   vào: [ Keyring hệ điều hành     ▼ ]   |  <- chỉ với ô mật khẩu/passphrase
+|  ✗ Sai mật khẩu (lần 1/3)                                  |
++------------------------------------------------------------+
+|                                    [ Hủy ]   [ Đăng nhập ] |
++------------------------------------------------------------+
+```
+
+#### 3. Quy tắc Tương tác
+1. **Hiển thị nhãn:** nhãn mỗi ô lấy nguyên văn từ server (keyboard-interactive). Server gửi `echo=false` thì ô ẩn ký tự.
+2. **Lưu mật khẩu:**
+   * Checkbox và dropdown nơi lưu (Keyring / SQLite) giống MOD-17; mặc định lấy theo `secret_store` hiện tại của host, host chưa lưu thì checkbox tắt.
+   * Chỉ áp dụng cho **mật khẩu đăng nhập** và **passphrase của khóa**, không bao giờ cho OTP.
+   * Chỉ lưu sau khi xác thực **thành công**.
+3. **Sai:** hiện lỗi đỏ dưới ô, xóa ô mật khẩu và focus lại. Sau 3 lần (hoặc khi server đóng kết nối) thì đóng hộp; tab hiện banner "Xác thực thất bại" kèm `[Thử lại]`.
+4. **Hủy:** gửi `answers: []`. Kết nối dừng, tab hiện "Đã hủy đăng nhập".
+5. **Xử lý giá trị nhập:**
+   * Không dùng `v-model` lưu lâu: ô được xóa ngay khi hộp đóng.
+   * Giá trị không đi qua store/log nào của frontend.
+   * Dispatcher phím tắt đã bỏ qua phạm vi modal, nên `Ctrl+Shift+V` không dán nhầm vào terminal phía sau.
+
+---
+
+### MOD-20: Hộp Thoại Xung Đột Tệp Khi Truyền (Transfer Conflict)
+
+#### 1. Mục đích & Vai trò
+Hỏi cách xử lý khi tệp đích đã tồn tại. Do sự kiện `transfer-conflict` mở ra. Các tệp không xung đột trong cùng job vẫn chạy tiếp.
+* **Stitch Screen Reference:** Screen ID `d97ef28f285549d78f858799be271d14` tại Project `14914224436748087443`.
+
+#### 2. Wireframe Chi tiết
+
+```
++------------------------------------------------------------+
+| Tệp đã tồn tại                                         [X] |
++------------------------------------------------------------+
+|  prod-api:/var/www/app/public/app.js                       |
+|                                                            |
+|               KÍCH THƯỚC     SỬA ĐỔI                       |
+|   Mới (local)   1.2 MB       Hôm nay 14:05   ← mới hơn     |
+|   Đang có       1.1 MB       Hôm qua 09:12                 |
+|                                                            |
+|   (•) Ghi đè                                               |
+|   ( ) Ghi đè nếu tệp mới hơn                               |
+|   ( ) Bỏ qua                                               |
+|   ( ) Giữ cả hai → app (1).js                              |
+|                                                            |
+|   [x] Áp dụng cho 6 xung đột còn lại trong job này         |
++------------------------------------------------------------+
+|                          [ Hủy cả job ]   [ Tiếp tục ]     |
++------------------------------------------------------------+
+```
+
+#### 3. Quy tắc Tương tác
+1. **Lựa chọn mặc định:**
+   * Mặc định là **Ghi đè nếu tệp mới hơn** khi tệp mới có mtime lớn hơn; ngược lại là **Bỏ qua**.
+   * Lựa chọn cuối cùng của người dùng được nhớ trong phiên làm việc (không lưu DB).
+2. **Áp dụng cho các xung đột còn lại:** ô này chỉ hiện khi còn ≥ 1 xung đột khác. Bật lên thì các xung đột sau không hỏi nữa.
+3. **Xung đột kiểu khác loại** (thư mục gặp tệp cùng tên hoặc ngược lại):
+   * Chỉ cho **Bỏ qua** hoặc **Giữ cả hai**; không cho ghi đè.
+   * Thư mục gặp thư mục thì gộp, không hỏi.
+4. **Đóng hộp:** `Esc` / `[X]` = Bỏ qua tệp này (không hủy cả job).
+
+---
+
 ## 5. Quy cách Vòng đời Tab Terminal Dockview & PTY Reattach
 
 Bảng ma trận hành vi giữa tương tác giao diện và tiến trình thực thi tại Rust Backend:
@@ -1239,6 +1787,10 @@ Bảng ma trận hành vi giữa tương tác giao diện và tiến trình th�
 | **Bấm [x] Đóng thẻ Tab** | Panel tab bị destroy / unmount khỏi DOM | **TIẾN TRÌNH VẪN TIẾP TỤC CHẠY** | **BUFFER VẪN TIẾP TỤC LƯU** | Hiển thị thông báo Toast nhẹ: *"Đã ẩn tab. Lệnh vẫn chạy ngầm"*. |
 | **Mở lại lệnh từ Sidebar** | Tạo lại panel tab dockview mới | Tiến trình đang chạy được gắn lại (Reattach) | **Xả ngược (flush) 1-2MB gần nhất** lên xterm | Người dùng xem lại được toàn bộ ngữ cảnh output gần nhất. |
 | **Bấm nút [Stop Process] đỏ** | Tab giữ nguyên, hiển thị badge "Stopped" | Gửi SIGTERM / CTRL_C_EVENT; sau 5s gửi SIGKILL | Ngừng nhận stream; giữ nguyên log đã xả | Cập nhật `run_event.ended_at` và `exit_code` vào SQLite. |
+| **Mở terminal SSH (SCR-07 / Palette)** | Tạo tab 🌐 mang màu host | Mở (hoặc dùng lại) kết nối SSH của host, mở channel `session` + `pty-req` | Bắt đầu nhận stream như PTY local | `run_event_id = ssh:<uuid>`. Xác thực / host key qua MOD-18, MOD-19. |
+| **Đóng tab terminal SSH** | Tab bị unmount | **Channel vẫn mở**, shell ở xa vẫn chạy | Buffer vẫn nhận dữ liệu | Giống terminal local: mở lại thì reattach. |
+| **Mạng rớt / server reboot** | Tab giữ nguyên, hiện banner "Mất kết nối" | Kết nối đóng; tự thử lại 3 lần | Giữ log cũ; khi nối lại chèn dòng ngăn cách | Kết nối lại = shell **mới**; chương trình chạy dở ở xa không quay lại. |
+| **Dừng terminal SSH (MOD-01)** | Tab hiện "Stopped" | Đóng phiên (EOF) hoặc Ngắt ngay (đóng channel); kết nối dùng chung vẫn sống | Ngừng nhận stream | Hết channel thì kết nối tự đóng sau 60 giây. |
 | **Bấm [X] Thoát Ứng dụng** | Toàn bộ UI chuyển sang Overlay MOD-09 | Duyệt toàn bộ process list; Graceful Shutdown | Giải phóng toàn bộ bộ nhớ khi app quit | Hợp đồng vòng đời: Thoát app là dừng triệt để mọi tiến trình con. |
 
 ---
@@ -1311,6 +1863,63 @@ sequenceDiagram
     end
 ```
 
+### 6.3. Luồng Mở Terminal SSH
+
+```mermaid
+sequenceDiagram
+    actor U as Người dùng
+    participant UI as Workspace / SCR-07
+    participant R as Rust (SshManager)
+    participant S as Server
+    U->>UI: Bấm [⌨] hoặc Ctrl+Shift+H → chọn host
+    UI->>R: ssh_terminal_open(host_id, cols, rows)
+    R->>S: TCP + trao đổi khóa
+    alt Host key lạ hoặc đã đổi
+        R-->>UI: ssh-hostkey-request
+        UI->>U: MOD-18
+        U->>UI: Tin cậy / Hủy
+        UI->>R: ssh_hostkey_respond
+    end
+    R->>S: agent → khóa → mật khẩu đã lưu (keyring / SQLite)
+    alt Cần nhập mật khẩu / OTP
+        R-->>UI: ssh-auth-request
+        UI->>U: MOD-19
+        UI->>R: ssh_auth_respond(answers, remember)
+    end
+    R->>S: channel session + pty-req + shell
+    R-->>UI: TerminalInfo { run_event_id: ssh:… }
+    S-->>R: output
+    R-->>UI: pty-data (ring buffer + backpressure dùng chung)
+```
+
+### 6.4. Luồng Kéo Thả Truyền File
+
+```mermaid
+sequenceDiagram
+    actor U as Người dùng
+    participant A as Files pane nguồn / OS
+    participant B as Files pane đích / Terminal SSH
+    participant R as Rust (TransferQueue)
+    U->>A: Chọn tệp, kéo > 4px
+    A->>B: Tô sáng đích, nhãn "Tải lên → host:/path (n tệp)"
+    U->>B: Thả (Shift = di chuyển)
+    B->>R: transfer_start(sources, dest, mode)
+    R-->>B: job_id → ngăn Transfers / status bar ⇅
+    R->>R: Quét → tổng số tệp & dung lượng
+    loop Từng tệp (3 song song / kết nối)
+        alt Đích đã tồn tại
+            R-->>B: transfer-conflict → MOD-20
+            B->>R: transfer_resolve(action, apply_to_rest)
+        end
+        R->>R: Ghi .cm-part → rename
+        R-->>B: transfer-progress (≤ 4 lần/giây)
+    end
+    R-->>B: transfer-done → làm mới danh sách đích, toast
+    opt Đích là terminal SSH
+        B->>B: Chèn đường dẫn ở xa (đã quote) vào dòng lệnh
+    end
+```
+
 ---
 
 ## 7. Hệ thống Design Tokens & Hướng dẫn Triển khai Giao diện
@@ -1379,6 +1988,11 @@ Hệ màu tối ưu cho Dark Theme với phong cách kỹ thuật cao cấp:
 | `Ctrl + Shift + V` | Dán văn bản vào xterm.js (gửi stdin tới PTY) | Tab Terminal |
 | `Ctrl + R` | Khởi động lại (Restart) lệnh của tab hiện hành | Tab Terminal |
 | `Ctrl + Shift + S` | Mở màn hình Cài đặt & Sao lưu | Toàn bộ ứng dụng |
+| `Ctrl + 7` | Đi đến Máy chủ SSH (`/servers`) | Toàn bộ ứng dụng |
+| `Ctrl + Shift + H` | Kết nối SSH nhanh (Palette lọc host) | Toàn bộ ứng dụng |
+| `Ctrl + Shift + J` | Mở / đóng ngăn Transfers | Toàn bộ ứng dụng |
+| `Ctrl + Shift + E` | Mở Files pane theo ngữ cảnh (host + cwd của terminal đang focus) | Màn hình Workspace |
+| `F2` / `F5` / `Delete` / `Ctrl+Shift+N` / `Ctrl+H` | Đổi tên / Làm mới / Xóa / Tạo thư mục / Hiện file ẩn | Files pane |
 | `Esc` | Đóng bất kỳ Modal hoặc Drawer đang mở | Modal / Overlay |
 | `Nháy đúp tab (Double Click)` | Mở modal MOD-14 đổi tên terminal (chỉ áp dụng cho tab mở thủ công) | Header Tab Strip |
 
@@ -1396,5 +2010,7 @@ Hệ màu tối ưu cho Dark Theme với phong cách kỹ thuật cao cấp:
 - [x] Mô hình hóa quy trình Sao lưu (VACUUM INTO) và Khôi phục 7 bước kèm Rollback an toàn.
 - [x] Thiết kế cảnh báo an toàn cho vùng tin cậy (Trusted Zone) và kiểm soát quyền đặc quyền.
 - [x] Tích hợp chuẩn thiết kế xterm.js và Dockview cho trải nghiệm PTY chân thực.
+- [ ] SSH (SCR-07, MOD-17/18/19): host profile trong SQLite, lưu mật khẩu tùy chọn (không lưu / OS keyring / SQLite mã hóa AES-GCM với khóa không theo bản sao lưu), xác minh host key TOFU chặn cứng khi khóa đổi, terminal SSH dùng chung ring buffer / reattach / tiling với terminal local, banner mất kết nối và kết nối lại.
+- [ ] Kéo thả truyền file (SCR-08, MOD-20, ngăn Transfers): Files pane là loại tab trong tiling; kéo giữa local ↔ server ↔ server, từ OS vào, thả vào terminal SSH; ghi qua `.cm-part`; xử lý xung đột; tiến trình và hủy từng tệp.
 - [ ] Trang chỉnh sửa phím tắt kiểu VS Code (SCR-05 tab Phím Tắt + MOD-16): registry + dispatcher duy nhất, chỉ lưu override vào `app_setting.keybindings`, phát hiện xung đột, bỏ qua sự kiện IME, nhãn gợi ý phím động, Xuất/Nhập JSON.
 

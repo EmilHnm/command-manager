@@ -1,4 +1,4 @@
-use crate::pty::session::PtySession;
+use crate::pty::terminal_io::TerminalIo;
 use dashmap::{DashMap, DashSet};
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
@@ -9,7 +9,7 @@ pub struct Live {
     pub session_id: String,
     pub group_id: String,
     pub pid: u32,
-    pub pty: Arc<PtySession>,
+    pub pty: Arc<dyn TerminalIo>,
     pub shell_kind: String,
     pub history_level: u8,
 }
@@ -127,11 +127,25 @@ impl ProcessManager {
     pub fn is_empty(&self) -> bool {
         self.live.is_empty()
     }
+
+    /// Asks every terminal without a local PID (SSH) to end.
+    pub fn stop_remote(&self, force: bool) {
+        let remote: Vec<Arc<Live>> = self
+            .live
+            .iter()
+            .filter(|e| e.value().pty.is_remote())
+            .map(|e| Arc::clone(e.value()))
+            .collect();
+        for live in remote {
+            live.pty.stop(force);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pty::session::PtySession;
 
     fn live(run_event_id: &str) -> Live {
         let (pty, _slave) = PtySession::open(80, 24, 64 * 1024).expect("open pty");

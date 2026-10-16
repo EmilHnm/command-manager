@@ -45,6 +45,13 @@
                 :class="[getTabStatus(item.tabId), { active: getTabStatus(item.tabId) === 'running' }]"
               />
 
+              <!-- SSH Icon if remote terminal -->
+              <Globe
+                v-if="tabsMap.get(item.tabId)?.shellKind === 'ssh'"
+                :size="12"
+                class="tab-ssh-icon"
+              />
+
               <!-- Tab Title with tooltip -->
               <span
                 class="tab-title-text"
@@ -263,6 +270,7 @@ import {
   Plus,
   Link2,
   FolderInput,
+  Globe,
 } from 'lucide-vue-next';
 import XtermPane from '@/components/terminal/XtermPane.vue';
 import type { TilingPanelNode, SyncInputMode } from '@/types/tiling';
@@ -704,6 +712,11 @@ defineExpose({
   border-radius: 9999px;
   background-color: var(--text-muted, #64748b);
   flex-shrink: 0;
+}
+
+.tab-ssh-icon {
+  flex-shrink: 0;
+  color: var(--primary, #e4b5ff);
 }
 
 .tab-status-dot.running {

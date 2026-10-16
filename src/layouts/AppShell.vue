@@ -50,6 +50,16 @@
       :active-processes="activeProcesses"
       @force-kill="forceExitApp"
     />
+
+    <!-- Global SSH Modals (MOD-18 & MOD-19) -->
+    <HostKeyVerificationModal
+      :request="hostkeyRequest"
+      @resolved="hostkeyRequest = null"
+    />
+    <SshAuthPromptModal
+      :request="authRequest"
+      @resolved="authRequest = null"
+    />
   </div>
 </template>
 
@@ -62,6 +72,9 @@ import StatusBar from '@/components/statusbar/StatusBar.vue';
 import CommandPalette from '@/components/titlebar/CommandPalette.vue';
 import ShutdownOverlay from '@/components/dialogs/ShutdownOverlay.vue';
 import CloseConfirmModal from '@/components/dialogs/CloseConfirmModal.vue';
+import HostKeyVerificationModal from '@/components/dialogs/HostKeyVerificationModal.vue';
+import SshAuthPromptModal from '@/components/dialogs/SshAuthPromptModal.vue';
+import type { SshHostkeyRequestEvent, SshAuthRequestEvent } from '@/ipc/events';
 import { useAppLifecycle } from '@/composables/useAppLifecycle';
 import { useRunSession } from '@/composables/useRunSession';
 import { usePtyStream } from '@/composables/usePtyStream';
@@ -79,6 +92,10 @@ const { fetchKeybindings } = useKeybindings();
 const router = useRouter();
 const route = useRoute();
 const showPalette = ref(false);
+const hostkeyRequest = ref<SshHostkeyRequestEvent | null>(null);
+const authRequest = ref<SshAuthRequestEvent | null>(null);
+let unlistenHostkey: (() => void) | undefined;
+let unlistenAuth: (() => void) | undefined;
 
 watch(
   () => route.path,
@@ -146,6 +163,10 @@ useKeyCommand('nav.templates', () => {
   router.push('/templates');
 });
 
+useKeyCommand('nav.servers', () => {
+  router.push('/servers');
+});
+
 useKeyCommand('nav.keybindings', () => {
   router.push('/settings?tab=keybindings');
 });
@@ -167,9 +188,18 @@ onMounted(async () => {
   void initLifecycleListener().catch(console.error);
   initIpcListener();
   await refreshProcesses();
+
+  unlistenHostkey = await ipcClient.onSshHostkeyRequest((req) => {
+    hostkeyRequest.value = req;
+  });
+  unlistenAuth = await ipcClient.onSshAuthRequest((req) => {
+    authRequest.value = req;
+  });
 });
 
 onUnmounted(() => {
+  if (unlistenHostkey) unlistenHostkey();
+  if (unlistenAuth) unlistenAuth();
   disposeLifecycleListener();
   disposeGlobalKeybindingsListener();
   window.removeEventListener('contextmenu', blockContextMenu);

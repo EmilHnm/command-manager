@@ -18,6 +18,20 @@ import type {
 } from '@/types/models';
 import { IPC_EVENTS } from '@/ipc/events';
 import type { KeybindingOverride, ParsedKeybindings } from '@/types/keybindings';
+import type {
+  SshHost,
+  SshHostInput,
+  SshHostView,
+  SecretsInput,
+  SshTestReport,
+  ConfigScan,
+  SshSecretStore,
+} from '@/types/ssh';
+import type {
+  SshHostkeyRequestEvent,
+  SshAuthRequestEvent,
+  SshStatusEventPayload,
+} from '@/ipc/events';
 
 /** Browser preview keeps the mock store; the Tauri runtime always uses the Rust backend. */
 const USE_MOCK_IPC = false;
@@ -199,7 +213,11 @@ function backendIdFor(map: Map<number, string>, uiId: number, label: string) {
 }
 
 function isTerminalBackendId(backendId: string) {
-  return backendId.startsWith('terminal:') || backendId.startsWith('template:');
+  return (
+    backendId.startsWith('terminal:') ||
+    backendId.startsWith('template:') ||
+    backendId.startsWith('ssh:')
+  );
 }
 
 function terminalUiIdFor(backendId: string) {
@@ -304,6 +322,7 @@ function toProcessStatus(status: string): ProcessLifecycleStatus {
   if (status === 'failed') return 'failed';
   if (status === 'stopped') return 'stopped';
   if (status === 'running') return 'running';
+  if (status === 'disconnected') return 'disconnected';
   return 'idle';
 }
 
@@ -1533,6 +1552,151 @@ export const ipcClient = {
       console.warn('[IPC] open_url error, falling back to window.open:', e);
     }
     window.open(url, '_blank', 'noopener,noreferrer');
+  },
+
+  // --- SSH IPC Methods (SCR-07, MOD-17, MOD-18, MOD-19) ---
+  sshHostsList: async (): Promise<SshHostView[]> => {
+    return invokeTauri<SshHostView[]>('ssh_hosts_list');
+  },
+
+  sshHostsCreate: async (
+    host: SshHostInput,
+    secrets?: SecretsInput
+  ): Promise<SshHost> => {
+    return invokeTauri<SshHost>('ssh_hosts_create', { host, secrets });
+  },
+
+  sshHostsUpdate: async (
+    id: string,
+    host: SshHostInput,
+    secrets?: SecretsInput
+  ): Promise<SshHost> => {
+    return invokeTauri<SshHost>('ssh_hosts_update', { id, host, secrets });
+  },
+
+  sshHostsDelete: async (id: string, confirmed: boolean): Promise<void> => {
+    return invokeTauri<void>('ssh_hosts_delete', { id, confirmed });
+  },
+
+  sshConfigScan: async (): Promise<ConfigScan> => {
+    return invokeTauri<ConfigScan>('ssh_config_scan');
+  },
+
+  sshSecretStatus: async (): Promise<{ keyring_available: boolean }> => {
+    return invokeTauri<{ keyring_available: boolean }>('ssh_secret_status');
+  },
+
+  sshForgetSecret: async (hostId: string): Promise<void> => {
+    return invokeTauri<void>('ssh_forget_secret', { host_id: hostId });
+  },
+
+  sshForgetHostKey: async (hostId: string): Promise<number> => {
+    return invokeTauri<number>('ssh_forget_host_key', { host_id: hostId });
+  },
+
+  sshTestConnection: async (
+    host: SshHostInput,
+    hostId?: string,
+    password?: string,
+    passphrase?: string,
+    privateKey?: string
+  ): Promise<SshTestReport> => {
+    return invokeTauri<SshTestReport>('ssh_test_connection', {
+      host,
+      host_id: hostId || null,
+      password: password || null,
+      passphrase: passphrase || null,
+      private_key: privateKey || null,
+    });
+  },
+
+  sshTerminalOpen: async (
+    hostId: string,
+    cols?: number,
+    rows?: number
+  ): Promise<{
+    commandId: number;
+    runEventId: string;
+    pid: number;
+    shellKind: string;
+    historyLevel: number;
+  }> => {
+    const terminal = await invokeTauri<BackendTerminal>('ssh_terminal_open', {
+      host_id: hostId,
+      cols: cols || null,
+      rows: rows || null,
+    });
+    const commandId = terminalUiIdFor(terminal.command_id);
+    runEventToCommand.set(terminal.run_event_id, commandId);
+    runEventToSession.set(
+      terminal.run_event_id,
+      uiIdFor(sessionUiToBackend, sessionBackendToUi, terminal.session_id)
+    );
+    return {
+      commandId,
+      runEventId: terminal.run_event_id,
+      pid: terminal.pid,
+      shellKind: terminal.shell_kind,
+      historyLevel: terminal.history_level,
+    };
+  },
+
+  sshTerminalReconnect: async (runEventId: string): Promise<void> => {
+    return invokeTauri<void>('ssh_terminal_reconnect', {
+      run_event_id: runEventId,
+    });
+  },
+
+  sshDisconnect: async (hostId: string): Promise<void> => {
+    return invokeTauri<void>('ssh_disconnect', { host_id: hostId });
+  },
+
+  sshHostkeyRespond: async (
+    requestId: string,
+    trust: boolean,
+    remember?: boolean
+  ): Promise<void> => {
+    return invokeTauri<void>('ssh_hostkey_respond', {
+      request_id: requestId,
+      trust,
+      remember: remember !== undefined ? remember : null,
+    });
+  },
+
+  sshAuthRespond: async (
+    requestId: string,
+    answers: string[],
+    store?: SshSecretStore
+  ): Promise<void> => {
+    return invokeTauri<void>('ssh_auth_respond', {
+      request_id: requestId,
+      answers,
+      store: store || null,
+    });
+  },
+
+  onSshStatus: async (callback: (payload: SshStatusEventPayload) => void) => {
+    if (!usingNativeIpc()) return () => undefined;
+    const { listen } = await import('@tauri-apps/api/event');
+    return listen<SshStatusEventPayload>(IPC_EVENTS.SSH_STATUS, (event) => {
+      callback(event.payload);
+    });
+  },
+
+  onSshHostkeyRequest: async (callback: (payload: SshHostkeyRequestEvent) => void) => {
+    if (!usingNativeIpc()) return () => undefined;
+    const { listen } = await import('@tauri-apps/api/event');
+    return listen<SshHostkeyRequestEvent>(IPC_EVENTS.SSH_HOSTKEY_REQUEST, (event) => {
+      callback(event.payload);
+    });
+  },
+
+  onSshAuthRequest: async (callback: (payload: SshAuthRequestEvent) => void) => {
+    if (!usingNativeIpc()) return () => undefined;
+    const { listen } = await import('@tauri-apps/api/event');
+    return listen<SshAuthRequestEvent>(IPC_EVENTS.SSH_AUTH_REQUEST, (event) => {
+      callback(event.payload);
+    });
   },
 };
 

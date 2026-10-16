@@ -91,6 +91,14 @@ export const COMMAND_REGISTRY: KeyCommand[] = [
     scopes: ['global'],
   },
   {
+    id: 'nav.servers',
+    title: 'Đi đến Máy chủ SSH',
+    category: 'nav',
+    categoryTitle: 'Chuyển Màn Hình (Navigation)',
+    defaults: [{ key: 'ctrl+7', when: 'global' }],
+    scopes: ['global'],
+  },
+  {
     id: 'nav.keybindings',
     title: 'Mở trang Phím tắt',
     category: 'nav',

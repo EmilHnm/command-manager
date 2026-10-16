@@ -3,4 +3,6 @@ pub mod groups;
 pub mod history;
 pub mod runs;
 pub mod settings;
+pub mod ssh_hosts;
+pub mod ssh_keychain;
 pub mod templates;

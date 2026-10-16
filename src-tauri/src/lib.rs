@@ -7,6 +7,7 @@ pub mod keybindings;
 pub mod os_history;
 pub mod process;
 pub mod pty;
+pub mod ssh;
 pub mod template;
 #[cfg(windows)]
 pub mod windows_launch;
@@ -115,6 +116,7 @@ mod desktop {
                     processes,
                     ipc: ipc_pipe,
                 });
+                app.manage(ipc::ssh::SshState::new(app.handle(), &dir));
 
                 let handle = app.handle().clone();
                 let state = app.state::<ipc::AppState>();
@@ -196,6 +198,20 @@ mod desktop {
                 ipc::commands::app_hide,
                 ipc::commands::app_shutdown,
                 ipc::commands::open_url,
+                ipc::ssh::ssh_hosts_list,
+                ipc::ssh::ssh_hosts_create,
+                ipc::ssh::ssh_hosts_update,
+                ipc::ssh::ssh_hosts_delete,
+                ipc::ssh::ssh_config_scan,
+                ipc::ssh::ssh_secret_status,
+                ipc::ssh::ssh_forget_secret,
+                ipc::ssh::ssh_forget_host_key,
+                ipc::ssh::ssh_test_connection,
+                ipc::ssh::ssh_terminal_open,
+                ipc::ssh::ssh_terminal_reconnect,
+                ipc::ssh::ssh_disconnect,
+                ipc::ssh::ssh_hostkey_respond,
+                ipc::ssh::ssh_auth_respond,
             ])
             .run(tauri::generate_context!())
             .expect("error while running Command Manager");

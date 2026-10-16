@@ -43,7 +43,7 @@ export interface RunSession {
   status: RunSessionStatus;
 }
 
-export type ProcessLifecycleStatus = 'idle' | 'starting' | 'running' | 'completed' | 'failed' | 'stopped';
+export type ProcessLifecycleStatus = 'idle' | 'starting' | 'running' | 'completed' | 'failed' | 'stopped' | 'disconnected';
 
 export interface RunEvent {
   id: number;

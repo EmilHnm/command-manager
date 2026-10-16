@@ -1,7 +1,7 @@
 use super::schema::{
     INIT_SQL, MIGRATION_002_SQL, MIGRATION_003_SQL, MIGRATION_004_SQL, MIGRATION_005_SQL,
     MIGRATION_006_SQL, MIGRATION_007_SQL, MIGRATION_008_SQL, MIGRATION_009_SQL, MIGRATION_010_SQL,
-    SCHEMA_VERSION,
+    MIGRATION_011_SQL, MIGRATION_012_SQL, MIGRATION_013_SQL, SCHEMA_VERSION,
 };
 use crate::error::{Error, Result};
 use rusqlite::{Connection, OpenFlags};
@@ -147,6 +147,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<()> {
             8 => MIGRATION_008_SQL,
             9 => MIGRATION_009_SQL,
             10 => MIGRATION_010_SQL,
+            11 => MIGRATION_011_SQL,
+            12 => MIGRATION_012_SQL,
+            13 => MIGRATION_013_SQL,
             _ => return Err(Error::msg(format!("missing migration for schema {next}"))),
         };
         conn.execute_batch(sql)?;
@@ -365,8 +368,8 @@ mod tests {
 
         let migrated_version: i64 = conn
             .query_row("SELECT version FROM schema_version", [], |row| row.get(0))
-            .expect("schema version should be 10");
-        assert_eq!(migrated_version, 10);
+            .expect("schema version should be current");
+        assert_eq!(migrated_version, SCHEMA_VERSION);
 
         // Verify existing commands preserve all columns and quick_access defaults to 0
         let (name1, exec1, is_shell1, shell_kind1, qa1): (
@@ -424,5 +427,59 @@ mod tests {
         assert_eq!(is_shell2, 0);
         assert_eq!(shell_kind2, None);
         assert_eq!(qa2, 0);
+    }
+
+    #[test]
+    fn private_key_migration_keeps_saved_secrets() {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys");
+        conn.execute_batch(INIT_SQL).expect("init");
+        for sql in [
+            MIGRATION_002_SQL,
+            MIGRATION_003_SQL,
+            MIGRATION_004_SQL,
+            MIGRATION_005_SQL,
+            MIGRATION_006_SQL,
+            MIGRATION_007_SQL,
+            MIGRATION_008_SQL,
+            MIGRATION_009_SQL,
+            MIGRATION_010_SQL,
+            MIGRATION_011_SQL,
+        ] {
+            conn.execute_batch(sql).expect("older migration");
+        }
+        conn.execute_batch(
+            "INSERT INTO ssh_host (id, name, host, username, created_at)
+               VALUES ('h1', 'prod', '10.0.0.1', 'deploy', '0');
+             INSERT INTO ssh_secret (host_id, kind, nonce, ciphertext, updated_at)
+               VALUES ('h1', 'password', x'01', x'02', '0');",
+        )
+        .expect("v11 rows");
+
+        migrate(&conn).expect("migrate to current");
+
+        let (source, kept): (String, i64) = conn
+            .query_row(
+                "SELECT key_source, (SELECT COUNT(*) FROM ssh_secret WHERE host_id = 'h1')
+                 FROM ssh_host WHERE id = 'h1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("host");
+        assert_eq!(source, "file");
+        assert_eq!(kept, 1);
+        conn.execute(
+            "INSERT INTO ssh_secret (host_id, kind, nonce, ciphertext, updated_at)
+             VALUES ('h1', 'private_key', x'01', x'02', '0')",
+            [],
+        )
+        .expect("private_key kind is allowed");
+        conn.execute("DELETE FROM ssh_host WHERE id = 'h1'", [])
+            .expect("delete host");
+        let left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ssh_secret", [], |row| row.get(0))
+            .expect("count");
+        assert_eq!(left, 0, "secrets still cascade with their host");
     }
 }

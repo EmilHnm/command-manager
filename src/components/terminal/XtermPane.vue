@@ -47,6 +47,24 @@
     <div v-if="terminalError" role="alert" class="terminal-error">
       Không thể kết nối terminal: {{ terminalError }}
     </div>
+
+    <!-- Disconnected Banner for SSH -->
+    <div v-if="processStatus === 'disconnected'" class="terminal-banner disconnected-banner">
+      <div class="banner-left">
+        <AlertTriangle :size="13" class="banner-icon" />
+        <span class="banner-text">Mất kết nối tới máy chủ SSH</span>
+      </div>
+      <button
+        type="button"
+        class="btn-reconnect"
+        :disabled="reconnecting"
+        @click="handleReconnectSsh"
+      >
+        <LoaderCircle v-if="reconnecting" :size="11" class="spin" />
+        <RotateCw v-else :size="11" />
+        <span>{{ reconnecting ? 'Đang Nối Lại...' : 'Kết Nối Lại' }}</span>
+      </button>
+    </div>
     <!-- Terminal Viewport -->
     <div
       ref="terminalElement"
@@ -135,7 +153,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { markSessionShown } from './shownSessions';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { RefreshCw, Trash2, Square, RotateCw, LoaderCircle, ExternalLink, ChevronUp, ChevronDown, X } from 'lucide-vue-next';
+import { RefreshCw, Trash2, Square, RotateCw, LoaderCircle, ExternalLink, ChevronUp, ChevronDown, X, AlertTriangle } from 'lucide-vue-next';
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search';
 import { usePtyStream } from '@/composables/usePtyStream';
 import type { ProcessLifecycleStatus, CommandHistory } from '@/types/models';
@@ -208,6 +226,19 @@ const emit = defineEmits<{
   (e: 'phase-change', phase: 'prompt' | 'input' | 'running'): void;
   (e: 'data', data: string): void;
 }>();
+
+const reconnecting = ref(false);
+const handleReconnectSsh = async () => {
+  if (!props.runEventId) return;
+  reconnecting.value = true;
+  try {
+    await ipcClient.sshTerminalReconnect(props.runEventId);
+  } catch (e) {
+    console.error('[XtermPane] Không thể kết nối lại SSH:', e);
+  } finally {
+    reconnecting.value = false;
+  }
+};
 
 const terminalElement = ref<HTMLDivElement | null>(null);
 let term: Terminal | null = null;
@@ -1555,5 +1586,55 @@ defineExpose({
   0% { transform: translate(-50%, -100%) scale(0.96); }
   50% { transform: translate(-50%, -100%) scale(1.03); }
   100% { transform: translate(-50%, -100%) scale(1); }
+}
+
+.disconnected-banner {
+  height: 28px;
+  background-color: rgba(245, 158, 11, 0.15);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.35);
+  color: var(--status-warning, #f59e0b);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  font-size: 11.5px;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.disconnected-banner .banner-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.disconnected-banner .banner-icon {
+  flex-shrink: 0;
+}
+
+.btn-reconnect {
+  height: 20px;
+  padding: 0 8px;
+  background-color: var(--status-warning, #f59e0b);
+  color: #000000;
+  border: none;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: opacity 0.12s ease;
+}
+
+.btn-reconnect:hover {
+  opacity: 0.9;
+}
+
+.btn-reconnect:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>

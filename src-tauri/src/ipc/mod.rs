@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod events;
+pub mod ssh;
 
 use crate::db::Db;
 use crate::process::manager::ProcessManager;

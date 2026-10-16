@@ -32,7 +32,7 @@ fn require(confirmed: bool) -> Result<()> {
     }
 }
 
-fn buffer_bytes(state: &AppState) -> usize {
+pub(crate) fn buffer_bytes(state: &AppState) -> usize {
     state
         .db
         .read(|c| settings::get(c, "ring_buffer_bytes"))
@@ -828,13 +828,13 @@ pub fn process_list(state: State<AppState>) -> Result<Vec<LiveSnapshot>> {
 }
 
 #[derive(Serialize, Clone)]
-struct StatusEvent {
-    run_event_id: String,
-    command_id: String,
-    session_id: String,
-    status: String,
-    exit_code: Option<i32>,
-    pid: Option<u32>,
+pub(crate) struct StatusEvent {
+    pub(crate) run_event_id: String,
+    pub(crate) command_id: String,
+    pub(crate) session_id: String,
+    pub(crate) status: String,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) pid: Option<u32>,
 }
 
 #[derive(Serialize, Clone)]
@@ -1456,6 +1456,9 @@ pub async fn process_stop(app: AppHandle, run_event_id: String, force: Option<bo
             .processes
             .get(&run_event_id)
             .ok_or_else(|| Error::msg("process not running"))?;
+        if live.pty.is_remote() {
+            return super::ssh::stop_terminal(&app, &live, force.unwrap_or(false));
+        }
         shutdown::stop_and_wait(live.pid, force.unwrap_or(false))?;
         Ok(())
     })

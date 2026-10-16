@@ -46,13 +46,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { Search, Terminal, Folder, Settings, History, Play, Puzzle } from 'lucide-vue-next';
+import { Search, Terminal, Folder, Settings, History, Play, Puzzle, Globe } from 'lucide-vue-next';
 import { useCommands } from '@/composables/useCommands';
 import { useGroups } from '@/composables/useGroups';
 import { useTemplates } from '@/composables/useTemplates';
+import { useSshHosts } from '@/composables/useSshHosts';
 import { useRunSession } from '@/composables/useRunSession';
 import { useSuggestions } from '@/composables/useSuggestions';
 import { keyLabel } from '@/keybindings/dispatcher';
+import { ipcClient } from '@/ipc/client';
 
 const props = defineProps<{
   visible: boolean;
@@ -70,11 +72,12 @@ const selectedIndex = ref(0);
 const { commands, fetchCommands } = useCommands();
 const { groups, fetchGroups } = useGroups();
 const { templates, fetchTemplates } = useTemplates();
+const { hosts, fetchHosts } = useSshHosts();
 const { startGroupSession } = useRunSession();
 const { loadHistory, findSuggestions } = useSuggestions();
 
 onMounted(async () => {
-  await Promise.all([fetchCommands(), fetchGroups(), fetchTemplates(), loadHistory()]);
+  await Promise.all([fetchCommands(), fetchGroups(), fetchTemplates(), fetchHosts(), loadHistory()]);
 });
 
 watch(() => props.visible, (val) => {
@@ -113,6 +116,15 @@ const paletteItems = computed(() => {
       category: 'nav',
       categoryLabel: 'Chuyển màn',
       action: () => router.push('/templates'),
+    },
+    {
+      id: 'nav-servers',
+      title: 'Quản Lý Máy Chủ SSH ' + keyLabel('nav.servers'),
+      subtitle: 'Danh sách host, terminal SSH từ xa',
+      icon: Globe,
+      category: 'nav',
+      categoryLabel: 'Chuyển màn',
+      action: () => router.push('/servers'),
     },
     {
       id: 'nav-groups',
@@ -181,6 +193,32 @@ const paletteItems = computed(() => {
       categoryLabel: 'Template',
       action: () => {
         router.push({ path: '/templates', query: { openTemplateId: String(tpl.id) } });
+      },
+    });
+  });
+
+  hosts.value.forEach(h => {
+    items.push({
+      id: `ssh-host-${h.id}`,
+      title: `Kết Nối SSH: ${h.name}`,
+      subtitle: `${h.username}@${h.host}:${h.port}${h.tags.length > 0 ? ' • ' + h.tags.join(', ') : ''}`,
+      icon: Globe,
+      category: 'action',
+      categoryLabel: 'SSH',
+      action: async () => {
+        try {
+          const terminal = await ipcClient.sshTerminalOpen(h.id);
+          router.push({
+            path: '/workspace',
+            query: {
+              runEventId: terminal.runEventId,
+              runCommandId: String(terminal.commandId),
+              runCommandName: h.name,
+            },
+          });
+        } catch (e) {
+          console.error('[CommandPalette] Lỗi khi kết nối SSH:', e);
+        }
       },
     });
   });

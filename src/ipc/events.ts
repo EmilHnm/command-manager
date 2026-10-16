@@ -10,6 +10,9 @@ export const IPC_EVENTS = {
   HISTORY_ADDED: 'history://added',
   CLOSE_REQUESTED: 'app://close-requested',
   COMMANDS_CHANGED: 'commands://changed',
+  SSH_STATUS: 'ssh://status',
+  SSH_HOSTKEY_REQUEST: 'ssh://hostkey-request',
+  SSH_AUTH_REQUEST: 'ssh://auth-request',
 } as const;
 
 export interface PtyDataEvent {
@@ -39,4 +42,20 @@ export interface ShutdownProgressEvent {
 
 export interface HistoryAddedEvent {
   id: string;
+}
+
+export interface SshHostkeyRequestEvent {
+  request_id: string;
+  prompt: import('@/types/ssh').HostKeyPrompt;
+}
+
+export interface SshAuthRequestEvent {
+  request_id: string;
+  prompt: import('@/types/ssh').AuthPrompt;
+}
+
+export interface SshStatusEventPayload {
+  host_id: string;
+  state: import('@/types/ssh').SshConnState;
+  error?: string | null;
 }
