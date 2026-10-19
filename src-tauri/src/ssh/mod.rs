@@ -113,7 +113,11 @@ pub struct SecretSlot {
 #[derive(Debug, Clone, PartialEq)]
 pub enum KeyChoice {
     /// A Keychain key: its text and passphrase are the key's secrets.
-    Keychain { id: String, name: String, slot: SecretSlot },
+    Keychain {
+        id: String,
+        name: String,
+        slot: SecretSlot,
+    },
     /// Key text saved on the host itself (`key_source = 'content'`).
     HostContent,
     /// `key_path`.
@@ -172,10 +176,11 @@ pub fn resolve(conn: &Connection, host: SshHost) -> Result<Target> {
         None => host_slot.clone(),
     };
 
-    let key_id = host
-        .key_id
-        .clone()
-        .or_else(|| identity.as_ref().and_then(|identity| identity.key_id.clone()));
+    let key_id = host.key_id.clone().or_else(|| {
+        identity
+            .as_ref()
+            .and_then(|identity| identity.key_id.clone())
+    });
     let key = match key_id {
         Some(id) => {
             let key = ssh_keychain::require_key(conn, &id)?;
@@ -211,7 +216,11 @@ pub fn resolve(conn: &Connection, host: SshHost) -> Result<Target> {
 pub trait SshEnv: Send + Sync + 'static {
     fn target(&self, host_id: &str) -> Result<Target>;
     fn known_hosts(&self) -> &known_hosts::KnownHosts;
-    fn load_secret(&self, slot: &SecretSlot, kind: SecretKind) -> BoxFuture<'static, Option<String>>;
+    fn load_secret(
+        &self,
+        slot: &SecretSlot,
+        kind: SecretKind,
+    ) -> BoxFuture<'static, Option<String>>;
     /// Called after a successful login with what the user typed in MOD-19.
     /// `SecretStore::None` means "do not keep it" and forgets that kind.
     fn save_secret(

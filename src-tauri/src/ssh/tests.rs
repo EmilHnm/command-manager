@@ -9,12 +9,12 @@ use super::terminal::{SshTerminal, TerminalEnd};
 use super::*;
 use crate::db::repos::ssh_hosts;
 use crate::db::Db;
-use secret::SecretOwner;
 use crate::pty::backpressure::IpcPipe;
 use crate::pty::terminal_io::TerminalIo;
 use russh::keys::{decode_secret_key, PrivateKey};
 use russh::server::{self, Auth, Msg, Session};
 use russh::{Channel, ChannelId};
+use secret::SecretOwner;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -126,7 +126,12 @@ impl server::Handler for ShellServer {
 }
 
 async fn start_server() -> u16 {
+    start_server_with(10).await
+}
+
+async fn start_server_with(max_auth_attempts: usize) -> u16 {
     let config = Arc::new(server::Config {
+        max_auth_attempts,
         keys: vec![decode_secret_key(SERVER_KEY, None).expect("server key")],
         auth_rejection_time: Duration::from_millis(0),
         auth_rejection_time_initial: Some(Duration::from_millis(0)),
@@ -185,9 +190,7 @@ impl FakeEnv {
     }
 
     fn sql(&self, sql: &str) {
-        self.db
-            .write(|c| Ok(c.execute_batch(sql)?))
-            .expect("sql");
+        self.db.write(|c| Ok(c.execute_batch(sql)?)).expect("sql");
     }
 
     fn target(&self) -> Target {
@@ -197,14 +200,19 @@ impl FakeEnv {
 
 impl SshEnv for FakeEnv {
     fn target(&self, host_id: &str) -> Result<Target> {
-        self.db.read(|c| resolve(c, ssh_hosts::require(c, host_id)?))
+        self.db
+            .read(|c| resolve(c, ssh_hosts::require(c, host_id)?))
     }
 
     fn known_hosts(&self) -> &KnownHosts {
         &self.known
     }
 
-    fn load_secret(&self, slot: &SecretSlot, kind: SecretKind) -> BoxFuture<'static, Option<String>> {
+    fn load_secret(
+        &self,
+        slot: &SecretSlot,
+        kind: SecretKind,
+    ) -> BoxFuture<'static, Option<String>> {
         let value = self
             .secret(slot.owner.clone(), kind.as_str())
             .map(|(_, value)| value);
@@ -330,11 +338,8 @@ async fn password_login_shell_and_saved_secret() {
         vec!["hostkey", "Password:", "Password:Sai mật khẩu"]
     );
     assert_eq!(
-        env.secrets
-            .lock()
-            .unwrap()
-            .get(&("h1".to_string(), "password")),
-        Some(&(SecretStore::Sqlite, PASSWORD.to_string()))
+        env.secret(host_owner(), "password"),
+        Some((SecretStore::Sqlite, PASSWORD.to_string()))
     );
     assert_eq!(
         env.known.check("127.0.0.1", port, &server_public_key()),
@@ -379,10 +384,7 @@ async fn saved_password_logs_in_without_asking() {
     env.known
         .learn("127.0.0.1", port, &server_public_key())
         .expect("learn");
-    env.secrets.lock().unwrap().insert(
-        ("h1".into(), "password"),
-        (SecretStore::Keyring, PASSWORD.into()),
-    );
+    env.set_secret(host_owner(), "password", PASSWORD);
 
     let manager = SshManager::new(env.clone());
     manager.lease("h1").await.expect("lease");
@@ -402,7 +404,7 @@ async fn a_changed_host_key_is_refused() {
         .learn("127.0.0.1", port, &recorded)
         .expect("learn");
 
-    let error = client::connect(env.clone(), &host(port), None)
+    let error = client::connect(env.clone(), &env.target(), None)
         .await
         .err()
         .expect("refused");
@@ -415,7 +417,7 @@ async fn three_wrong_passwords_give_up() {
     let port = start_server().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env(dir.path(), port, &["a", "b", "c", "d"], true);
-    let error = client::connect(env.clone(), &host(port), None)
+    let error = client::connect(env.clone(), &env.target(), None)
         .await
         .err()
         .expect("rejected");
@@ -423,19 +425,12 @@ async fn three_wrong_passwords_give_up() {
     assert_eq!(env.passwords.lock().unwrap().len(), 1);
 }
 
-fn key_host(port: u16) -> SshHost {
-    SshHost {
-        auth_method: "key".into(),
-        key_source: "content".into(),
-        ..host(port)
+/// Switches "h1" to key login with key text saved on the host.
+fn use_host_key(env: &FakeEnv, text: Option<&str>) {
+    env.sql("UPDATE ssh_host SET auth_method = 'key', key_source = 'content' WHERE id = 'h1'");
+    if let Some(text) = text {
+        env.set_secret(host_owner(), "private_key", text);
     }
-}
-
-fn save_key(env: &FakeEnv, text: &str) {
-    env.secrets.lock().unwrap().insert(
-        ("h1".into(), "private_key"),
-        (SecretStore::Sqlite, text.into()),
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -443,8 +438,8 @@ async fn saved_key_content_logs_in() {
     let port = start_server().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env(dir.path(), port, &[], true);
-    save_key(&env, CLIENT_KEY);
-    client::connect(env.clone(), &key_host(port), None)
+    use_host_key(&env, Some(CLIENT_KEY));
+    client::connect(env.clone(), &env.target(), None)
         .await
         .map_err(|error| error.message)
         .expect("login with saved key");
@@ -456,8 +451,8 @@ async fn encrypted_key_content_asks_for_the_passphrase_and_keeps_it() {
     let port = start_server().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env(dir.path(), port, &["nope", ENCRYPTED_PASSPHRASE], true);
-    save_key(&env, ENCRYPTED_KEY);
-    client::connect(env.clone(), &key_host(port), None)
+    use_host_key(&env, Some(ENCRYPTED_KEY));
+    client::connect(env.clone(), &env.target(), None)
         .await
         .map_err(|error| error.message)
         .expect("login with encrypted key");
@@ -466,11 +461,8 @@ async fn encrypted_key_content_asks_for_the_passphrase_and_keeps_it() {
         vec!["hostkey", "Passphrase:", "Passphrase:Sai passphrase"]
     );
     assert_eq!(
-        env.secrets
-            .lock()
-            .unwrap()
-            .get(&("h1".to_string(), "passphrase")),
-        Some(&(SecretStore::Sqlite, ENCRYPTED_PASSPHRASE.to_string()))
+        env.secret(host_owner(), "passphrase"),
+        Some((SecretStore::Sqlite, ENCRYPTED_PASSPHRASE.to_string()))
     );
 }
 
@@ -479,7 +471,8 @@ async fn key_content_host_without_a_saved_key_fails_clearly() {
     let port = start_server().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env(dir.path(), port, &[], true);
-    let error = client::connect(env.clone(), &key_host(port), None)
+    use_host_key(&env, None);
+    let error = client::connect(env.clone(), &env.target(), None)
         .await
         .err()
         .expect("no key");
@@ -494,4 +487,78 @@ fn check_private_key_accepts_openssh_keys_only() {
     assert!(client::check_private_key("not a key").is_err());
     let ppk = client::check_private_key("PuTTY-User-Key-File-3: ssh-ed25519\n").unwrap_err();
     assert!(ppk.to_string().contains("PuTTY"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn identity_supplies_username_and_keeps_the_password() {
+    let port = start_server().await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env(dir.path(), port, &[PASSWORD], true);
+    // The host's own username is wrong; the identity's wins.
+    env.sql(
+        "INSERT INTO ssh_identity (id, name, username, created_at) VALUES ('i1', 'ops', 'deploy', '0');
+         UPDATE ssh_host SET username = 'nobody', identity_id = 'i1' WHERE id = 'h1';",
+    );
+    let target = env.target();
+    assert_eq!(target.username, "deploy");
+    assert_eq!(target.password.owner, SecretOwner::Identity("i1".into()));
+
+    client::connect(env.clone(), &target, None)
+        .await
+        .map_err(|error| error.message)
+        .expect("login");
+    assert_eq!(
+        env.secret(SecretOwner::Identity("i1".into()), "password"),
+        Some((SecretStore::Sqlite, PASSWORD.to_string()))
+    );
+    assert_eq!(env.secret(host_owner(), "password"), None);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keychain_key_via_identity_keeps_its_own_passphrase() {
+    let port = start_server().await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env(dir.path(), port, &[ENCRYPTED_PASSPHRASE], true);
+    env.sql(
+        "INSERT INTO ssh_key (id, name, algorithm, public_key, fingerprint, encrypted, secret_store, created_at)
+           VALUES ('k1', 'laptop', 'ssh-ed25519', 'pk', 'fp', 1, 'sqlite', '0');
+         INSERT INTO ssh_identity (id, name, username, key_id, created_at)
+           VALUES ('i1', 'ops', 'deploy', 'k1', '0');
+         UPDATE ssh_host SET auth_method = 'key', identity_id = 'i1' WHERE id = 'h1';",
+    );
+    let key = SecretOwner::Key("k1".into());
+    env.set_secret(key.clone(), "private_key", ENCRYPTED_KEY);
+
+    let target = env.target();
+    assert!(matches!(target.key, KeyChoice::Keychain { ref id, .. } if id == "k1"));
+    client::connect(env.clone(), &target, None)
+        .await
+        .map_err(|error| error.message)
+        .expect("login with keychain key");
+    assert_eq!(env.asked(), vec!["hostkey", "Passphrase:"]);
+    assert_eq!(
+        env.secret(key, "passphrase"),
+        Some((SecretStore::Sqlite, ENCRYPTED_PASSPHRASE.to_string()))
+    );
+
+    // A key set on the host itself beats the identity's key.
+    env.sql(
+        "INSERT INTO ssh_key (id, name, algorithm, public_key, fingerprint, secret_store, created_at)
+           VALUES ('k2', 'ci', 'ssh-ed25519', 'pk', 'fp', 'sqlite', '0');
+         UPDATE ssh_host SET key_id = 'k2' WHERE id = 'h1';",
+    );
+    assert!(matches!(env.target().key, KeyChoice::Keychain { ref id, .. } if id == "k2"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_server_that_hangs_up_during_login_is_reported_as_such() {
+    let port = start_server_with(1).await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env(dir.path(), port, &["wrong", "again", "more"], true);
+    let error = client::connect(env.clone(), &env.target(), None)
+        .await
+        .err()
+        .expect("dropped");
+    assert_eq!(error.stage, client::Stage::Auth);
+    assert!(error.message.contains("ngắt kết nối"), "{}", error.message);
 }

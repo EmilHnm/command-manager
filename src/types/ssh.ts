@@ -16,6 +16,10 @@ export interface SshHost {
   auth_method: SshAuthMethod;
   key_path?: string | null;
   key_source: SshKeySource;
+  /** Keychain identity: supplies username, password and maybe a key. */
+  identity_id?: string | null;
+  /** Keychain key; wins over the identity's key and over key_path. */
+  key_id?: string | null;
   jump_host_id?: string | null;
   use_system_ssh: boolean;
   agent_forwarding: boolean;
@@ -41,6 +45,8 @@ export interface SshHostInput {
   key_path?: string | null;
   /** 'content' = the pasted key saved in the vault (SecretsInput.private_key). */
   key_source?: SshKeySource;
+  identity_id?: string | null;
+  key_id?: string | null;
   jump_host_id?: string | null;
   use_system_ssh?: boolean;
   agent_forwarding?: boolean;
@@ -141,4 +147,49 @@ export interface SshStatusEvent {
   host_id: string;
   state: SshConnState;
   error?: string | null;
+}
+
+// --- Keychain (Termius style) ---
+
+export interface SshKey {
+  id: string;
+  name: string;
+  algorithm: string;
+  /** OpenSSH public key line, ready for authorized_keys. */
+  public_key: string;
+  fingerprint: string;
+  /** The stored key still needs its passphrase. */
+  encrypted: boolean;
+  secret_store: Exclude<SshSecretStore, 'none'>;
+  created_at: string;
+}
+
+export interface SshKeyView extends SshKey {
+  used_by_hosts: number;
+  used_by_identities: number;
+}
+
+export interface SshIdentity {
+  id: string;
+  name: string;
+  username: string;
+  key_id?: string | null;
+  /** 'none' = no saved password; the login dialog asks. */
+  secret_store: SshSecretStore;
+  created_at: string;
+}
+
+export interface SshIdentityView extends SshIdentity {
+  used_by_hosts: number;
+}
+
+export interface SshIdentityInput {
+  name: string;
+  username: string;
+  key_id?: string | null;
+}
+
+export interface KeychainList {
+  keys: SshKeyView[];
+  identities: SshIdentityView[];
 }

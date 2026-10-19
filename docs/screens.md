@@ -867,6 +867,37 @@ Lưu danh sách máy chủ SSH (host profile) để mở terminal từ xa và du
 * **Thoát app:** MOD-09 đóng mọi channel và kết nối SSH trong cùng `shutdown_timeout_secs`.
 * **Nút `[📁]` trên header:** mở Files pane của cùng host tại cwd hiện tại. Không biết cwd thì mở thư mục mặc định của profile, không có nữa thì mở home.
 
+#### 5b. Keychain (kiểu Termius)
+
+Tab **Keychain** trong `/servers` (`/servers?tab=keychain`) giữ các thông tin đăng nhập dùng lại cho nhiều máy chủ:
+
+* **Khóa:** dán khóa OpenSSH / PEM / PuTTY `.ppk`, chọn tệp, hoặc sinh khóa ed25519 mới.
+  * Nội dung khóa (và passphrase nếu nhập) lưu trong Keyring hoặc SQLite mã hóa, bắt buộc phải lưu.
+  * Khóa `.ppk` được chuyển sang OpenSSH khi nhập.
+  * Danh sách hiện thuật toán, fingerprint và số máy chủ / identity đang dùng. Có nút chép public key, đổi tên, xóa.
+  * Sinh khóa xong, modal hiện public key để chép vào `~/.ssh/authorized_keys`.
+* **Identity:** tên đăng nhập + mật khẩu (tùy chọn lưu) + khóa (tùy chọn). Đổi mật khẩu ở identity là mọi máy chủ dùng nó cùng đổi.
+* **Trong MOD-17:**
+  * Chọn **Identity** thì ô tên đăng nhập và mật khẩu của host bị ẩn / khóa.
+  * Mục khóa có ba nguồn: **Từ Keychain** | **Tệp khóa** | **Dán nội dung khóa**.
+  * Nút `+` cạnh hai ô chọn mở modal tạo khóa / identity và tự chọn mục vừa tạo.
+* **Thứ tự gộp khi kết nối:**
+  * Tên đăng nhập và mật khẩu lấy từ identity nếu có, không thì từ host.
+  * Khóa lấy theo thứ tự: khóa Keychain của host → khóa của identity → nội dung khóa dán trên host → `key_path` → `~/.ssh/id_*`.
+  * Passphrase đi theo khóa Keychain; với các nguồn khác thì đi theo host.
+  * Mật khẩu / passphrase nhập ở MOD-19 được lưu về đúng chủ sở hữu (host, identity hoặc khóa).
+* **Thứ tự thử khi đăng nhập:** khóa đã chọn được thử trước SSH agent. Mỗi khóa bị từ chối đều tính vào `MaxAuthTries`, nên một agent nhiều khóa có thể làm server ngắt kết nối trước khi tới khóa đúng.
+* Migration `013_ssh_keychain.sql` tạo `ssh_key`, `ssh_identity`, `ssh_keychain_secret` và thêm `ssh_host.identity_id`, `ssh_host.key_id` (`ON DELETE SET NULL`).
+
+| Lệnh IPC | Đầu vào | Kết quả / Ghi chú |
+| :--- | :--- | :--- |
+| `ssh_keychain_list` | — | `{ keys: [SshKey + used_by_hosts, used_by_identities], identities: [SshIdentity + used_by_hosts] }` |
+| `ssh_key_import` | `name`, `private_key`, `passphrase?`, `store: 'keyring' \| 'sqlite'` | Kiểm tra khóa (và passphrase nếu có) trước khi lưu |
+| `ssh_key_generate` | `name`, `store` | Khóa ed25519 mới, trả kèm `public_key` |
+| `ssh_key_rename` / `ssh_key_delete` | `id`, `name` / `id`, `confirmed` | Xóa khóa thì host / identity dùng nó mất liên kết |
+| `ssh_identity_create` / `ssh_identity_update` | `identity: { name, username, key_id? }`, `password?: SecretChange`, `store` | `store = 'none'` không lưu mật khẩu |
+| `ssh_identity_delete` | `id`, `confirmed` | — |
+
 #### 6. Dữ liệu & IPC
 
 **Migration `011_ssh_hosts.sql`:**

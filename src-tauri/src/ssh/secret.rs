@@ -15,11 +15,11 @@
 use crate::clock;
 use crate::db::repos::ssh_hosts::{self, SealedSecret};
 use crate::db::repos::ssh_keychain;
-use rusqlite::Connection;
 use crate::db::Db;
 use crate::error::{Error, Result};
 use aes_gcm::aead::{Aead, Generate, Key, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -131,7 +131,7 @@ impl SecretsInput {
 
 /// Whose secret it is. Each owner has its own rows, keyring entries and
 /// `secret_store` column.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SecretOwner {
     Host(String),
     Key(String),
@@ -246,8 +246,7 @@ impl Vault {
                 Err(error) => Err(keyring_error(error)),
             },
             SecretStore::Sqlite => {
-                let Some(sealed) = db.read(|c| owner.sealed_get(c, kind))?
-                else {
+                let Some(sealed) = db.read(|c| owner.sealed_get(c, kind))? else {
                     return Ok(None);
                 };
                 // A missing key file (backup restored on another machine)
@@ -303,9 +302,7 @@ impl Vault {
                 Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
                 Err(error) => Err(keyring_error(error)),
             },
-            SecretStore::Sqlite => {
-                db.write(|c| owner.sealed_delete(c, kind))
-            }
+            SecretStore::Sqlite => db.write(|c| owner.sealed_delete(c, kind)),
         }
     }
 
@@ -581,7 +578,13 @@ mod tests {
     fn a_lost_key_file_reads_as_nothing_saved() {
         let (dir, db, vault) = setup();
         vault
-            .put(&db, SecretStore::Sqlite, &host("h1"), SecretKind::Password, "pw")
+            .put(
+                &db,
+                SecretStore::Sqlite,
+                &host("h1"),
+                SecretKind::Password,
+                "pw",
+            )
             .expect("put");
         std::fs::remove_file(dir.path().join("secret.key")).expect("remove key");
         assert_eq!(
@@ -736,12 +739,23 @@ mod tests {
         .expect("key row");
         let key = SecretOwner::Key("h1".into());
         vault
-            .put(&db, SecretStore::Sqlite, &key, SecretKind::PrivateKey, "KEY")
+            .put(
+                &db,
+                SecretStore::Sqlite,
+                &key,
+                SecretKind::PrivateKey,
+                "KEY",
+            )
             .expect("put");
         // Same id, different owner: nothing leaks across.
         assert_eq!(
             vault
-                .get(&db, SecretStore::Sqlite, &host("h1"), SecretKind::PrivateKey)
+                .get(
+                    &db,
+                    SecretStore::Sqlite,
+                    &host("h1"),
+                    SecretKind::PrivateKey
+                )
                 .expect("get"),
             None
         );
@@ -754,7 +768,13 @@ mod tests {
         );
         // The host's sealed row cannot be read as the key's.
         vault
-            .put(&db, SecretStore::Sqlite, &host("h1"), SecretKind::Password, "pw")
+            .put(
+                &db,
+                SecretStore::Sqlite,
+                &host("h1"),
+                SecretKind::Password,
+                "pw",
+            )
             .expect("put");
         let sealed = db
             .read(|c| ssh_hosts::secret_get(c, "h1", "password"))

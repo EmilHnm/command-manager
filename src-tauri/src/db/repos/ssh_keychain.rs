@@ -103,7 +103,9 @@ pub fn rename_key(conn: &Connection, id: &str, name: &str) -> Result<()> {
 
 pub fn set_key_store(conn: &Connection, id: &str, store: &str) -> Result<()> {
     if !matches!(store, "keyring" | "sqlite") {
-        return Err(Error::msg("Khóa trong Keychain phải được lưu (Keyring hoặc SQLite)"));
+        return Err(Error::msg(
+            "Khóa trong Keychain phải được lưu (Keyring hoặc SQLite)",
+        ));
     }
     conn.execute(
         "UPDATE ssh_key SET secret_store = ?2 WHERE id = ?1",
@@ -155,7 +157,11 @@ pub fn normalize_identity(conn: &Connection, input: SshIdentityInput) -> Result<
     if username.is_empty() {
         return Err(Error::msg("Tên đăng nhập không được để trống"));
     }
-    if username.len() > 256 || username.chars().any(|c| c.is_whitespace() || c.is_control()) {
+    if username.len() > 256
+        || username
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control())
+    {
         return Err(Error::msg("Tên đăng nhập không hợp lệ"));
     }
     if name.chars().count() > 100 {
@@ -170,7 +176,11 @@ pub fn normalize_identity(conn: &Connection, input: SshIdentityInput) -> Result<
     }
     Ok(SshIdentityInput {
         // Termius shows the username when an identity has no label.
-        name: if name.is_empty() { username.clone() } else { name },
+        name: if name.is_empty() {
+            username.clone()
+        } else {
+            name
+        },
         username,
         key_id,
     })
@@ -227,14 +237,18 @@ pub fn key_usage(conn: &Connection) -> Result<HashMap<String, Usage>> {
     let mut stmt = conn.prepare(
         "SELECT key_id, COUNT(*) FROM ssh_host WHERE key_id IS NOT NULL GROUP BY key_id",
     )?;
-    for row in stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))? {
+    for row in stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })? {
         let (id, count) = row?;
         usage.entry(id).or_default().hosts = count as usize;
     }
     let mut stmt = conn.prepare(
         "SELECT key_id, COUNT(*) FROM ssh_identity WHERE key_id IS NOT NULL GROUP BY key_id",
     )?;
-    for row in stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))? {
+    for row in stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })? {
         let (id, count) = row?;
         usage.entry(id).or_default().identities = count as usize;
     }
@@ -291,7 +305,12 @@ pub fn secret_put(
     Ok(())
 }
 
-pub fn secret_delete(conn: &Connection, owner_kind: &str, owner_id: &str, kind: &str) -> Result<()> {
+pub fn secret_delete(
+    conn: &Connection,
+    owner_kind: &str,
+    owner_id: &str,
+    kind: &str,
+) -> Result<()> {
     conn.execute(
         "DELETE FROM ssh_keychain_secret WHERE owner_kind = ?1 AND owner_id = ?2 AND kind = ?3",
         [owner_kind, owner_id, kind],
@@ -375,10 +394,16 @@ mod tests {
             .is_none());
         let host = ssh_hosts::require(&conn, "h1").expect("host");
         assert_eq!(host.key_id, None);
-        assert_eq!(require_identity(&conn, "i1").expect("identity").key_id, None);
+        assert_eq!(
+            require_identity(&conn, "i1").expect("identity").key_id,
+            None
+        );
 
         delete_identity(&conn, "i1").expect("delete identity");
-        assert_eq!(ssh_hosts::require(&conn, "h1").expect("host").identity_id, None);
+        assert_eq!(
+            ssh_hosts::require(&conn, "h1").expect("host").identity_id,
+            None
+        );
     }
 
     #[test]

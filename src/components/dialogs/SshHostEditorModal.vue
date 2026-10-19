@@ -99,9 +99,19 @@
 
           <div class="form-group">
             <label class="input-label" for="ssh-username">
-              Tên Đăng Nhập (Username) <span class="required-star">*</span>
+              Tên Đăng Nhập (Username) <span v-if="!selectedIdentity" class="required-star">*</span>
+              <span v-else class="text-muted font-normal">(lấy từ identity "{{ selectedIdentity.name }}")</span>
             </label>
             <input
+              v-if="selectedIdentity"
+              id="ssh-username"
+              :value="selectedIdentity.username"
+              type="text"
+              class="form-input font-mono"
+              disabled
+            />
+            <input
+              v-else
               id="ssh-username"
               v-model="form.username"
               type="text"
@@ -115,6 +125,32 @@
         <!-- Authentication Method -->
         <div class="form-section">
           <div class="section-title">Xác Thực & Bảo Mật</div>
+
+          <div class="form-group">
+            <label class="input-label" for="ssh-identity">Identity (Keychain)</label>
+            <div class="select-with-button">
+              <select id="ssh-identity" v-model="form.identity_id" class="form-select">
+                <option :value="null">Không dùng, nhập trực tiếp</option>
+                <option v-for="identity in identities" :key="identity.id" :value="identity.id">
+                  {{ identity.name }} ({{ identity.username }})
+                </option>
+              </select>
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm"
+                title="Tạo identity mới trong Keychain"
+                @click="showIdentityModal = true"
+              >
+                <Plus :size="12" />
+                <span>Identity</span>
+              </button>
+            </div>
+            <span v-if="selectedIdentity" class="field-hint">
+              Tên đăng nhập và mật khẩu lấy từ identity{{
+                identityKeyName ? `, khóa "${identityKeyName}" cũng vậy trừ khi bạn chọn khóa khác bên dưới` : ''
+              }}.
+            </span>
+          </div>
 
           <div class="form-group">
             <label class="input-label">Phương Thức Xác Thực</label>
@@ -161,25 +197,61 @@
               <button
                 type="button"
                 class="method-tab"
-                :class="{ active: form.key_source === 'file' }"
-                @click="form.key_source = 'file'"
+                :class="{ active: keyMode === 'keychain' }"
+                :disabled="form.use_system_ssh"
+                :title="form.use_system_ssh ? 'OpenSSH hệ thống chỉ dùng được tệp khóa' : undefined"
+                @click="keyMode = 'keychain'"
+              >
+                Từ Keychain
+              </button>
+              <button
+                type="button"
+                class="method-tab"
+                :class="{ active: keyMode === 'file' }"
+                @click="keyMode = 'file'"
               >
                 Tệp khóa
               </button>
               <button
                 type="button"
                 class="method-tab"
-                :class="{ active: form.key_source === 'content' }"
+                :class="{ active: keyMode === 'content' }"
                 :disabled="form.use_system_ssh"
                 :title="form.use_system_ssh ? 'OpenSSH hệ thống chỉ dùng được tệp khóa' : undefined"
-                @click="form.key_source = 'content'"
+                @click="keyMode = 'content'"
               >
                 Dán nội dung khóa
               </button>
             </div>
           </div>
 
-          <div v-if="usesKey && form.key_source === 'file'" class="form-group">
+          <div v-if="usesKey && keyMode === 'keychain'" class="form-group">
+            <label class="input-label" for="ssh-key-id">Khóa Trong Keychain</label>
+            <div class="select-with-button">
+              <select id="ssh-key-id" v-model="selectedKeyId" class="form-select">
+                <option :value="null">
+                  {{ identityKeyName ? `Theo identity (${identityKeyName})` : '— Chọn khóa —' }}
+                </option>
+                <option v-for="key in keychainKeys" :key="key.id" :value="key.id">
+                  {{ key.name }} ({{ key.fingerprint.slice(0, 19) }}…)
+                </option>
+              </select>
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm"
+                title="Thêm khóa mới vào Keychain"
+                @click="showKeyModal = true"
+              >
+                <Plus :size="12" />
+                <span>Khóa</span>
+              </button>
+            </div>
+            <span class="field-hint">
+              Khóa và passphrase của nó được lưu trong Keychain, dùng chung cho mọi máy chủ chọn khóa này.
+            </span>
+          </div>
+
+          <div v-if="usesKey && keyMode === 'file'" class="form-group">
             <label class="input-label" for="ssh-key-path">Đường Dẫn Tệp Khóa</label>
             <input
               id="ssh-key-path"
@@ -212,8 +284,8 @@
             </span>
           </div>
 
-          <!-- Password -->
-          <div v-if="usesPassword" class="form-group">
+          <!-- Password (an identity brings its own) -->
+          <div v-if="usesPassword && !selectedIdentity" class="form-group">
             <label class="input-label" for="ssh-password">
               Mật Khẩu Đăng Nhập
               <span v-if="hasSavedSecrets" class="text-muted font-normal">
@@ -241,8 +313,8 @@
             </div>
           </div>
 
-          <!-- Key passphrase -->
-          <div v-if="usesKey" class="form-group">
+          <!-- Key passphrase (a Keychain key keeps its own) -->
+          <div v-if="usesKey && keyMode !== 'keychain'" class="form-group">
             <label class="input-label" for="ssh-passphrase">
               Passphrase Của Khóa (Nếu có)
               <span v-if="hasSavedSecrets" class="text-muted font-normal">
@@ -271,7 +343,7 @@
           </div>
 
           <!-- Where secrets are kept -->
-          <div class="secret-box">
+          <div v-if="hasHostSecrets" class="secret-box">
             <label class="checkbox-row" :class="{ disabled: usesKeyContent }">
               <input
                 v-model="rememberSecrets"
@@ -458,6 +530,12 @@
         </div>
       </div>
     </div>
+    <SshKeyModal :visible="showKeyModal" @close="showKeyModal = false" @saved="onKeyCreated" />
+    <SshIdentityModal
+      :visible="showIdentityModal"
+      @close="showIdentityModal = false"
+      @saved="onIdentityCreated"
+    />
   </div>
 </template>
 
@@ -477,8 +555,11 @@ import {
   CheckCircle2,
   KeyRound,
   Trash2,
+  Plus,
 } from 'lucide-vue-next';
 import type {
+  SshIdentity,
+  SshKey,
   SshHost,
   SshHostInput,
   SshHostView,
@@ -487,6 +568,9 @@ import type {
   SshTestReport,
 } from '@/types/ssh';
 import { useSshHosts } from '@/composables/useSshHosts';
+import { useKeychain } from '@/composables/useKeychain';
+import SshKeyModal from '@/components/keychain/SshKeyModal.vue';
+import SshIdentityModal from '@/components/keychain/SshIdentityModal.vue';
 import { ipcClient } from '@/ipc/client';
 
 const props = defineProps<{
@@ -537,6 +621,30 @@ const secretStore = ref<SshSecretStore>('keyring');
 const passwordInput = ref('');
 const passphraseInput = ref('');
 const privateKeyInput = ref('');
+
+const { keys: keychainKeys, identities, keyById, identityById, fetchKeychain } = useKeychain();
+const showKeyModal = ref(false);
+const showIdentityModal = ref(false);
+/** Where the key comes from; 'keychain' maps to form.key_id. */
+const keyMode = ref<'keychain' | 'file' | 'content'>('file');
+const selectedKeyId = ref<string | null>(null);
+
+const selectedIdentity = computed(() =>
+  form.value.identity_id ? identityById.value.get(form.value.identity_id) ?? null : null
+);
+const identityKeyName = computed(() => {
+  const keyId = selectedIdentity.value?.key_id;
+  return keyId ? keyById.value.get(keyId)?.name ?? null : null;
+});
+
+const onKeyCreated = (key: SshKey) => {
+  keyMode.value = 'keychain';
+  selectedKeyId.value = key.id;
+};
+
+const onIdentityCreated = (identity: SshIdentity) => {
+  form.value.identity_id = identity.id;
+};
 const keyringAvailable = ref(true);
 const showPassword = ref(false);
 const showPassphrase = ref(false);
@@ -556,7 +664,13 @@ const availableJumpHosts = computed(() => {
 });
 
 const usesKey = computed(() => form.value.auth_method === 'key' || form.value.auth_method === 'auto');
-const usesKeyContent = computed(() => usesKey.value && form.value.key_source === 'content');
+const usesKeyContent = computed(() => usesKey.value && keyMode.value === 'content');
+/** Secrets this form saves on the host itself (not in the Keychain). */
+const hasHostSecrets = computed(
+  () =>
+    (usesPassword.value && !selectedIdentity.value) ||
+    (usesKey.value && keyMode.value !== 'keychain')
+);
 const usesPassword = computed(
   () => form.value.auth_method === 'password' || form.value.auth_method === 'auto'
 );
@@ -574,7 +688,7 @@ watch(usesKeyContent, (content) => {
 watch(
   () => form.value.use_system_ssh,
   (system) => {
-    if (system && form.value.key_source === 'content') form.value.key_source = 'file';
+    if (system && keyMode.value !== 'file') keyMode.value = 'file';
   }
 );
 
@@ -582,10 +696,13 @@ const isFormValid = computed(() => {
   if (usesKeyContent.value && !hasSavedKeyContent.value && !privateKeyInput.value.trim()) {
     return false;
   }
+  if (usesKey.value && keyMode.value === 'keychain' && !selectedKeyId.value && !identityKeyName.value) {
+    return false;
+  }
   return (
     form.value.name.trim().length > 0 &&
     form.value.host.trim().length > 0 &&
-    form.value.username.trim().length > 0 &&
+    (form.value.username.trim().length > 0 || Boolean(selectedIdentity.value)) &&
     form.value.port &&
     form.value.port > 0 &&
     form.value.port <= 65535
@@ -615,6 +732,7 @@ watch(
         auth_method: h.auth_method,
         key_path: h.key_path || null,
         key_source: h.key_source || 'file',
+        identity_id: h.identity_id || null,
         jump_host_id: h.jump_host_id || null,
         use_system_ssh: h.use_system_ssh,
         agent_forwarding: h.agent_forwarding,
@@ -628,6 +746,8 @@ watch(
       passwordInput.value = '';
       passphraseInput.value = '';
       privateKeyInput.value = '';
+      selectedKeyId.value = h.key_id || null;
+      keyMode.value = h.key_id ? 'keychain' : h.key_source === 'content' ? 'content' : 'file';
     } else {
       form.value = {
         name: '',
@@ -637,6 +757,7 @@ watch(
         auth_method: 'auto',
         key_path: null,
         key_source: 'file',
+        identity_id: null,
         jump_host_id: null,
         use_system_ssh: false,
         agent_forwarding: false,
@@ -650,7 +771,10 @@ watch(
       passwordInput.value = '';
       passphraseInput.value = '';
       privateKeyInput.value = '';
+      selectedKeyId.value = null;
+      keyMode.value = 'file';
     }
+    void fetchKeychain();
     void ipcClient
       .sshSecretStatus()
       .then(({ keyring_available }) => {
@@ -664,20 +788,29 @@ watch(
   { immediate: true }
 );
 
+/** The form as the backend expects it, with the key choice mapped back. */
+const buildHostInput = (): SshHostInput => {
+  const keychain = usesKey.value && keyMode.value === 'keychain';
+  return {
+    ...form.value,
+    port: Number(form.value.port) || 22,
+    key_path: form.value.key_path?.trim() || null,
+    key_source: usesKey.value && keyMode.value === 'content' ? 'content' : 'file',
+    key_id: keychain ? selectedKeyId.value : null,
+    default_dir: form.value.default_dir?.trim() || null,
+  };
+};
+
 const handleTestConnection = async () => {
   if (!canTest.value) return;
   testingConnection.value = true;
   testResult.value = null;
   formError.value = null;
   try {
-    const input = {
-      ...form.value,
-      port: Number(form.value.port) || 22,
-    };
     const report = await testConnection(
-      input,
+      buildHostInput(),
       props.hostToEdit?.id,
-      passwordInput.value || undefined,
+      selectedIdentity.value ? undefined : passwordInput.value || undefined,
       passphraseInput.value || undefined,
       usesKeyContent.value ? privateKeyInput.value.trim() || undefined : undefined
     );
@@ -728,13 +861,7 @@ const handleSave = async () => {
       .map((t) => t.trim())
       .filter(Boolean);
 
-    const hostInput: SshHostInput = {
-      ...form.value,
-      port: Number(form.value.port) || 22,
-      tags: parsedTags,
-      key_path: form.value.key_path?.trim() || null,
-      default_dir: form.value.default_dir?.trim() || null,
-    };
+    const hostInput: SshHostInput = { ...buildHostInput(), tags: parsedTags };
 
     let secretsInput: SecretsInput | undefined;
     const keyText = privateKeyInput.value.trim();
@@ -1070,6 +1197,16 @@ const handleSave = async () => {
 .checkbox-row.disabled {
   cursor: default;
   opacity: 0.75;
+}
+
+.select-with-button {
+  display: flex;
+  gap: 6px;
+}
+
+.select-with-button .form-select {
+  flex: 1;
+  min-width: 0;
 }
 
 .password-input-wrapper {

@@ -259,40 +259,86 @@ fn cancelled() -> Error {
     Error::msg("Đã hủy đăng nhập")
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// The chosen key (Keychain, pasted text, `key_path`) or ~/.ssh defaults.
+    Keys,
+    Agent,
+    Password,
+}
+
+/// The order logins are tried in.
+///
+/// Every refused key counts against the server's `MaxAuthTries` (6 by
+/// default, often 3 on hardened servers). An agent holding several
+/// unrelated keys would use those up and get the connection dropped before
+/// the key the user picked is offered, so a chosen key always goes first.
+fn auth_plan(t: &Target) -> Vec<Step> {
+    let chosen_key = !matches!(t.key, KeyChoice::Defaults);
+    match t.host.auth_method.as_str() {
+        "agent" => vec![Step::Agent],
+        "key" => vec![Step::Keys],
+        "password" => vec![Step::Password],
+        _ if chosen_key => vec![Step::Keys, Step::Agent, Step::Password],
+        _ => vec![Step::Agent, Step::Keys, Step::Password],
+    }
+}
+
+fn dropped_during_auth() -> Error {
+    Error::msg(
+        "Máy chủ đã ngắt kết nối trong lúc xác thực. Thường là do thử quá nhiều khóa \
+         (MaxAuthTries): hãy chọn đúng khóa cho máy chủ này, hoặc đặt phương thức \
+         xác thực là \"Khóa\" để không thử các khóa trong SSH agent.",
+    )
+}
+
 async fn authenticate(
     env: &Arc<dyn SshEnv>,
     handle: &mut Handle<ClientHandler>,
     t: &Target,
 ) -> Result<()> {
-    let method = t.host.auth_method.as_str();
     let mut remaining: Option<MethodSet> = None;
-
-    if matches!(method, "auto" | "agent") && try_agent(handle, t, &mut remaining).await? {
-        return Ok(());
-    }
-    if matches!(method, "auto" | "key") && try_keys(env, handle, t, &mut remaining).await? {
-        return Ok(());
-    }
-    if matches!(method, "auto" | "password") {
-        let allows = |kind: MethodKind| remaining.as_ref().is_none_or(|set| set.contains(&kind));
-        let stored = env.load_secret(&t.password, SecretKind::Password).await;
-        if allows(MethodKind::KeyboardInteractive) {
-            if let Some(done) = keyboard_flow(env, handle, t, stored.clone()).await? {
-                return done
-                    .then_some(())
-                    .ok_or_else(|| Error::msg("Xác thực thất bại"));
-            }
+    for step in auth_plan(t) {
+        if handle.is_closed() {
+            return Err(dropped_during_auth());
         }
-        if allows(MethodKind::Password) && password_flow(env, handle, t, stored).await? {
+        let done = match step {
+            Step::Keys => try_keys(env, handle, t, &mut remaining).await?,
+            Step::Agent => try_agent(handle, t, &mut remaining).await?,
+            Step::Password => try_password(env, handle, t, &remaining).await?,
+        };
+        if done {
             return Ok(());
         }
     }
+    if handle.is_closed() {
+        return Err(dropped_during_auth());
+    }
 
-    Err(Error::msg(match method {
+    Err(Error::msg(match t.host.auth_method.as_str() {
         "agent" => "Máy chủ không chấp nhận khóa nào trong SSH agent",
-        "key" => "Máy chủ không chấp nhận tệp khóa",
-        _ => "Máy chủ không chấp nhận phương thức xác thực nào app hỗ trợ",
+        "key" => "Máy chủ không chấp nhận khóa đã chọn",
+        "password" => "Máy chủ không chấp nhận mật khẩu",
+        _ => "Máy chủ không chấp nhận khóa, agent hay mật khẩu nào đã thử",
     }))
+}
+
+async fn try_password(
+    env: &Arc<dyn SshEnv>,
+    handle: &mut Handle<ClientHandler>,
+    t: &Target,
+    remaining: &Option<MethodSet>,
+) -> Result<bool> {
+    let allows = |kind: MethodKind| remaining.as_ref().is_none_or(|set| set.contains(&kind));
+    let stored = env.load_secret(&t.password, SecretKind::Password).await;
+    if allows(MethodKind::KeyboardInteractive) {
+        if let Some(done) = keyboard_flow(env, handle, t, stored.clone()).await? {
+            return done
+                .then_some(true)
+                .ok_or_else(|| Error::msg("Xác thực thất bại"));
+        }
+    }
+    Ok(allows(MethodKind::Password) && password_flow(env, handle, t, stored).await?)
 }
 
 async fn rsa_hash(handle: &Handle<ClientHandler>, key: &PublicKey) -> Option<HashAlg> {
@@ -350,6 +396,9 @@ async fn try_agent(
         return Ok(false);
     };
     for identity in identities {
+        if handle.is_closed() {
+            break;
+        }
         let key = identity.public_key().into_owned();
         let hash = rsa_hash(handle, &key).await;
         match handle
@@ -412,14 +461,12 @@ async fn key_sources(env: &Arc<dyn SshEnv>, t: &Target) -> Result<Vec<KeySource>
             )
             .await
         }
-        KeyChoice::HostContent => {
-            saved(
-                t.host_slot(),
-                "Chưa có nội dung khóa riêng đã lưu cho máy chủ này (hoặc không đọc được trên máy này)"
-                    .into(),
-            )
-            .await
-        }
+        KeyChoice::HostContent => saved(
+            t.host_slot(),
+            "Chưa có nội dung khóa riêng đã lưu cho máy chủ này (hoặc không đọc được trên máy này)"
+                .into(),
+        )
+        .await,
         KeyChoice::File(path) => Ok(vec![KeySource::File {
             path: expand_home(path),
             explicit: true,
@@ -465,6 +512,9 @@ async fn try_keys(
     remaining: &mut Option<MethodSet>,
 ) -> Result<bool> {
     for source in key_sources(env, t).await? {
+        if handle.is_closed() {
+            break;
+        }
         let (key, typed) = match source.decode(None) {
             Ok(key) => (key, None),
             Err(keys::Error::KeyIsEncrypted) => match unlock_key(env, t, &source).await? {
@@ -481,10 +531,7 @@ async fn try_keys(
         };
         let hash = rsa_hash(handle, key.public_key()).await;
         let result = handle
-            .authenticate_publickey(
-                &t.username,
-                PrivateKeyWithHashAlg::new(Arc::new(key), hash),
-            )
+            .authenticate_publickey(&t.username, PrivateKeyWithHashAlg::new(Arc::new(key), hash))
             .await
             .map_err(ssh_error)?;
         match result {
@@ -608,6 +655,9 @@ async fn password_flow(
             }
             // Some servers (russh among them) drop a method from the list
             // after a wrong answer, so only the attempt limit ends the loop.
+            AuthResult::Failure { .. } if handle.is_closed() => {
+                return Err(dropped_during_auth());
+            }
             AuthResult::Failure { .. } => {
                 error = Some(if store.is_none() {
                     "Mật khẩu đã lưu không đúng".into()
@@ -653,6 +703,9 @@ async fn keyboard_flow(
                     return Ok(Some(true));
                 }
                 KeyboardInteractiveAuthResponse::Failure { .. } => {
+                    if handle.is_closed() {
+                        return Err(dropped_during_auth());
+                    }
                     if !asked && !used_saved {
                         // Offered but not usable: let password auth try.
                         return Ok(None);
@@ -726,5 +779,81 @@ async fn keyboard_flow(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+    use crate::db::repos::ssh_hosts::SshHost;
+    use crate::ssh::secret::SecretOwner;
+
+    fn target(auth_method: &str, key: KeyChoice) -> Target {
+        let slot = SecretSlot {
+            owner: SecretOwner::Host("h".into()),
+            store: SecretStore::None,
+        };
+        Target {
+            host: SshHost {
+                id: "h".into(),
+                name: "h".into(),
+                host: "h".into(),
+                port: 22,
+                username: "u".into(),
+                auth_method: auth_method.into(),
+                key_path: None,
+                key_source: "file".into(),
+                identity_id: None,
+                key_id: None,
+                jump_host_id: None,
+                use_system_ssh: false,
+                agent_forwarding: false,
+                default_dir: None,
+                secret_store: "none".into(),
+                color: None,
+                tags: Vec::new(),
+                sort_order: 0,
+                created_at: "0".into(),
+                last_connected_at: None,
+            },
+            username: "u".into(),
+            key,
+            password: slot.clone(),
+            passphrase: slot,
+        }
+    }
+
+    #[test]
+    fn a_chosen_key_is_tried_before_the_agent() {
+        for key in [
+            KeyChoice::HostContent,
+            KeyChoice::File("~/.ssh/prod".into()),
+            KeyChoice::Keychain {
+                id: "k".into(),
+                name: "k".into(),
+                slot: SecretSlot {
+                    owner: SecretOwner::Key("k".into()),
+                    store: SecretStore::Sqlite,
+                },
+            },
+        ] {
+            assert_eq!(
+                auth_plan(&target("auto", key)),
+                vec![Step::Keys, Step::Agent, Step::Password]
+            );
+        }
+        // Without a chosen key, OpenSSH's order: agent, then ~/.ssh/id_*.
+        assert_eq!(
+            auth_plan(&target("auto", KeyChoice::Defaults)),
+            vec![Step::Agent, Step::Keys, Step::Password]
+        );
+        assert_eq!(
+            auth_plan(&target("key", KeyChoice::HostContent)),
+            vec![Step::Keys]
+        );
+        assert_eq!(
+            auth_plan(&target("password", KeyChoice::Defaults)),
+            vec![Step::Password]
+        );
     }
 }

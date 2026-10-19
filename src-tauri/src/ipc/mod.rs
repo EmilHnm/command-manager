@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod events;
+pub mod keychain;
 pub mod ssh;
 
 use crate::db::Db;

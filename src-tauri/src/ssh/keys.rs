@@ -69,7 +69,12 @@ pub fn import(text: &str, passphrase: Option<&str>, name: &str) -> Result<Parsed
                     .map_err(|_| Error::msg("Sai passphrase của khóa"))?;
             }
         }
-        return describe(key.public_key(), name, format!("{text}\n"), key.is_encrypted());
+        return describe(
+            key.public_key(),
+            name,
+            format!("{text}\n"),
+            key.is_encrypted(),
+        );
     }
 
     // PEM (PKCS#1 / PKCS#8 / SEC1): the public key needs the passphrase.
@@ -81,7 +86,9 @@ pub fn import(text: &str, passphrase: Option<&str>, name: &str) -> Result<Parsed
                 .map_err(|_| Error::msg("Sai passphrase của khóa"))?;
             describe(key.public_key(), name, format!("{text}\n"), true)
         }
-        Err(error) => Err(Error::msg(format!("Nội dung khóa riêng không hợp lệ: {error}"))),
+        Err(error) => Err(Error::msg(format!(
+            "Nội dung khóa riêng không hợp lệ: {error}"
+        ))),
     }
 }
 

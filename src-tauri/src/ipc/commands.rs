@@ -1300,7 +1300,7 @@ fn terminal_open_sync(app: AppHandle, cwd: Option<String>) -> Result<TerminalInf
     let session_id = format!("terminal-session:{terminal_id}");
     let buf_bytes = buffer_bytes(&state);
     let ipc = state.ipc.clone();
-    let integration_root = app.path().app_data_dir().ok();
+    let integration_root = app::data_dir(&app).ok();
     let preferred_shell = state
         .db
         .read(|c| settings::get(c, "terminal_shell"))
@@ -1512,8 +1512,7 @@ pub fn backup_export(
         .filter(|path| !path.trim().is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            app.path()
-                .app_data_dir()
+            app::data_dir(&app)
                 .unwrap_or_else(|_| PathBuf::from("."))
                 .join(format!(
                     "command-manager-backup-{}.sqlite",
@@ -1670,8 +1669,7 @@ pub fn keybindings_export(
         .filter(|path| !path.trim().is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            app.path()
-                .app_data_dir()
+            app::data_dir(&app)
                 .unwrap_or_else(|_| PathBuf::from("."))
                 .join(format!(
                     "command-manager-keybindings-{}.json",

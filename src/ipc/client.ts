@@ -26,6 +26,11 @@ import type {
   SshTestReport,
   ConfigScan,
   SshSecretStore,
+  SecretChange,
+  KeychainList,
+  SshKey,
+  SshIdentity,
+  SshIdentityInput,
 } from '@/types/ssh';
 import type {
   SshHostkeyRequestEvent,
@@ -1592,6 +1597,67 @@ export const ipcClient = {
 
   sshForgetHostKey: async (hostId: string): Promise<number> => {
     return invokeTauri<number>('ssh_forget_host_key', { host_id: hostId });
+  },
+
+  // --- Keychain ---
+  sshKeychainList: async (): Promise<KeychainList> => {
+    return invokeTauri<KeychainList>('ssh_keychain_list');
+  },
+
+  sshKeyImport: async (
+    name: string,
+    privateKey: string,
+    passphrase: string | undefined,
+    store: SshSecretStore
+  ): Promise<SshKey> => {
+    return invokeTauri<SshKey>('ssh_key_import', {
+      name,
+      private_key: privateKey,
+      passphrase: passphrase || null,
+      store,
+    });
+  },
+
+  sshKeyGenerate: async (name: string, store: SshSecretStore): Promise<SshKey> => {
+    return invokeTauri<SshKey>('ssh_key_generate', { name, store });
+  },
+
+  sshKeyRename: async (id: string, name: string): Promise<SshKey> => {
+    return invokeTauri<SshKey>('ssh_key_rename', { id, name });
+  },
+
+  sshKeyDelete: async (id: string, confirmed: boolean): Promise<void> => {
+    return invokeTauri<void>('ssh_key_delete', { id, confirmed });
+  },
+
+  sshIdentityCreate: async (
+    identity: SshIdentityInput,
+    password: SecretChange | undefined,
+    store: SshSecretStore
+  ): Promise<SshIdentity> => {
+    return invokeTauri<SshIdentity>('ssh_identity_create', {
+      identity,
+      password: password ?? null,
+      store,
+    });
+  },
+
+  sshIdentityUpdate: async (
+    id: string,
+    identity: SshIdentityInput,
+    password: SecretChange | undefined,
+    store: SshSecretStore
+  ): Promise<SshIdentity> => {
+    return invokeTauri<SshIdentity>('ssh_identity_update', {
+      id,
+      identity,
+      password: password ?? null,
+      store,
+    });
+  },
+
+  sshIdentityDelete: async (id: string, confirmed: boolean): Promise<void> => {
+    return invokeTauri<void>('ssh_identity_delete', { id, confirmed });
   },
 
   sshTestConnection: async (

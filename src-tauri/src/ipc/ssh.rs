@@ -42,7 +42,7 @@ struct Pending {
 
 pub struct SshState {
     manager: SshManager,
-    vault: Arc<Vault>,
+    pub(crate) vault: Arc<Vault>,
     known: Arc<KnownHosts>,
     pending: Arc<Pending>,
     terminals: DashMap<String, Arc<SshTerminal>>,
@@ -88,7 +88,11 @@ impl SshEnv for TauriEnv {
         &self.known
     }
 
-    fn load_secret(&self, slot: &SecretSlot, kind: SecretKind) -> BoxFuture<'static, Option<String>> {
+    fn load_secret(
+        &self,
+        slot: &SecretSlot,
+        kind: SecretKind,
+    ) -> BoxFuture<'static, Option<String>> {
         let app = self.app.clone();
         let vault = Arc::clone(&self.vault);
         let slot = slot.clone();
@@ -228,7 +232,11 @@ impl SshEnv for TestEnv {
         self.base.known_hosts()
     }
 
-    fn load_secret(&self, slot: &SecretSlot, kind: SecretKind) -> BoxFuture<'static, Option<String>> {
+    fn load_secret(
+        &self,
+        slot: &SecretSlot,
+        kind: SecretKind,
+    ) -> BoxFuture<'static, Option<String>> {
         // What the form holds wins; a Keychain key's own text is never
         // replaced by the host form's pasted key.
         let typed = match (kind, &slot.owner) {
@@ -271,7 +279,7 @@ impl SshEnv for TestEnv {
     }
 }
 
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     task: impl FnOnce() -> Result<T> + Send + 'static,
 ) -> Result<T> {
     tauri::async_runtime::spawn_blocking(task)
@@ -314,7 +322,12 @@ pub async fn ssh_hosts_create(
         state.db.write(|c| ssh_hosts::insert(c, &id, &input, &at))?;
         if let Some(secrets) = secrets {
             let vault = &app.state::<SshState>().vault;
-            if let Err(error) = vault.apply(&state.db, &SecretOwner::Host(id.clone()), SecretStore::None, &secrets) {
+            if let Err(error) = vault.apply(
+                &state.db,
+                &SecretOwner::Host(id.clone()),
+                SecretStore::None,
+                &secrets,
+            ) {
                 // Leave nothing half-created; the form keeps its values.
                 let _ = vault.forget_all(&state.db, &SecretOwner::Host(id.clone()));
                 let _ = state.db.write(|c| ssh_hosts::delete(c, &id));
@@ -372,7 +385,12 @@ pub async fn ssh_hosts_update(
 
         state.db.write(|c| ssh_hosts::update(c, &id, &input))?;
         if let Some(secrets) = secrets {
-            vault.apply(&state.db, &SecretOwner::Host(id.clone()), current_store, &secrets)?;
+            vault.apply(
+                &state.db,
+                &SecretOwner::Host(id.clone()),
+                current_store,
+                &secrets,
+            )?;
         }
         state.db.read(|c| ssh_hosts::require(c, &id))
     })
@@ -391,8 +409,9 @@ fn check_key_content(
             client::check_private_key(text)?;
         }
     }
-    let uses_content =
-        input.key_source == "content" && matches!(input.auth_method.as_str(), "auto" | "key");
+    let uses_content = input.key_source == "content"
+        && input.key_id.is_none()
+        && matches!(input.auth_method.as_str(), "auto" | "key");
     if !uses_content {
         return Ok(());
     }

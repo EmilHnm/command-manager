@@ -16,7 +16,7 @@
         </div>
       </div>
 
-      <div class="header-right">
+      <div v-if="activeTab === 'hosts'" class="header-right">
         <!-- Search Field -->
         <div class="search-box">
           <Search :size="13" class="search-icon" />
@@ -59,8 +59,40 @@
       </div>
     </header>
 
+    <!-- Hosts | Keychain -->
+    <nav class="view-tabs" role="tablist">
+      <button
+        type="button"
+        role="tab"
+        class="view-tab"
+        :class="{ active: activeTab === 'hosts' }"
+        :aria-selected="activeTab === 'hosts'"
+        @click="setTab('hosts')"
+      >
+        <Server :size="13" />
+        <span>Máy Chủ</span>
+        <span class="view-tab-count">{{ hosts.length }}</span>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        class="view-tab"
+        :class="{ active: activeTab === 'keychain' }"
+        :aria-selected="activeTab === 'keychain'"
+        @click="setTab('keychain')"
+      >
+        <KeyRound :size="13" />
+        <span>Keychain</span>
+        <span class="view-tab-count">{{ keychainKeys.length + identities.length }}</span>
+      </button>
+    </nav>
+
+    <main v-if="activeTab === 'keychain'" class="servers-content custom-scrollbar">
+      <KeychainPanel />
+    </main>
+
     <!-- Tag Filter Bar if tags exist -->
-    <div v-if="allTags.length > 0" class="tag-filter-bar">
+    <div v-if="activeTab === 'hosts' && allTags.length > 0" class="tag-filter-bar">
       <span class="tag-filter-label">Lọc thẻ:</span>
       <button
         type="button"
@@ -83,7 +115,7 @@
     </div>
 
     <!-- Main Content Area -->
-    <main class="servers-content custom-scrollbar">
+    <main v-if="activeTab === 'hosts'" class="servers-content custom-scrollbar">
       <!-- Loading State -->
       <div v-if="loading && hosts.length === 0" class="state-container">
         <LoaderCircle :size="28" class="spin text-primary" />
@@ -188,7 +220,7 @@
               <td class="td-conn">
                 <div class="conn-cell font-mono">
                   <span class="conn-string">
-                    <span class="text-primary">{{ h.username }}</span>@<span>{{ h.host }}</span><span class="text-muted">:{{ h.port }}</span>
+                    <span class="text-primary">{{ effectiveUsername(h) }}</span>@<span>{{ h.host }}</span><span class="text-muted">:{{ h.port }}</span>
                   </span>
                   <div v-if="h.jump_host_id" class="jump-pill">
                     <ArrowRight :size="10" />
@@ -208,6 +240,22 @@
                     <span>{{ authMethodLabel(h.auth_method) }}</span>
                   </span>
 
+                  <span
+                    v-if="h.identity_id && identityById.get(h.identity_id)"
+                    class="vault-badge"
+                    title="Tên đăng nhập và mật khẩu lấy từ identity trong Keychain"
+                  >
+                    <UserRound :size="10" />
+                    <span>{{ identityById.get(h.identity_id)?.name }}</span>
+                  </span>
+                  <span
+                    v-if="effectiveKeyName(h)"
+                    class="vault-badge"
+                    title="Khóa trong Keychain"
+                  >
+                    <KeyRound :size="10" />
+                    <span>{{ effectiveKeyName(h) }}</span>
+                  </span>
                   <span
                     v-if="h.secret_store !== 'none'"
                     class="vault-badge"
@@ -271,7 +319,8 @@
                       type="button"
                       class="btn-icon-dots"
                       title="Tùy chọn thao tác"
-                      @click="toggleActionsMenu(h.id)"
+                      :class="{ active: activeMenuHostId === h.id }"
+                      @click.stop="toggleActionsMenu(h.id, $event)"
                     >
                       <MoreVertical :size="14" />
                     </button>
@@ -280,6 +329,7 @@
                     <div
                       v-if="activeMenuHostId === h.id"
                       class="actions-menu-popup"
+                      :style="menuStyle"
                       @click.stop
                     >
                       <button
@@ -362,7 +412,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import {
   Globe,
   Plus,
@@ -384,7 +434,11 @@ import {
   Copy,
   Unplug,
   Trash2,
+  KeyRound,
+  UserRound,
 } from 'lucide-vue-next';
+import { useKeychain } from '@/composables/useKeychain';
+import KeychainPanel from '@/components/keychain/KeychainPanel.vue';
 import { useSshHosts } from '@/composables/useSshHosts';
 import type { SshHost, SshHostView, SshAuthMethod } from '@/types/ssh';
 import SshHostEditorModal from '@/components/dialogs/SshHostEditorModal.vue';
@@ -393,7 +447,31 @@ import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import { ipcClient } from '@/ipc/client';
 
 const router = useRouter();
+const route = useRoute();
 const { hosts, loading, error, fetchHosts, deleteHost, disconnectHost } = useSshHosts();
+const {
+  keys: keychainKeys,
+  identities,
+  keyById,
+  identityById,
+  fetchKeychain,
+} = useKeychain();
+
+// `/servers?tab=keychain` opens the Keychain directly.
+const activeTab = ref<'hosts' | 'keychain'>(route.query.tab === 'keychain' ? 'keychain' : 'hosts');
+const setTab = (tab: 'hosts' | 'keychain') => {
+  activeTab.value = tab;
+  void router.replace({ query: { ...route.query, tab: tab === 'keychain' ? 'keychain' : undefined } });
+};
+
+/** The username the connection will use: an identity's wins, as in the backend. */
+const effectiveUsername = (h: SshHostView) =>
+  (h.identity_id && identityById.value.get(h.identity_id)?.username) || h.username;
+
+const effectiveKeyName = (h: SshHostView) => {
+  const keyId = h.key_id ?? (h.identity_id ? identityById.value.get(h.identity_id)?.key_id : null);
+  return keyId ? keyById.value.get(keyId)?.name : undefined;
+};
 
 const searchQuery = ref('');
 const selectedTagFilter = ref<string | null>(null);
@@ -433,7 +511,7 @@ const filteredHosts = computed(() => {
     return (
       h.name.toLowerCase().includes(q) ||
       h.host.toLowerCase().includes(q) ||
-      h.username.toLowerCase().includes(q) ||
+      effectiveUsername(h).toLowerCase().includes(q) ||
       (h.tags || []).some((t) => t.toLowerCase().includes(q))
     );
   });
@@ -504,8 +582,23 @@ const onHostSaved = (_saved: SshHost) => {
   closeEditorModal();
 };
 
-const toggleActionsMenu = (hostId: string) => {
-  activeMenuHostId.value = activeMenuHostId.value === hostId ? null : hostId;
+// The menu is `position: fixed` next to its button: the table container
+// clips overflow, which would cut off the menu of the last rows.
+const MENU_HEIGHT = 150;
+const menuStyle = ref<Record<string, string>>({});
+
+const toggleActionsMenu = (hostId: string, event: MouseEvent) => {
+  if (activeMenuHostId.value === hostId) {
+    activeMenuHostId.value = null;
+    return;
+  }
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  const right = `${Math.max(8, window.innerWidth - rect.right)}px`;
+  menuStyle.value =
+    rect.bottom + 4 + MENU_HEIGHT > window.innerHeight
+      ? { right, bottom: `${window.innerHeight - rect.top + 4}px` }
+      : { right, top: `${rect.bottom + 4}px` };
+  activeMenuHostId.value = hostId;
 };
 
 const handleDisconnectHost = async (h: SshHostView) => {
@@ -568,13 +661,28 @@ const handleGlobalClick = () => {
   activeMenuHostId.value = null;
 };
 
+// A fixed menu would stay put while its row scrolls away.
+const closeMenuOnScroll = () => {
+  activeMenuHostId.value = null;
+};
+
+const closeMenuOnEscape = (event: KeyboardEvent) => {
+  if (event.key === 'Escape' && activeMenuHostId.value) activeMenuHostId.value = null;
+};
+
 onMounted(async () => {
   window.addEventListener('click', handleGlobalClick);
-  await fetchHosts();
+  window.addEventListener('scroll', closeMenuOnScroll, true);
+  window.addEventListener('resize', closeMenuOnScroll);
+  window.addEventListener('keydown', closeMenuOnEscape);
+  await Promise.all([fetchHosts(), fetchKeychain()]);
 });
 
 onUnmounted(() => {
   window.removeEventListener('click', handleGlobalClick);
+  window.removeEventListener('scroll', closeMenuOnScroll, true);
+  window.removeEventListener('resize', closeMenuOnScroll);
+  window.removeEventListener('keydown', closeMenuOnEscape);
 });
 </script>
 
@@ -587,6 +695,47 @@ onUnmounted(() => {
   background-color: var(--bg-app-base);
   color: var(--text-primary);
   overflow: hidden;
+}
+
+.view-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 16px;
+  background-color: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.view-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.view-tab:hover {
+  color: var(--text-primary);
+}
+
+.view-tab.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--primary);
+}
+
+.view-tab-count {
+  font-size: 10.5px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background-color: var(--bg-surface-hover);
+  color: var(--text-muted);
 }
 
 .servers-header {
@@ -1025,17 +1174,16 @@ onUnmounted(() => {
   transition: all 0.12s ease;
 }
 
-.btn-icon-dots:hover {
+.btn-icon-dots:hover,
+.btn-icon-dots.active {
   background-color: var(--bg-surface-hover);
   border-color: var(--border-subtle);
   color: var(--text-primary);
 }
 
 .actions-menu-popup {
-  position: absolute;
-  right: 0;
-  top: 32px;
-  z-index: 100;
+  position: fixed;
+  z-index: 1000;
   width: 160px;
   background-color: var(--bg-surface);
   border: 1px solid var(--border-subtle);

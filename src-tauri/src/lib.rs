@@ -87,7 +87,7 @@ mod desktop {
                     }
                 }
 
-                let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+                let dir = app::data_dir(app.handle()).map_err(|e| e.to_string())?;
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                 let db = db::Db::open(dir.join("app.db")).map_err(|e| e.to_string())?;
                 let processes = process::manager::ProcessManager::new();
@@ -212,6 +212,14 @@ mod desktop {
                 ipc::ssh::ssh_disconnect,
                 ipc::ssh::ssh_hostkey_respond,
                 ipc::ssh::ssh_auth_respond,
+                ipc::keychain::ssh_keychain_list,
+                ipc::keychain::ssh_key_import,
+                ipc::keychain::ssh_key_generate,
+                ipc::keychain::ssh_key_rename,
+                ipc::keychain::ssh_key_delete,
+                ipc::keychain::ssh_identity_create,
+                ipc::keychain::ssh_identity_update,
+                ipc::keychain::ssh_identity_delete,
             ])
             .run(tauri::generate_context!())
             .expect("error while running Command Manager");
