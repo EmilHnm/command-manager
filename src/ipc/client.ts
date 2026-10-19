@@ -19,6 +19,15 @@ import type {
 import { IPC_EVENTS } from '@/ipc/events';
 import type { KeybindingOverride, ParsedKeybindings } from '@/types/keybindings';
 import type {
+  ConflictAction,
+  ConflictPrompt,
+  Endpoint,
+  FileLocation,
+  FsListing,
+  JobSnapshot,
+  TransferMode,
+} from '@/types/files';
+import type {
   SshHost,
   SshHostInput,
   SshHostView,
@@ -1597,6 +1606,89 @@ export const ipcClient = {
 
   sshForgetHostKey: async (hostId: string): Promise<number> => {
     return invokeTauri<number>('ssh_forget_host_key', { host_id: hostId });
+  },
+
+  // --- Files pane & transfers (SCR-08) ---
+  fsHome: async (location: FileLocation): Promise<string> => {
+    return invokeTauri<string>('fs_home', { location });
+  },
+
+  fsList: async (location: FileLocation, path: string, showHidden: boolean): Promise<FsListing> => {
+    return invokeTauri<FsListing>('fs_list', { location, path, show_hidden: showHidden });
+  },
+
+  fsMkdir: async (location: FileLocation, dir: string, name: string): Promise<string> => {
+    return invokeTauri<string>('fs_mkdir', { location, dir, name });
+  },
+
+  fsRename: async (location: FileLocation, path: string, newName: string): Promise<string> => {
+    return invokeTauri<string>('fs_rename', { location, path, new_name: newName });
+  },
+
+  fsDelete: async (location: FileLocation, paths: string[]): Promise<void> => {
+    return invokeTauri<void>('fs_delete', { location, paths, confirmed: true });
+  },
+
+  /** Downloads a copy to a temp folder and opens it; returns the local path. */
+  fsOpenRemote: async (location: FileLocation, path: string): Promise<string> => {
+    return invokeTauri<string>('fs_open_remote', { location, path });
+  },
+
+  fsOpenLocal: async (path: string): Promise<void> => {
+    return invokeTauri<void>('fs_open_local', { path });
+  },
+
+  transferStart: async (sources: Endpoint[], dest: Endpoint, mode: TransferMode): Promise<string> => {
+    return invokeTauri<string>('transfer_start', { sources, dest, mode });
+  },
+
+  transferResolve: async (
+    jobId: string,
+    itemId: number,
+    action: ConflictAction,
+    applyToRest: boolean
+  ): Promise<void> => {
+    return invokeTauri<void>('transfer_resolve', {
+      job_id: jobId,
+      item_id: itemId,
+      action,
+      apply_to_rest: applyToRest,
+    });
+  },
+
+  transferCancel: async (jobId: string): Promise<void> => {
+    return invokeTauri<void>('transfer_cancel', { job_id: jobId });
+  },
+
+  transferRetry: async (jobId: string): Promise<void> => {
+    return invokeTauri<void>('transfer_retry', { job_id: jobId });
+  },
+
+  transferList: async (): Promise<JobSnapshot[]> => {
+    return invokeTauri<JobSnapshot[]>('transfer_list');
+  },
+
+  transferGet: async (jobId: string): Promise<JobSnapshot> => {
+    return invokeTauri<JobSnapshot>('transfer_get', { job_id: jobId });
+  },
+
+  transferClearFinished: async (): Promise<void> => {
+    return invokeTauri<void>('transfer_clear_finished');
+  },
+
+  onTransferEvents: async (handlers: {
+    progress: (job: JobSnapshot) => void;
+    conflict: (prompt: ConflictPrompt) => void;
+    done: (job: JobSnapshot) => void;
+  }): Promise<() => void> => {
+    if (!usingNativeIpc()) return () => {};
+    const { listen } = await import('@tauri-apps/api/event');
+    const unlisten = await Promise.all([
+      listen<JobSnapshot>(IPC_EVENTS.TRANSFER_PROGRESS, (event) => handlers.progress(event.payload)),
+      listen<ConflictPrompt>(IPC_EVENTS.TRANSFER_CONFLICT, (event) => handlers.conflict(event.payload)),
+      listen<JobSnapshot>(IPC_EVENTS.TRANSFER_DONE, (event) => handlers.done(event.payload)),
+    ]);
+    return () => unlisten.forEach((stop) => stop());
   },
 
   // --- Keychain ---

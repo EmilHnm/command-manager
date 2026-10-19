@@ -647,6 +647,22 @@ onMounted(async () => {
 
   await loadHistory();
 
+  // OSC 7 (`file://host/path`): the folder a shell reports on its own, e.g.
+  // on a server where our shell integration is not installed. It lets a file
+  // dropped on an SSH terminal land in the folder the user is in.
+  term.parser.registerOscHandler(7, (data) => {
+    const match = /^file:\/\/[^/]*(\/.*)$/.exec(data.trim());
+    if (match) {
+      try {
+        currentCwd = decodeURIComponent(match[1]);
+        emit('cwd-change', currentCwd);
+      } catch {
+        // Not valid percent-encoding: ignore it.
+      }
+    }
+    return true;
+  });
+
   term.parser.registerOscHandler(633, (data) => {
     const separator = data.indexOf(';');
     const kind = separator === -1 ? data : data.slice(0, separator);

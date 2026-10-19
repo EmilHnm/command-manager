@@ -5,6 +5,7 @@ export const KEY_CATEGORIES = [
   { id: 'nav', title: 'Chuyển Màn Hình (Navigation)' },
   { id: 'workspace', title: 'Không Gian Làm Việc (Workspace)' },
   { id: 'terminal', title: 'Terminal & Gợi Ý Lệnh (Terminal & Suggest)' },
+  { id: 'files', title: 'Trình Quản Lý File (Files)' },
   { id: 'suggest', title: 'Popup Gợi Ý Cố Định (Fixed Suggest Controls)' },
 ] as const;
 
@@ -106,6 +107,14 @@ export const COMMAND_REGISTRY: KeyCommand[] = [
     defaults: [{ key: 'ctrl+shift+k', when: 'global' }],
     scopes: ['global'],
   },
+  {
+    id: 'transfers.toggle',
+    title: 'Mở / đóng ngăn Truyền File',
+    category: 'app',
+    categoryTitle: 'Ứng Dụng & Điều Hướng (Application)',
+    defaults: [{ key: 'ctrl+shift+j', when: 'global' }],
+    scopes: ['global'],
+  },
 
   // Workspace
   {
@@ -181,6 +190,14 @@ export const COMMAND_REGISTRY: KeyCommand[] = [
     defaults: [{ key: 'ctrl+shift+w', when: 'workspace' }],
     scopes: ['workspace'],
   },
+  {
+    id: 'files.open',
+    title: 'Mở trình quản lý file (máy chủ / thư mục của terminal đang focus)',
+    category: 'workspace',
+    categoryTitle: 'Không Gian Làm Việc (Workspace)',
+    defaults: [{ key: 'ctrl+shift+e', when: 'workspace' }],
+    scopes: ['workspace'],
+  },
 
   // Terminal & Suggestions
   {
@@ -243,6 +260,30 @@ export const COMMAND_REGISTRY: KeyCommand[] = [
     scopes: ['suggest'],
     locked: true,
   },
+
+  // Files pane (SCR-08). Keys without a modifier are fixed (🔒): the
+  // editor requires Ctrl/Alt/Meta for anything a user rebinds.
+  ...([
+    ['files.rename', 'Đổi tên mục đang chọn', 'f2', false],
+    ['files.refresh', 'Làm mới danh sách', 'f5', false],
+    ['files.newFolder', 'Tạo thư mục mới', 'ctrl+shift+n', false],
+    ['files.toggleHidden', 'Hiện / ẩn tệp ẩn', 'ctrl+h', false],
+    ['files.selectAll', 'Chọn tất cả', 'ctrl+a', false],
+    ['files.copyPath', 'Sao chép đường dẫn mục đang chọn', 'ctrl+shift+c', false],
+    ['files.openSelected', 'Mở mục đang chọn', 'enter', true],
+    ['files.up', 'Lên thư mục cha', 'backspace', true],
+    ['files.delete', 'Xóa mục đang chọn (có hỏi lại)', 'delete', true],
+  ] as const).map(
+    ([id, title, key, locked]): KeyCommand => ({
+      id,
+      title,
+      category: 'files',
+      categoryTitle: 'Trình Quản Lý File (Files)',
+      defaults: [{ key, when: 'files' }],
+      scopes: ['files'],
+      ...(locked ? { locked: true } : {}),
+    })
+  ),
 
   // Fixed Suggest Controls
   {

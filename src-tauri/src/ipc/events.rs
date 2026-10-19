@@ -8,3 +8,6 @@ pub const COMMANDS_CHANGED: &str = "commands://changed";
 pub const SSH_STATUS: &str = "ssh://status";
 pub const SSH_HOSTKEY_REQUEST: &str = "ssh://hostkey-request";
 pub const SSH_AUTH_REQUEST: &str = "ssh://auth-request";
+pub const TRANSFER_PROGRESS: &str = "files://transfer-progress";
+pub const TRANSFER_CONFLICT: &str = "files://transfer-conflict";
+pub const TRANSFER_DONE: &str = "files://transfer-done";

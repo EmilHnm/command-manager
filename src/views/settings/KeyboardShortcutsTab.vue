@@ -62,6 +62,7 @@
             <option value="workspace">Workspace</option>
             <option value="terminal">Terminal đang gõ</option>
             <option value="explorer">Cây nhóm lệnh</option>
+            <option value="files">Trình quản lý file</option>
             <option value="suggest">Terminal có gợi ý</option>
           </select>
         </div>

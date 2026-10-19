@@ -38,12 +38,13 @@ dashmap = "6"
 portable-pty = "0.8"
 shell-words = "1"
 base64 = "0.22"
-tokio = { version = "1", features = ["sync", "time", "rt", "macros", "net"] }
+tokio = { version = "1", features = ["sync", "time", "rt", "macros", "net", "fs", "io-util"] }
 regex = "1"
 russh = { version = "0.64", default-features = false, features = ["ring", "rsa", "flate2"] }
 aes-gcm = "0.11"
 getrandom = "0.4"
 keyring = "4"
+russh-sftp = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
@@ -64,5 +65,5 @@ libc = "0.2"
 zbus = "5"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "process"] }
 tempfile = "3"

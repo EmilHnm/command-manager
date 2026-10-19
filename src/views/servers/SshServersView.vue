@@ -344,6 +344,17 @@
                       <button
                         type="button"
                         class="menu-item"
+                        :disabled="h.use_system_ssh"
+                        :title="h.use_system_ssh ? 'Máy chủ dùng OpenSSH hệ thống không có trình quản lý file' : undefined"
+                        @click="handleOpenFiles(h)"
+                      >
+                        <FolderOpen :size="12" />
+                        <span>Mở Trình Quản Lý File</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        class="menu-item"
                         @click="handleDuplicateHost(h)"
                       >
                         <Copy :size="12" />
@@ -436,6 +447,7 @@ import {
   Trash2,
   KeyRound,
   UserRound,
+  FolderOpen,
 } from 'lucide-vue-next';
 import { useKeychain } from '@/composables/useKeychain';
 import KeychainPanel from '@/components/keychain/KeychainPanel.vue';
@@ -637,6 +649,19 @@ const confirmDelete = async () => {
   }
 };
 
+const handleOpenFiles = (h: SshHostView) => {
+  activeMenuHostId.value = null;
+  void router.push({
+    path: '/workspace',
+    query: {
+      openFiles: h.id,
+      filesLabel: h.name,
+      ...(h.default_dir ? { filesPath: h.default_dir } : {}),
+      ...(h.color ? { filesAccent: h.color } : {}),
+    },
+  });
+};
+
 const handleConnectHost = async (h: SshHostView) => {
   connectingHostId.value = h.id;
   try {
@@ -648,6 +673,7 @@ const handleConnectHost = async (h: SshHostView) => {
         runEventId: terminal.runEventId,
         runCommandId: String(terminal.commandId),
         runCommandName: h.name,
+        sshHostId: h.id,
       },
     });
   } catch (e) {

@@ -16,6 +16,18 @@
 
         <div class="toolbar-divider" />
 
+        <!-- Files pane (SCR-08): follows the focused terminal's host / folder -->
+        <button
+          class="btn btn-ghost btn-sm toolbar-action-btn"
+          :title="'Mở trình quản lý file ' + keyLabel('files.open')"
+          @click="openFilesForContext"
+        >
+          <FolderOpen :size="13" />
+          <span>Tệp</span>
+        </button>
+
+        <div class="toolbar-divider" />
+
         <!-- Layout Presets Dropdown Trigger -->
         <div class="preset-dropdown-container">
           <button
@@ -410,6 +422,7 @@ import {
   ChevronDown,
   Terminal,
   FolderKanban,
+  FolderOpen,
   Minimize2,
   Monitor,
   X,
@@ -447,6 +460,9 @@ import type { ProcessLifecycleStatus } from '@/types/models';
 import { useRunSession } from '@/composables/useRunSession';
 import { useTabDrag } from '@/composables/useTabDrag';
 import { ipcClient } from '@/ipc/client';
+import { useSshHosts } from '@/composables/useSshHosts';
+import { useFileDrag } from '@/composables/useFileDrag';
+import type { FileLocation } from '@/types/files';
 
 const emit = defineEmits<{
   (e: 'request-stop-process', commandId: number): void;
@@ -804,7 +820,13 @@ const splitPanelWithNewTerminal = async (
     // 1. Determine CWD strictly from the active tab in the target panel
     const targetPanel = findPanelById(currentTilingRoot.value, targetPanelId);
     const sourceTab = targetPanel ? tabsMap.value.get(targetPanel.activeTabId) : null;
-    const cwd = sourceTab?.cwd;
+    // From a local Files tab, the new terminal opens in the folder shown.
+    const cwd =
+      sourceTab?.kind === 'files'
+        ? sourceTab.filesLocation?.kind === 'local'
+          ? sourceTab.filesPath
+          : undefined
+        : sourceTab?.cwd;
 
     await refreshProcesses();
     const terminal = await ipcClient.openTerminal(cwd);
@@ -858,7 +880,13 @@ const handleNewTabInPanel = async (targetPanelId: string) => {
   try {
     const targetPanel = findPanelById(currentTilingRoot.value, targetPanelId);
     const sourceTab = targetPanel ? tabsMap.value.get(targetPanel.activeTabId) : null;
-    const cwd = sourceTab?.cwd;
+    // From a local Files tab, the new terminal opens in the folder shown.
+    const cwd =
+      sourceTab?.kind === 'files'
+        ? sourceTab.filesLocation?.kind === 'local'
+          ? sourceTab.filesPath
+          : undefined
+        : sourceTab?.cwd;
 
     await refreshProcesses();
     const terminal = await ipcClient.openTerminal(cwd);
@@ -1186,11 +1214,84 @@ const openEmptyTerminal = async () => {
   }
 };
 
+let filesTabSeq = 0;
+
+/** Opens a Files pane tab (SCR-08) in the focused panel. */
+const openFilesTab = (options: {
+  location: FileLocation;
+  path?: string;
+  label?: string;
+  accent?: string | null;
+}) => {
+  filesTabSeq += 1;
+  const label = options.label || 'Máy này';
+  const newTab: OpenTabItem = {
+    id: `files-${Date.now()}-${filesTabSeq}`,
+    // Files tabs have no process; a negative id never matches one.
+    commandId: -1_000_000 - filesTabSeq,
+    name: `${label}: …`,
+    isManual: false,
+    kind: 'files',
+    filesLocation: options.location,
+    filesPath: options.path,
+    filesLabel: label,
+    filesAccent: options.accent ?? null,
+  };
+  allOpenTabs.value.push(newTab);
+
+  const panels = collectAllPanels(currentTilingRoot.value);
+  if (panels.length > 0) {
+    const targetPanelId = currentActivePanelId.value || panels[0].id;
+    currentTilingRoot.value = addTabToPanel(currentTilingRoot.value!, targetPanelId, newTab.id);
+    handleSelectTab(targetPanelId, newTab.id);
+  } else {
+    const panel = createPanel([newTab.id], newTab.id);
+    currentTilingRoot.value = panel;
+    currentActivePanelId.value = panel.id;
+    activeTabId.value = newTab.id;
+  }
+};
+
+const { hosts: sshHosts } = useSshHosts();
+
+/**
+ * "Tệp" / Ctrl+Shift+E: an SSH terminal opens its host's files, a local
+ * terminal its current folder, a Files tab another view of the same place.
+ */
+const openFilesForContext = () => {
+  const tab = activeTabId.value ? tabsMap.value.get(activeTabId.value) : undefined;
+  if (tab?.kind === 'files' && tab.filesLocation) {
+    openFilesTab({
+      location: tab.filesLocation,
+      path: tab.filesPath,
+      label: tab.filesLabel,
+      accent: tab.filesAccent,
+    });
+    return;
+  }
+  if (tab?.hostId) {
+    const host = sshHosts.value.find((candidate) => candidate.id === tab.hostId);
+    openFilesTab({
+      location: { kind: 'ssh', host_id: tab.hostId },
+      path: host?.default_dir || undefined,
+      label: host?.name || 'Máy chủ',
+      accent: host?.color,
+    });
+    return;
+  }
+  openFilesTab({ location: { kind: 'local' }, path: tab?.cwd || undefined });
+};
+
+useKeyCommand('files.open', () => {
+  openFilesForContext();
+});
+
 const openCommandTab = (
   commandId: number,
   commandName: string,
   runEventId?: string,
-  shellKind?: string
+  shellKind?: string,
+  hostId?: string
 ) => {
   // Check if already open
   const existing = allOpenTabs.value.find(t => t.commandId === commandId);
@@ -1208,6 +1309,7 @@ const openCommandTab = (
     name: commandName,
     runEventId,
     shellKind,
+    hostId,
     isManual: false,
   };
   allOpenTabs.value.push(newTab);
@@ -1294,6 +1396,24 @@ const handleConfirmKillAll = async (force: boolean) => {
 // ----------------------------------------------------
 const xtermPaneRefs = new Map<string, InstanceType<typeof XtermPane>>();
 
+// Files dropped on a terminal: useFileDrag asks what the tab is and pastes
+// the (uploaded) paths through its XtermPane.
+const fileDrag = useFileDrag();
+fileDrag.setTerminalResolver((tabId) => {
+  const tab = tabsMap.value.get(tabId);
+  const pane = xtermPaneRefs.get(tabId);
+  if (!tab || tab.kind === 'files' || !pane) return null;
+  return {
+    tabId,
+    hostId: tab.hostId,
+    cwd: tab.cwd,
+    shellKind: tab.shellKind,
+    label: tab.title || tab.name,
+    running: getProcessStatus(tab.commandId) === 'running',
+    paste: (text: string) => pane.pasteText(text),
+  };
+});
+
 const registerXtermRef = (tabId: string, instance: unknown) => {
   const inst = instance as InstanceType<typeof XtermPane> | null;
   if (inst) {
@@ -1325,7 +1445,8 @@ const tabLabel = (tab: OpenTabItem) => {
 const quickAccessTarget = computed<QuickAccessTarget | null>(() => {
   if (!activeTabId.value) return null;
   const targetTab = tabsMap.value.get(activeTabId.value);
-  if (!targetTab) return null;
+  // A Files tab has no terminal to send commands to.
+  if (!targetTab || targetTab.kind === 'files') return null;
   const status = getProcessStatus(targetTab.commandId);
   const busy = targetTab.phase === 'running';
 
@@ -1527,11 +1648,13 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  fileDrag.setTerminalResolver(null);
   if (toastTimer) clearTimeout(toastTimer);
 });
 
 defineExpose({
   openCommandTab,
+  openFilesTab,
   openEmptyTerminal,
   openTabs: allOpenTabs,
   openTabCommandIds: computed(() => allOpenTabs.value.map(t => t.commandId)),

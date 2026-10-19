@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod events;
+pub mod files;
 pub mod keychain;
 pub mod ssh;
 

@@ -3,6 +3,7 @@ pub mod backup;
 pub mod clock;
 pub mod db;
 pub mod error;
+pub mod files;
 pub mod keybindings;
 pub mod os_history;
 pub mod process;
@@ -117,6 +118,7 @@ mod desktop {
                     ipc: ipc_pipe,
                 });
                 app.manage(ipc::ssh::SshState::new(app.handle(), &dir));
+                app.manage(ipc::files::FilesState::new(app.handle()));
 
                 let handle = app.handle().clone();
                 let state = app.state::<ipc::AppState>();
@@ -220,6 +222,20 @@ mod desktop {
                 ipc::keychain::ssh_identity_create,
                 ipc::keychain::ssh_identity_update,
                 ipc::keychain::ssh_identity_delete,
+                ipc::files::fs_home,
+                ipc::files::fs_list,
+                ipc::files::fs_mkdir,
+                ipc::files::fs_rename,
+                ipc::files::fs_delete,
+                ipc::files::fs_open_local,
+                ipc::files::fs_open_remote,
+                ipc::files::transfer_start,
+                ipc::files::transfer_resolve,
+                ipc::files::transfer_cancel,
+                ipc::files::transfer_retry,
+                ipc::files::transfer_list,
+                ipc::files::transfer_get,
+                ipc::files::transfer_clear_finished,
             ])
             .run(tauri::generate_context!())
             .expect("error while running Command Manager");

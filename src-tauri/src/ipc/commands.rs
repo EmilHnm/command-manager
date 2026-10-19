@@ -1754,7 +1754,11 @@ pub fn open_url(url: String) -> Result<()> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(Error::msg("Chỉ hỗ trợ mở đường dẫn http hoặc https"));
     }
+    open_with_os(&url)
+}
 
+/// Hands a URL or a local file to the OS default handler.
+pub(crate) fn open_with_os(url: &str) -> Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -1762,7 +1766,7 @@ pub fn open_url(url: String) -> Result<()> {
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-        let wide_url: Vec<u16> = std::ffi::OsStr::new(&url)
+        let wide_url: Vec<u16> = std::ffi::OsStr::new(url)
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
@@ -1781,7 +1785,7 @@ pub fn open_url(url: String) -> Result<()> {
             );
             if (ret.0 as usize) <= 32 {
                 return Err(Error::msg(format!(
-                    "Không thể mở trình duyệt: mã lỗi {}",
+                    "Không thể mở: mã lỗi {}",
                     ret.0 as usize
                 )));
             }
@@ -1791,7 +1795,7 @@ pub fn open_url(url: String) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
-            .arg(&url)
+            .arg(url)
             .spawn()
             .map_err(|e| Error::msg(e.to_string()))?;
     }
@@ -1799,7 +1803,7 @@ pub fn open_url(url: String) -> Result<()> {
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         std::process::Command::new("xdg-open")
-            .arg(&url)
+            .arg(url)
             .spawn()
             .map_err(|e| Error::msg(e.to_string()))?;
     }

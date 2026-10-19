@@ -60,6 +60,9 @@
       :request="authRequest"
       @resolved="authRequest = null"
     />
+
+    <!-- Files: drag label, Transfers drawer, MOD-20, notices (SCR-08) -->
+    <TransfersLayer />
   </div>
 </template>
 
@@ -74,6 +77,10 @@ import ShutdownOverlay from '@/components/dialogs/ShutdownOverlay.vue';
 import CloseConfirmModal from '@/components/dialogs/CloseConfirmModal.vue';
 import HostKeyVerificationModal from '@/components/dialogs/HostKeyVerificationModal.vue';
 import SshAuthPromptModal from '@/components/dialogs/SshAuthPromptModal.vue';
+import TransfersLayer from '@/components/files/TransfersLayer.vue';
+import { useTransfers } from '@/composables/useTransfers';
+import { useFileDrag } from '@/composables/useFileDrag';
+import { useSshHosts } from '@/composables/useSshHosts';
 import type { SshHostkeyRequestEvent, SshAuthRequestEvent } from '@/ipc/events';
 import { useAppLifecycle } from '@/composables/useAppLifecycle';
 import { useRunSession } from '@/composables/useRunSession';
@@ -88,6 +95,12 @@ import {
 } from '@/keybindings/dispatcher';
 
 const { fetchKeybindings } = useKeybindings();
+const transfers = useTransfers();
+const fileDrag = useFileDrag();
+
+useKeyCommand('transfers.toggle', () => {
+  transfers.toggleDrawer();
+});
 
 const router = useRouter();
 const route = useRoute();
@@ -195,9 +208,18 @@ onMounted(async () => {
   unlistenAuth = await ipcClient.onSshAuthRequest((req) => {
     authRequest.value = req;
   });
+  void transfers.listen().then((stop) => (unlistenTransfers = stop));
+  void fileDrag.listenOsDrops().then((stop) => (unlistenOsDrops = stop));
+  // Host names for transfer labels.
+  void useSshHosts().fetchHosts();
 });
 
+let unlistenTransfers: (() => void) | null = null;
+let unlistenOsDrops: (() => void) | null = null;
+
 onUnmounted(() => {
+  unlistenTransfers?.();
+  unlistenOsDrops?.();
   if (unlistenHostkey) unlistenHostkey();
   if (unlistenAuth) unlistenAuth();
   disposeLifecycleListener();

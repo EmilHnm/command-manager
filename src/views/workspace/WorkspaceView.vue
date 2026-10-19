@@ -319,11 +319,29 @@ watch(() => [
   route.query.runCommandId,
   route.query.runCommandName,
   route.query.runEventId,
+  route.query.openFiles,
 ], () => {
   if (workspaceReady.value) void openRequestedCommand();
 });
 
+/** `/workspace?openFiles=<host id | local>`: a Files pane from SCR-07. */
+const openRequestedFiles = async (): Promise<boolean> => {
+  const target = route.query.openFiles;
+  if (typeof target !== 'string' || !target) return false;
+  const text = (key: string) => (typeof route.query[key] === 'string' ? (route.query[key] as string) : undefined);
+  await nextTick();
+  dockHostRef.value?.openFilesTab({
+    location: target === 'local' ? { kind: 'local' } : { kind: 'ssh', host_id: target },
+    path: text('filesPath'),
+    label: text('filesLabel'),
+    accent: text('filesAccent'),
+  });
+  await router.replace({ path: '/workspace' });
+  return true;
+};
+
 const openRequestedCommand = async () => {
+  if (await openRequestedFiles()) return;
   const rawRunEventId = route.query.runEventId;
   const rawTerminalCommandId = route.query.runCommandId;
   const rawTerminalCommandName = route.query.runCommandName;
@@ -341,7 +359,15 @@ const openRequestedCommand = async () => {
     try {
       await nextTick();
       await refreshProcesses();
-      dockHostRef.value?.openCommandTab(terminalCommandId, rawTerminalCommandName, rawRunEventId);
+      // SSH terminals carry their host so "Tệp" can open the same server.
+      const sshHostId = typeof route.query.sshHostId === 'string' ? route.query.sshHostId : undefined;
+      dockHostRef.value?.openCommandTab(
+        terminalCommandId,
+        rawTerminalCommandName,
+        rawRunEventId,
+        sshHostId ? 'ssh' : undefined,
+        sshHostId
+      );
       await router.replace({ path: '/workspace' });
     } catch (error) {
       launchError.value = error instanceof Error ? error.message : String(error);

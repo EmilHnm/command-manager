@@ -21,6 +21,22 @@
     </div>
 
     <div class="status-right">
+      <!-- Transfers (SCR-08): click opens the drawer -->
+      <button
+        v-if="jobs.length > 0"
+        type="button"
+        class="status-item status-transfers"
+        :class="{ 'has-running': activeTotals.count > 0 }"
+        :title="`Truyền file ${keyLabel('transfers.toggle')}`"
+        @click="toggleDrawer"
+      >
+        <ArrowUpDown :size="12" class="status-icon" />
+        <span v-if="activeTotals.count > 0">
+          {{ activeTotals.count }} đang chuyển · {{ activeTotals.percent }}% · {{ formatBytes(activeTotals.bytesPerSec) }}/s
+        </span>
+        <span v-else>Truyền file</span>
+      </button>
+
       <!-- Single Instance Status -->
       <div class="status-item" title="Trạng thái khóa Single-Instance của ứng dụng">
         <Lock :size="12" class="status-icon" />
@@ -38,11 +54,15 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { Cpu, Database, Lock } from 'lucide-vue-next';
+import { ArrowUpDown, Cpu, Database, Lock } from 'lucide-vue-next';
+import { useTransfers } from '@/composables/useTransfers';
+import { formatBytes } from '@/types/files';
+import { keyLabel } from '@/keybindings/dispatcher';
 import { useRunSession } from '@/composables/useRunSession';
 import { ipcClient, isTauriRuntime } from '@/ipc/client';
 
 const { activeProcesses } = useRunSession();
+const { jobs, activeTotals, toggleDrawer } = useTransfers();
 const ringBufferLimit = ref(2 * 1024 * 1024);
 const autostartEnabled = ref(false);
 
@@ -105,6 +125,24 @@ onMounted(async () => {
 
 .status-icon {
   color: var(--text-muted);
+}
+
+.status-transfers {
+  background: transparent;
+  border: none;
+  padding: 0 6px;
+  height: 100%;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.status-transfers:hover {
+  background-color: var(--bg-surface-hover);
+}
+
+.status-transfers.has-running .status-icon {
+  color: #e4b5ff;
 }
 
 .status-dot {

@@ -15,7 +15,14 @@ pub const SETTING_KEY: &str = "keybindings";
 const MAX_ENTRIES: usize = 500;
 
 /// Scopes a user binding may target. `modal` holds fixed keys.
-const SCOPES: &[&str] = &["global", "workspace", "explorer", "terminal", "suggest"];
+const SCOPES: &[&str] = &[
+    "global",
+    "workspace",
+    "explorer",
+    "terminal",
+    "files",
+    "suggest",
+];
 /// Canonical modifier order. `mod` is Ctrl on Linux/Windows and Cmd on macOS.
 const MODIFIERS: &[&str] = &["mod", "ctrl", "shift", "alt", "meta"];
 const NAMED_KEYS: &[&str] = &[

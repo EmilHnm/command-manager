@@ -238,6 +238,7 @@ const ALL_SCOPE_LABELS: Record<KeyScope, string> = {
   global: 'Toàn ứng dụng (Global Navigation)',
   terminal: 'Terminal đang gõ (Terminal Active)',
   explorer: 'Cây nhóm lệnh (Explorer)',
+  files: 'Trình quản lý file (Files)',
   suggest: 'Gợi ý lệnh (Suggest)',
   modal: 'Hộp thoại (Modal)',
 };
@@ -246,7 +247,7 @@ const availableScopes = computed<KeyScope[]>(() => {
   if (props.allowedScopes && props.allowedScopes.length > 0) {
     return props.allowedScopes;
   }
-  return ['workspace', 'global', 'terminal', 'explorer', 'suggest'];
+  return ['workspace', 'global', 'terminal', 'explorer', 'files', 'suggest'];
 });
 
 watch(

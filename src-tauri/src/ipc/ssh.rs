@@ -41,7 +41,7 @@ struct Pending {
 }
 
 pub struct SshState {
-    manager: SshManager,
+    pub(crate) manager: SshManager,
     pub(crate) vault: Arc<Vault>,
     known: Arc<KnownHosts>,
     pending: Arc<Pending>,

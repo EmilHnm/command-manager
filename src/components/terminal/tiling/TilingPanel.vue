@@ -39,8 +39,15 @@
               @pointerdown="handleTabPointerDown($event, item.tabId)"
               @dblclick.stop="handleTabDblClick(item.tabId)"
             >
+              <Folder
+                v-if="tabsMap.get(item.tabId)?.kind === 'files'"
+                :size="12"
+                class="tab-files-icon"
+                :style="{ color: tabsMap.get(item.tabId)?.filesAccent || '#e4b5ff' }"
+              />
               <!-- Tab status indicator dot -->
               <span
+                v-else
                 class="tab-status-dot"
                 :class="[getTabStatus(item.tabId), { active: getTabStatus(item.tabId) === 'running' }]"
               />
@@ -143,6 +150,7 @@
 
         <!-- Reattach Buffer -->
         <button
+          v-if="!activeIsFiles"
           class="panel-action-btn"
           title="Xả lại dữ liệu từ Ring Buffer in-memory"
           @click.stop="handleReattachActive"
@@ -152,6 +160,7 @@
 
         <!-- Clear Screen -->
         <button
+          v-if="!activeIsFiles"
           class="panel-action-btn"
           title="Xóa màn hình terminal"
           @click.stop="handleClearActive"
@@ -161,7 +170,7 @@
 
         <!-- Stop Process Button (if active tab running) -->
         <button
-          v-if="activeTabStatus === 'running' && activeTab"
+          v-if="activeTabStatus === 'running' && activeTab && !activeIsFiles"
           class="panel-action-btn btn-stop"
           title="Dừng tiến trình (SIGTERM)"
           @click.stop="$emit('stop-process', activeTab.commandId)"
@@ -214,9 +223,19 @@
         <div
           v-show="tabId === panel.activeTabId"
           class="panel-tab-pane"
+          :data-terminal-tab-id="tabsMap.get(tabId)?.kind === 'files' ? undefined : tabId"
         >
+          <FilesPane
+            v-if="tabsMap.get(tabId)?.kind === 'files' && tabsMap.get(tabId)!.filesLocation"
+            :pane-id="tabId"
+            :location="tabsMap.get(tabId)!.filesLocation!"
+            :initial-path="tabsMap.get(tabId)!.filesPath"
+            :location-label="tabsMap.get(tabId)!.filesLabel || 'Máy này'"
+            :accent="tabsMap.get(tabId)!.filesAccent"
+            @path-change="(path) => handleFilesPathChange(tabId, path)"
+          />
           <XtermPane
-            v-if="tabsMap.get(tabId)"
+            v-else-if="tabsMap.get(tabId)"
             :ref="(el) => registerPaneRef(tabId, el)"
             :command-id="tabsMap.get(tabId)!.commandId"
             :command-name="tabsMap.get(tabId)!.name"
@@ -270,9 +289,12 @@ import {
   Plus,
   Link2,
   FolderInput,
+  Folder,
   Globe,
 } from 'lucide-vue-next';
 import XtermPane from '@/components/terminal/XtermPane.vue';
+import FilesPane from '@/components/files/FilesPane.vue';
+import type { FileLocation } from '@/types/files';
 import type { TilingPanelNode, SyncInputMode } from '@/types/tiling';
 import type { ProcessLifecycleStatus } from '@/types/models';
 import { useRunSession } from '@/composables/useRunSession';
@@ -289,6 +311,15 @@ export interface OpenTabItem {
   cwd?: string;
   title?: string;
   phase?: 'prompt' | 'input' | 'running';
+  /** 'files' tabs host a FilesPane instead of a terminal (SCR-08). */
+  kind?: 'terminal' | 'files';
+  /** SSH terminals: the host, so "open files" can follow it. */
+  hostId?: string;
+  filesLocation?: FileLocation;
+  filesPath?: string;
+  /** Host name or "Máy này". */
+  filesLabel?: string;
+  filesAccent?: string | null;
 }
 
 import { useTabDrag } from '@/composables/useTabDrag';
@@ -347,12 +378,15 @@ const activeTab = computed<OpenTabItem | null>(() => {
   return props.tabsMap.get(props.panel.activeTabId) || null;
 });
 
+const activeIsFiles = computed(() => activeTab.value?.kind === 'files');
+
 const activeTabCwd = computed(() => {
+  if (activeIsFiles.value) return activeTab.value?.filesPath || '';
   return activeTab.value?.cwd || '';
 });
 
 const activeTabStatus = computed<ProcessLifecycleStatus>(() => {
-  if (!activeTab.value) return 'idle';
+  if (!activeTab.value || activeTab.value.kind === 'files') return 'idle';
   return getProcessStatus(activeTab.value.commandId);
 });
 
@@ -369,6 +403,7 @@ const getTabTitle = (tabId: string): string => {
 const getTabTooltip = (tabId: string): string => {
   const tab = props.tabsMap.get(tabId);
   if (!tab) return '';
+  if (tab.kind === 'files') return `${tab.filesLabel || 'Máy này'}: ${tab.filesPath || ''}`;
   const fullTitle = tab.title || tab.name || 'Terminal';
   const nameExtra = tab.title && tab.name && tab.title !== tab.name ? ` [${tab.name}]` : '';
   const pid = getTabPid(tabId);
@@ -379,13 +414,13 @@ const getTabTooltip = (tabId: string): string => {
 
 const getTabStatus = (tabId: string): ProcessLifecycleStatus => {
   const tab = props.tabsMap.get(tabId);
-  if (!tab) return 'idle';
+  if (!tab || tab.kind === 'files') return 'idle';
   return getProcessStatus(tab.commandId);
 };
 
 const getTabPid = (tabId: string): number | undefined => {
   const tab = props.tabsMap.get(tabId);
-  if (!tab) return undefined;
+  if (!tab || tab.kind === 'files') return undefined;
   return getProcessInfo(tab.commandId)?.pid ?? undefined;
 };
 
@@ -403,9 +438,18 @@ const handlePanelPointerDown = () => {
 
 const handleTabDblClick = (tabId: string) => {
   const tab = props.tabsMap.get(tabId);
-  if (tab) {
+  if (tab && tab.kind !== 'files') {
     emit('rename-tab', tab);
   }
+};
+
+/** The tab follows the folder: "prod-api: app", tooltip with the full path. */
+const handleFilesPathChange = (tabId: string, path: string) => {
+  const tab = props.tabsMap.get(tabId);
+  if (!tab) return;
+  tab.filesPath = path;
+  const leaf = path.split(/[\\/]/).filter(Boolean).pop() || path;
+  tab.name = `${tab.filesLabel || 'Máy này'}: ${leaf}`;
 };
 
 const handleTabCwdChange = (tabId: string, cwd: string) => {
@@ -711,6 +755,10 @@ defineExpose({
   height: 6px;
   border-radius: 9999px;
   background-color: var(--text-muted, #64748b);
+  flex-shrink: 0;
+}
+
+.tab-files-icon {
   flex-shrink: 0;
 }
 

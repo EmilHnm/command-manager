@@ -1110,6 +1110,34 @@ Sự kiện: `transfer-progress`, `transfer-conflict`, `transfer-done`.
 | **2. Files & kéo thả** | Tab `kind: 'files'`, SCR-08, MOD-20, ngăn Transfers, `fs_*`, `transfer_*`, kéo từ OS vào, thả vào terminal SSH | Phần chính của yêu cầu kéo thả. |
 | **3. Mở rộng** | Kéo **ra** OS (`tauri-plugin-drag`, tải về thư mục tạm trước), tải về & mở tệp server, ProxyJump nhiều cấp, chạy Command/Group trên server (`command_definition.ssh_host_id`), resume tệp lớn | Đánh giá lại sau giai đoạn 2. |
 
+**Trạng thái giai đoạn 2 (đã làm):**
+* Backend: `src-tauri/src/files/` (thao tác file chung cho local và SFTP, hàng đợi truyền) và `src-tauri/src/ipc/files.rs` (lệnh `fs_*`, `transfer_*`, sự kiện `files://transfer-progress | transfer-conflict | transfer-done`).
+  * Phiên SFTP mở trên kết nối SSH dùng chung, giữ lại 5 phút sau lần dùng cuối.
+  * Mỗi lượt truyền chạy tối đa 3 tệp cùng lúc, toàn app tối đa 6.
+  * Mỗi lượt chỉ mở một hộp thoại MOD-20 tại một thời điểm, nên "Áp dụng cho các xung đột còn lại" có tác dụng với các tệp đang chờ phía sau.
+* Frontend:
+  * Tab Files trong Workspace (nút **Tệp** trên thanh công cụ, `Ctrl+Shift+E`, hoặc menu `⋯ → Mở Trình Quản Lý File` ở SCR-07).
+  * Ngăn Transfers mở bằng `⇅` trên thanh trạng thái hoặc `Ctrl+Shift+J`.
+  * MOD-20 và thông báo ngắn khi một lượt truyền xong.
+* Kéo thả: giữa hai Files pane (local ↔ server, server ↔ server) và từ trình quản lý file của hệ điều hành vào Files pane.
+
+**Bổ sung để hoàn thiện giai đoạn 2:**
+* **Thả vào terminal** (kéo trong app hoặc từ hệ điều hành):
+  * Terminal local: chèn đường dẫn đã quote.
+  * Terminal SSH, tệp đã nằm trên cùng server: chèn đường dẫn ở xa.
+  * Terminal SSH, tệp ở nơi khác: tải lên thư mục shell đang đứng, rồi chèn đường dẫn. Thư mục đó lấy từ OSC 633 `P;Cwd` hoặc OSC 7 (`file://host/path`, nhiều distro bật sẵn); không có thì dùng home.
+  * Kéo tệp trên server vào terminal local thì bị chặn, kèm giải thích.
+* **Mở tệp trên server:** tải bản sao về thư mục tạm (`command-manager-open/`, tối đa 256 MB) rồi mở bằng ứng dụng mặc định. Sửa bản sao không tự lưu ngược lên server; thông báo nhắc kéo tệp ngược lên.
+* **Mất kết nối khi đang truyền:**
+  * Lượt truyền thất bại trong lúc không có kết nối tới server được đánh dấu `connection_lost`.
+  * Giao diện tự gọi `transfer_retry` sau 3s, 10s và 30s (lần thử đầu sẽ mở lại kết nối, có thể hỏi mật khẩu).
+  * Hủy tay hoặc hết 3 lần thì dừng.
+  * Tệp đang chép dở được chép lại từ đầu.
+* **Phím trong Files pane** vào registry với phạm vi mới `files` (độ ưu tiên 3, hoạt động khi focus trong Files pane và không ở ô nhập):
+  * `files.rename` F2, `files.refresh` F5, `files.newFolder` Ctrl+Shift+N, `files.toggleHidden` Ctrl+H, `files.selectAll` Ctrl+A, `files.copyPath` Ctrl+Shift+C.
+  * Enter / Backspace / Delete là phím cố định 🔒.
+  * Backend `SCOPES` đã có `files`.
+
 ---
 
 ## 4. Thiết kế Chi tiết Các Hộp Thoại & Hộp Cảnh Báo (Modals & Dialogs)

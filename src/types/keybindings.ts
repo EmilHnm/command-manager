@@ -1,6 +1,6 @@
-export type KeyScope = 'global' | 'workspace' | 'explorer' | 'terminal' | 'suggest' | 'modal';
+export type KeyScope = 'global' | 'workspace' | 'explorer' | 'terminal' | 'files' | 'suggest' | 'modal';
 
-export type KeyCategory = 'app' | 'nav' | 'workspace' | 'terminal' | 'suggest';
+export type KeyCategory = 'app' | 'nav' | 'workspace' | 'terminal' | 'files' | 'suggest';
 
 export interface KeyDefaultBinding {
   key: string;

@@ -349,6 +349,8 @@ export function getScopeLabel(scope: KeyScope | string): string {
       return 'Cây nhóm lệnh';
     case 'terminal':
       return 'Terminal đang gõ';
+    case 'files':
+      return 'Trình quản lý file';
     case 'suggest':
       return 'Terminal có gợi ý';
     case 'modal':

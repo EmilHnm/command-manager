@@ -10,6 +10,7 @@ const SCOPE_PRIORITIES: Record<KeyScope, number> = {
   suggest: 4,
   terminal: 3,
   explorer: 3,
+  files: 3,
   workspace: 2,
   global: 1,
 };
@@ -109,6 +110,10 @@ export function getCurrentScopes(): Set<KeyScope> {
     }
     if (active.closest('.group-tree-container') || active.closest('.explorer-sidebar')) {
       scopes.add('explorer');
+    }
+    // A Files pane, but not while typing a name or a path inside it.
+    if (active.closest('.files-pane') && active.tagName !== 'INPUT' && active.tagName !== 'TEXTAREA') {
+      scopes.add('files');
     }
     for (const el of suggestElements) {
       if (el === active || el.contains(active)) {

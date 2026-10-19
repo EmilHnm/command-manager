@@ -13,6 +13,9 @@ export const IPC_EVENTS = {
   SSH_STATUS: 'ssh://status',
   SSH_HOSTKEY_REQUEST: 'ssh://hostkey-request',
   SSH_AUTH_REQUEST: 'ssh://auth-request',
+  TRANSFER_PROGRESS: 'files://transfer-progress',
+  TRANSFER_CONFLICT: 'files://transfer-conflict',
+  TRANSFER_DONE: 'files://transfer-done',
 } as const;
 
 export interface PtyDataEvent {
