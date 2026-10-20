@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible && template" class="modal-backdrop" @click.self="$emit('close')">
+  <div v-if="visible && template" class="modal-backdrop">
     <div class="template-run-modal" @keydown.enter.exact="handleEnter">
       <!-- Modal Header -->
       <div class="modal-header">

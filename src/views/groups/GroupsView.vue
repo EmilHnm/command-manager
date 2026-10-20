@@ -168,7 +168,7 @@
     </main>
 
     <!-- Create / Edit Group Modal (MOD-04) -->
-    <div v-if="showGroupModal" class="modal-backdrop" @click.self="showGroupModal = false">
+    <div v-if="showGroupModal" class="modal-backdrop">
       <div class="modal-content group-modal">
         <div class="modal-header">
           <div class="modal-title">

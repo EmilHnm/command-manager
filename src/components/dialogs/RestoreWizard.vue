@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="modal-backdrop" @click.self="$emit('close')">
+  <div v-if="visible" class="modal-backdrop">
     <div class="modal-content wizard-modal">
       <div class="modal-header">
         <div class="modal-title">

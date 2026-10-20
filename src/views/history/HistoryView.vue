@@ -248,7 +248,7 @@
       <div v-else class="command-history-empty">Chưa có lịch sử lệnh phù hợp.</div>
     </section>
 
-    <div v-if="showLogModal" class="modal-backdrop" @click.self="showLogModal = false">
+    <div v-if="showLogModal" class="modal-backdrop">
       <div class="modal-content log-modal">
         <div class="modal-header">
           <div class="modal-title">

@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="modal-backdrop" @click.self="$emit('cancel')">
+  <div v-if="visible" class="modal-backdrop">
     <div
       class="close-modal-card"
       :class="{ 'has-running': runningList.length > 0 }"

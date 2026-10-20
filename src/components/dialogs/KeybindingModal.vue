@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="modal-backdrop" @click.self="handleCancel">
+  <div v-if="visible" class="modal-backdrop">
     <div class="keybinding-modal-container">
       <!-- Violet Accent Hazard Ribbon -->
       <div class="hazard-stripe"></div>

@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="modal-backdrop" @click.self="$emit('cancel')">
+  <div v-if="visible" class="modal-backdrop">
     <div class="confirm-modal-container" :class="{ 'is-danger': danger }">
       <!-- Hazard Ribbon for Destructive Actions -->
       <div v-if="danger" class="hazard-stripe"></div>

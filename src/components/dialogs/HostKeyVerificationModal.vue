@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible && currentRequest" class="modal-backdrop" @click.self="handleCancel">
+  <div v-if="visible && currentRequest" class="modal-backdrop">
     <div
       class="hostkey-modal"
       :class="{ 'is-danger': isKeyChanged }"

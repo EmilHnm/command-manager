@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="modal-backdrop" @click.self="$emit('cancel')">
+  <div v-if="visible" class="modal-backdrop">
     <div
       class="ssh-editor-modal"
       role="dialog"

@@ -352,7 +352,7 @@
     />
 
     <!-- Import Preview Dialog -->
-    <div v-if="showImportPreview" class="modal-backdrop" @click.self="showImportPreview = false">
+    <div v-if="showImportPreview" class="modal-backdrop">
       <div class="import-preview-container">
         <header class="modal-header">
           <div class="header-title-wrap">

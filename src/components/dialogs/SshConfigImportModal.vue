@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="modal-backdrop" @click.self="$emit('close')">
+  <div v-if="visible" class="modal-backdrop">
     <div
       class="config-import-modal"
       role="dialog"

@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="modal-fade">
-      <div v-if="visible" class="modal-backdrop" @click.self="handleClose">
+      <div v-if="visible" class="modal-backdrop">
         <div class="modal-card bg-processes-modal" role="dialog" aria-modal="true">
           <!-- Modal Header -->
           <div class="modal-header">

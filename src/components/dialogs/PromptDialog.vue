@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="modal-backdrop" @click.self="handleCancel">
+  <div v-if="visible" class="modal-backdrop">
     <div class="prompt-modal-container animate-fade-in" role="dialog" aria-modal="true">
       <!-- Gradient Header Line -->
       <div class="header-gradient-line"></div>

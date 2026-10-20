@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="modal-backdrop" @click.self="$emit('cancel')">
+  <div v-if="visible" class="modal-backdrop">
     <div class="rename-modal-container" role="dialog" aria-modal="true" aria-labelledby="rename-modal-title">
       <!-- Top Accent Ribbon -->
       <div class="modal-accent-bar" />

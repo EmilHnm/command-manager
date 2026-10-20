@@ -2,7 +2,6 @@
   <div
     v-if="request"
     class="modal-backdrop"
-    @click.self="answer(null)"
     @keydown="handleKeydown"
   >
     <div ref="dialogEl" class="run-target-modal" role="dialog" aria-modal="true" tabindex="-1">

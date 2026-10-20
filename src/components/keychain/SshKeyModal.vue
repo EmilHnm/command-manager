@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="modal-backdrop" @click.self="close" @keydown.esc="close">
+  <div v-if="visible" class="modal-backdrop" @keydown.esc="close">
     <div class="keychain-modal" role="dialog" aria-modal="true" aria-labelledby="ssh-key-title">
       <div class="modal-accent-bar" style="background-color: #744791" />
 

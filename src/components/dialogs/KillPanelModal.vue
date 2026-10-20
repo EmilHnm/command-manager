@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="modal-backdrop" @click.self="!loading && $emit('cancel')">
+  <div v-if="visible" class="modal-backdrop">
     <div class="modal-content kill-panel-modal">
       <!-- Hazard Ribbon -->
       <div class="hazard-stripe" />
