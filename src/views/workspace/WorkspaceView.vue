@@ -184,6 +184,8 @@ import StopProcessModal from '@/components/dialogs/StopProcessModal.vue';
 import BackgroundProcessesModal from '@/components/dialogs/BackgroundProcessesModal.vue';
 import { useGroups } from '@/composables/useGroups';
 import { useRunSession } from '@/composables/useRunSession';
+import { useRunTargetPicker } from '@/composables/useRunTargetPicker';
+import { LOCAL_TARGET } from '@/types/models';
 import { ipcClient } from '@/ipc/client';
 import type { CommandGroupWithCommands, CommandDefinition } from '@/types/models';
 
@@ -325,6 +327,8 @@ watch(() => [
 });
 
 /** `/workspace?openFiles=<host id | local>`: a Files pane from SCR-07. */
+const { pick: pickRunTarget } = useRunTargetPicker();
+
 const openRequestedFiles = async (): Promise<boolean> => {
   const target = route.query.openFiles;
   if (typeof target !== 'string' || !target) return false;
@@ -390,10 +394,24 @@ const openRequestedCommand = async () => {
     await nextTick();
     const command = (await ipcClient.listCommands()).find(item => item.id === commandId);
     if (!command) throw new Error(`Không tìm thấy lệnh #${commandId}`);
+    // Several run targets: ask where (RunTargetModal), unless the caller said.
+    const requested = typeof route.query.runTarget === 'string' ? route.query.runTarget : undefined;
+    const target = requested ?? (await pickRunTarget(command, ipcClient.lastRunTarget(command.id)));
+    if (target === null) {
+      await router.replace({ path: '/workspace' });
+      return;
+    }
     await refreshProcesses();
-    const result = await ipcClient.runCommand(command.id);
+    const result = await ipcClient.runCommand(command.id, target);
     await refreshProcesses();
-    dockHostRef.value?.openCommandTab(command.id, command.name, result.runEventId);
+    const remote = target !== LOCAL_TARGET;
+    dockHostRef.value?.openCommandTab(
+      command.id,
+      command.name,
+      result.runEventId,
+      remote ? 'ssh' : undefined,
+      remote ? target : undefined
+    );
     await router.replace({ path: '/workspace' });
   } catch (error) {
     launchError.value = error instanceof Error ? error.message : String(error);

@@ -462,6 +462,7 @@ import { useTabDrag } from '@/composables/useTabDrag';
 import { ipcClient } from '@/ipc/client';
 import { useSshHosts } from '@/composables/useSshHosts';
 import { useFileDrag } from '@/composables/useFileDrag';
+import { useRunTargetPicker } from '@/composables/useRunTargetPicker';
 import type { FileLocation } from '@/types/files';
 
 const emit = defineEmits<{
@@ -1298,6 +1299,14 @@ const openCommandTab = (
   if (existing) {
     const containingPanel = findPanelByTabId(currentTilingRoot.value, existing.id);
     if (containingPanel) {
+      // A new run of the same command: point the tab at it. The pane is
+      // keyed by runEventId, so it remounts and replays the new output.
+      if (runEventId && existing.runEventId !== runEventId) {
+        existing.runEventId = runEventId;
+        existing.shellKind = shellKind;
+        existing.hostId = hostId;
+        existing.title = undefined;
+      }
       handleSelectTab(containingPanel.id, existing.id);
       return;
     }
@@ -1334,12 +1343,30 @@ const handleStopProcess = (commandId: number) => {
   emit('request-stop-process', commandId);
 };
 
+const { pick: pickRunTarget } = useRunTargetPicker();
+
 const handleRestartProcess = async (commandId: number) => {
   restartingCmdId.value = commandId;
   try {
+    // Rerun where it ran; ask only if that is unknown (e.g. started by a
+    // group), and before stopping, so cancelling leaves it running.
+    let target = ipcClient.lastRunTarget(commandId);
+    if (!target) {
+      const command = (await ipcClient.listCommands()).find((item) => item.id === commandId);
+      if (!command) throw new Error(`Không tìm thấy lệnh #${commandId}`);
+      target = (await pickRunTarget(command)) ?? undefined;
+      if (!target) return;
+    }
     await ipcClient.stopProcess(commandId, false);
     await refreshProcesses();
-    await ipcClient.runCommand(commandId);
+    const result = await ipcClient.runCommand(commandId, target);
+    // Tabs showing this command follow the new run.
+    for (const tab of allOpenTabs.value) {
+      if (tab.commandId === commandId && tab.kind !== 'files') {
+        tab.runEventId = result.runEventId;
+        tab.title = undefined;
+      }
+    }
     await refreshProcesses();
   } catch (err) {
     console.error('[DockHost] Không thể khởi động lại lệnh:', err);

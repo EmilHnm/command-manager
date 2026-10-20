@@ -234,8 +234,12 @@
             :accent="tabsMap.get(tabId)!.filesAccent"
             @path-change="(path) => handleFilesPathChange(tabId, path)"
           />
+          <!-- Keyed by run: a re-run of the command gets a fresh pane that
+               replays the new run's output (a quick command may finish
+               before its first chunk could be streamed). -->
           <XtermPane
             v-else-if="tabsMap.get(tabId)"
+            :key="tabsMap.get(tabId)!.runEventId || tabId"
             :ref="(el) => registerPaneRef(tabId, el)"
             :command-id="tabsMap.get(tabId)!.commandId"
             :command-name="tabsMap.get(tabId)!.name"

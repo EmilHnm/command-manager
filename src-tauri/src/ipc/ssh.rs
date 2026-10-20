@@ -860,13 +860,16 @@ pub(crate) fn stop_terminal(app: &AppHandle, live: &Live, force: bool) -> Result
     Err(Error::msg("Phiên SSH chưa đóng sau 5 giây"))
 }
 
-/// A profile marked "Dùng OpenSSH hệ thống" runs the `ssh` binary in a local
-/// PTY, so ProxyCommand, FIDO keys and the like work as in a normal terminal.
-fn open_system_ssh(app: &AppHandle, host: SshHost, cols: u16, rows: u16) -> Result<TerminalInfo> {
+/// `ssh` arguments for a "Dùng OpenSSH hệ thống" host, up to and including
+/// the destination. `command` (a saved command) gets a forced TTY.
+fn system_ssh_argv(app: &AppHandle, host: SshHost, command: Option<&str>) -> Result<Vec<String>> {
     let state = app.state::<AppState>();
     let target = state.db.read(|c| resolve(c, host))?;
     let host = &target.host;
     let mut argv = vec!["ssh".to_string(), "-p".into(), host.port.to_string()];
+    if command.is_some() {
+        argv.push("-t".into());
+    }
     match &target.key {
         KeyChoice::File(key) => {
             argv.push("-i".into());
@@ -896,6 +899,113 @@ fn open_system_ssh(app: &AppHandle, host: SshHost, cols: u16, rows: u16) -> Resu
         ));
     }
     argv.push(format!("{}@{}", target.username, host.host));
+    if let Some(command) = command {
+        argv.push(command.to_string());
+    }
+    Ok(argv)
+}
+
+/// Quotes a word for the server's POSIX shell.
+fn posix_quote(word: &str) -> String {
+    if !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_./@%+=:,-".contains(c))
+    {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''"))
+    }
+}
+
+/// The command line sent to the server: run in the host's default folder
+/// when it has one (`~` and `~/x` keep working).
+fn remote_command_line(host: &SshHost, command: &str) -> String {
+    let Some(dir) = host
+        .default_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|dir| !dir.is_empty())
+    else {
+        return command.to_string();
+    };
+    let cd = if dir == "~" {
+        "cd ~".to_string()
+    } else if let Some(rest) = dir.strip_prefix("~/") {
+        format!("cd ~/{}", posix_quote(rest))
+    } else {
+        format!("cd {}", posix_quote(dir))
+    };
+    format!("{cd} && {command}")
+}
+
+/// A saved command started on its SSH host.
+pub(crate) struct RemoteLaunch {
+    /// 0 for russh channels; the local `ssh` process for system SSH hosts.
+    pub pid: u32,
+    pub pty: Arc<dyn crate::pty::terminal_io::TerminalIo>,
+    pub killer: Option<Box<dyn portable_pty::ChildKiller + Send + Sync>>,
+}
+
+/// Runs `command` on the host behind a PTY. `on_exit` receives the exit code
+/// like a local process does: `None` when stopped or killed by a signal,
+/// `Some(255)` when the connection dropped (OpenSSH's convention).
+pub(crate) async fn launch_remote_command(
+    app: &AppHandle,
+    host_id: &str,
+    command: &str,
+    run_event_id: String,
+    cols: u16,
+    rows: u16,
+    on_exit: impl FnOnce(Option<i32>) + Send + 'static,
+) -> Result<RemoteLaunch> {
+    let state = app.state::<AppState>();
+    let host = state.db.read(|c| ssh_hosts::require(c, host_id))?;
+    let line = remote_command_line(&host, command);
+    let buffer = buffer_bytes(&state);
+
+    if host.use_system_ssh {
+        let argv = system_ssh_argv(app, host, Some(&line))?;
+        let spawned = spawn::spawn_argv(
+            &argv,
+            cols,
+            rows,
+            buffer,
+            run_event_id,
+            state.ipc.clone(),
+            on_exit,
+        )
+        .map_err(|error| Error::msg(format!("Không chạy được lệnh ssh: {error}")))?;
+        return Ok(RemoteLaunch {
+            pid: spawned.pid,
+            pty: spawned.pty,
+            killer: Some(spawned.killer),
+        });
+    }
+
+    let lease = app.state::<SshState>().manager.lease(host_id).await?;
+    let terminal = SshTerminal::new(run_event_id, host_id.to_string(), buffer, cols, rows);
+    terminal
+        .start_exec(lease, state.ipc.clone(), line, move |end| {
+            on_exit(match end {
+                TerminalEnd::Exited(code) => code,
+                TerminalEnd::Stopped => None,
+                TerminalEnd::Lost => Some(255),
+            })
+        })
+        .await?;
+    Ok(RemoteLaunch {
+        pid: 0,
+        pty: terminal,
+        killer: None,
+    })
+}
+
+/// A profile marked "Dùng OpenSSH hệ thống" runs the `ssh` binary in a local
+/// PTY, so ProxyCommand, FIDO keys and the like work as in a normal terminal.
+fn open_system_ssh(app: &AppHandle, host: SshHost, cols: u16, rows: u16) -> Result<TerminalInfo> {
+    let state = app.state::<AppState>();
+    let argv = system_ssh_argv(app, host, None)?;
 
     let id = Uuid::new_v4().to_string();
     let run_event_id = format!("ssh:{id}");
@@ -971,5 +1081,50 @@ fn bracket(host: &str) -> String {
         format!("[{host}]")
     } else {
         host.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn host(default_dir: Option<&str>) -> SshHost {
+        SshHost {
+            id: "h".into(),
+            name: "h".into(),
+            host: "h".into(),
+            port: 22,
+            username: "u".into(),
+            auth_method: "auto".into(),
+            key_path: None,
+            key_source: "file".into(),
+            identity_id: None,
+            key_id: None,
+            jump_host_id: None,
+            use_system_ssh: false,
+            agent_forwarding: false,
+            default_dir: default_dir.map(str::to_string),
+            secret_store: "none".into(),
+            color: None,
+            tags: Vec::new(),
+            sort_order: 0,
+            created_at: "0".into(),
+            last_connected_at: None,
+        }
+    }
+
+    #[test]
+    fn remote_commands_start_in_the_default_folder() {
+        assert_eq!(remote_command_line(&host(None), "ls -la"), "ls -la");
+        assert_eq!(remote_command_line(&host(Some("~")), "ls"), "cd ~ && ls");
+        assert_eq!(
+            remote_command_line(&host(Some("~/my app")), "ls"),
+            "cd ~/'my app' && ls"
+        );
+        assert_eq!(
+            remote_command_line(&host(Some("/var/www/it's")), "ls"),
+            "cd '/var/www/it'\\''s' && ls"
+        );
+        assert_eq!(remote_command_line(&host(Some("  ")), "ls"), "ls");
     }
 }

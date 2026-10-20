@@ -89,7 +89,25 @@ impl SshTerminal {
         if self.is_connected() || self.starting.swap(true, Ordering::SeqCst) {
             return Err(Error::msg("Terminal SSH đang kết nối"));
         }
-        let result = self.open(lease, ipc, on_end).await;
+        let result = self.open(lease, ipc, None, on_end).await;
+        self.starting.store(false, Ordering::SeqCst);
+        result
+    }
+
+    /// Runs one command (a saved command bound to this host) on a PTY. The
+    /// server's login shell interprets it, as `ssh host 'command'` does; the
+    /// exit status ends the terminal like a local process.
+    pub async fn start_exec(
+        self: &Arc<Self>,
+        lease: Lease,
+        ipc: IpcPipe,
+        command: String,
+        on_end: impl FnOnce(TerminalEnd) + Send + 'static,
+    ) -> Result<()> {
+        if self.is_connected() || self.starting.swap(true, Ordering::SeqCst) {
+            return Err(Error::msg("Terminal SSH đang kết nối"));
+        }
+        let result = self.open(lease, ipc, Some(command), on_end).await;
         self.starting.store(false, Ordering::SeqCst);
         result
     }
@@ -98,6 +116,7 @@ impl SshTerminal {
         self: &Arc<Self>,
         lease: Lease,
         ipc: IpcPipe,
+        command: Option<String>,
         on_end: impl FnOnce(TerminalEnd) + Send + 'static,
     ) -> Result<()> {
         let channel = lease
@@ -110,10 +129,16 @@ impl SshTerminal {
             .request_pty(false, "xterm-256color", cols.into(), rows.into(), 0, 0, &[])
             .await
             .map_err(|error| Error::msg(format!("Máy chủ từ chối cấp PTY: {error}")))?;
-        channel
-            .request_shell(false)
-            .await
-            .map_err(|error| Error::msg(format!("Máy chủ từ chối mở shell: {error}")))?;
+        match command {
+            Some(command) => channel
+                .exec(true, command)
+                .await
+                .map_err(|error| Error::msg(format!("Máy chủ từ chối chạy lệnh: {error}")))?,
+            None => channel
+                .request_shell(false)
+                .await
+                .map_err(|error| Error::msg(format!("Máy chủ từ chối mở shell: {error}")))?,
+        }
 
         let (tx, rx) = mpsc::unbounded_channel();
         *self

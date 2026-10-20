@@ -1,6 +1,9 @@
 //! Files pane and transfers (SCR-08): one file API over the local disk and
 //! SFTP, and the queue that copies between any two of them.
 
+pub mod edit;
+#[cfg(test)]
+mod edit_tests;
 pub mod fs;
 pub mod transfer;
 #[cfg(test)]

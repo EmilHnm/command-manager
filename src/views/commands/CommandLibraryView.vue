@@ -173,12 +173,30 @@
             </td>
 
             <td>
+              <!-- Where it runs: shown when it is not just this machine -->
+              <span
+                v-for="target in remoteTargets(cmd)"
+                :key="target"
+                class="type-badge remote"
+                :title="`Chạy được trên máy chủ SSH ${hostName(target)}`"
+              >
+                🌐 {{ hostName(target) }}
+              </span>
+              <span
+                v-if="remoteTargets(cmd).length > 0 && runsLocally(cmd)"
+                class="type-badge local"
+                title="Chạy được trên máy này"
+              >
+                💻 Máy này
+              </span>
+              <template v-if="runsLocally(cmd) && remoteTargets(cmd).length === 0">
               <span v-if="!cmd.is_shell" class="type-badge argv" title="Chạy trực tiếp binary qua mảng đối số argv">
                 Direct Argv
               </span>
               <span v-else class="type-badge shell" title="Chạy qua vỏ lệnh shell (bash/sh/cmd)">
                 Shell (bash/sh)
               </span>
+              </template>
             </td>
 
             <td class="code-cell">
@@ -296,14 +314,21 @@ import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import { useCommands } from '@/composables/useCommands';
 import { useGroups } from '@/composables/useGroups';
 import { useRunSession } from '@/composables/useRunSession';
+import { useSshHosts } from '@/composables/useSshHosts';
 import { APP_ENGINE_TAG } from '@/config/version';
 import { ipcClient } from '@/ipc/client';
 import type { CommandDefinition } from '@/types/models';
+import { LOCAL_TARGET, allowedTargets } from '@/types/models';
 
 const router = useRouter();
 const { commands, loading, error, fetchCommands, saveCommand, deleteCommand } = useCommands();
 const { groups, fetchGroups } = useGroups();
 const { getProcessStatus } = useRunSession();
+const { hosts: sshHosts, fetchHosts: fetchSshHosts } = useSshHosts();
+const hostName = (id: string) => sshHosts.value.find((host) => host.id === id)?.name ?? 'máy chủ đã xóa';
+const remoteTargets = (cmd: CommandDefinition) =>
+  allowedTargets(cmd).filter((target) => target !== LOCAL_TARGET);
+const runsLocally = (cmd: CommandDefinition) => allowedTargets(cmd).includes(LOCAL_TARGET);
 
 const searchQuery = ref('');
 const filterMode = ref<'all' | 'argv' | 'shell' | 'quick'>('all');
@@ -345,6 +370,7 @@ onBeforeUnmount(() => {
 });
 
 onMounted(async () => {
+  void fetchSshHosts();
   await Promise.all([fetchCommands(), fetchGroups()]);
 });
 
@@ -416,6 +442,7 @@ const duplicateCommand = async (cmd: CommandDefinition) => {
     execution_string: cmd.execution_string,
     is_shell: cmd.is_shell,
     quick_access: Boolean(cmd.quick_access),
+    targets: [...(cmd.targets ?? [])],
   });
   if (saved) showToast('Đã nhân bản câu lệnh.', 'success');
 };
@@ -932,6 +959,22 @@ const handleImportFile = async (event: Event) => {
   background-color: var(--status-running-bg, #10b9811f);
   color: #10b981;
   border: 1px solid #10b98140;
+}
+
+.type-badge.remote {
+  background-color: var(--primary-subtle, #7447911f);
+  color: #e4b5ff;
+  border: 1px solid var(--border-focus, #74479166);
+}
+
+.type-badge.local {
+  background-color: var(--bg-surface-hover, #ffffff0f);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+.type-badge + .type-badge {
+  margin-left: 4px;
 }
 
 .type-badge.shell {

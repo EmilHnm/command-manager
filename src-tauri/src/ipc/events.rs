@@ -11,3 +11,4 @@ pub const SSH_AUTH_REQUEST: &str = "ssh://auth-request";
 pub const TRANSFER_PROGRESS: &str = "files://transfer-progress";
 pub const TRANSFER_CONFLICT: &str = "files://transfer-conflict";
 pub const TRANSFER_DONE: &str = "files://transfer-done";
+pub const REMOTE_EDIT: &str = "files://remote-edit";

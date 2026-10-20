@@ -11,7 +11,19 @@ export interface CommandDefinition {
   shell_kind?: string;
   cwd?: string;
   quick_access?: boolean;
+  /**
+   * Where it may run: 'local' and/or SSH host ids. Empty = this machine
+   * only. With several, running asks where (RunTargetModal).
+   */
+  targets?: string[];
 }
+
+/** Run target meaning "this machine". */
+export const LOCAL_TARGET = 'local';
+
+/** Targets a run can pick from; never empty. */
+export const allowedTargets = (command: Pick<CommandDefinition, 'targets'>): string[] =>
+  command.targets && command.targets.length > 0 ? command.targets : [LOCAL_TARGET];
 
 export interface CommandGroup {
   id: number;
@@ -27,7 +39,8 @@ export interface GroupMembership {
 }
 
 export interface CommandGroupWithCommands extends CommandGroup {
-  commands: (CommandDefinition & { execution_order: number })[];
+  /** `run_target`: a target pinned for this group, null = the command's default. */
+  commands: (CommandDefinition & { execution_order: number; run_target?: string | null })[];
 }
 
 export type RunSessionStatus = 'running' | 'completed' | 'failed' | 'stopped';

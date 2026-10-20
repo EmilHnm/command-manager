@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue';
 import { ipcClient } from '@/ipc/client';
 import type {
+  EditInfo,
   ConflictAction,
   ConflictPrompt,
   Endpoint,
@@ -11,6 +12,8 @@ import type {
 // One store for the whole app: the Transfers drawer, the status bar
 // indicator, MOD-20 and every Files pane read from it.
 const jobs = ref<JobSnapshot[]>([]);
+/** Server files open in a local app (uploaded back on save). */
+const edits = ref<EditInfo[]>([]);
 const conflicts = ref<ConflictPrompt[]>([]);
 const drawerOpen = ref(false);
 /** Bumped when a job finishes, so Files panes showing its target refresh. */
@@ -79,10 +82,20 @@ export function useTransfers() {
     listening = (async () => {
       try {
         jobs.value = await ipcClient.transferList();
+        edits.value = await ipcClient.fsEditList();
       } catch (e) {
         console.error('[useTransfers] list failed:', e);
       }
       return ipcClient.onTransferEvents({
+        edit: (info) => {
+          const others = edits.value.filter((item) => item.local_path !== info.local_path);
+          edits.value = info.status === 'stopped' ? others : [info, ...others];
+          const name = info.remote_path.split('/').pop() || info.remote_path;
+          if (info.status === 'synced') notify(`Đã lưu ${name} lên máy chủ`);
+          else if (info.status === 'conflict') {
+            notify(`${name}: tệp trên máy chủ đã đổi từ lúc mở, chưa ghi đè. Mở ⇅ để chọn.`, 'error');
+          } else if (info.status === 'error') notify(`${name}: ${info.error ?? 'không lưu được'}`, 'error');
+        },
         progress: upsert,
         conflict: (prompt) => {
           conflicts.value = [...conflicts.value, prompt];
@@ -171,6 +184,9 @@ export function useTransfers() {
     await ipcClient.transferResolve(prompt.job_id, prompt.item_id, action, applyToRest);
   };
 
+  const pushEdit = (localPath: string, force: boolean) => ipcClient.fsEditPush(localPath, force);
+  const stopEdit = (localPath: string) => ipcClient.fsEditStop(localPath);
+
   const activeJobs = computed(() =>
     jobs.value.filter((job) => job.status === 'scanning' || job.status === 'running')
   );
@@ -187,6 +203,9 @@ export function useTransfers() {
 
   return {
     jobs,
+    edits,
+    pushEdit,
+    stopEdit,
     conflicts,
     drawerOpen,
     finishedTick,

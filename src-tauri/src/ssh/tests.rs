@@ -107,6 +107,21 @@ impl server::Handler for ShellServer {
         Ok(())
     }
 
+    /// `exec`: prints the command it got and exits with status 3.
+    async fn exec_request(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> std::result::Result<(), Self::Error> {
+        let line = format!("ran: {}\r\n", String::from_utf8_lossy(data));
+        session.data(channel, line.into_bytes())?;
+        session.exit_status_request(channel, 3)?;
+        session.eof(channel)?;
+        session.close(channel)?;
+        Ok(())
+    }
+
     /// Echoes input; `exit` ends the shell with status 0.
     async fn data(
         &mut self,
@@ -561,4 +576,34 @@ async fn a_server_that_hangs_up_during_login_is_reported_as_such() {
         .expect("dropped");
     assert_eq!(error.stage, client::Stage::Auth);
     assert!(error.message.contains("ngắt kết nối"), "{}", error.message);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_runs_one_command_and_reports_its_exit_code() {
+    let port = start_server().await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env(dir.path(), port, &[PASSWORD], true);
+    let manager = SshManager::new(env.clone());
+    let lease = manager.lease("h1").await.expect("lease");
+
+    let (tx, mut rx) = mpsc::channel(16);
+    let terminal = SshTerminal::new("ssh:exec".into(), "h1".into(), 64 * 1024, 80, 24);
+    let (end_tx, end_rx) = tokio::sync::oneshot::channel();
+    terminal
+        .start_exec(
+            lease,
+            IpcPipe::new(tx),
+            "cd ~/app && make deploy".into(),
+            move |end| {
+                let _ = end_tx.send(end);
+            },
+        )
+        .await
+        .expect("exec");
+    read_until(&mut rx, "ran: cd ~/app && make deploy").await;
+    let end = tokio::time::timeout(Duration::from_secs(5), end_rx)
+        .await
+        .expect("end in time")
+        .expect("end sent");
+    assert_eq!(end, TerminalEnd::Exited(Some(3)));
 }

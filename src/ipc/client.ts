@@ -21,6 +21,7 @@ import type { KeybindingOverride, ParsedKeybindings } from '@/types/keybindings'
 import type {
   ConflictAction,
   ConflictPrompt,
+  EditInfo,
   Endpoint,
   FileLocation,
   FsListing,
@@ -57,6 +58,7 @@ type BackendCommand = {
   is_shell: boolean;
   shell_kind?: string | null;
   quick_access?: boolean | number;
+  targets?: string[];
 };
 
 type BackendGroup = {
@@ -70,6 +72,7 @@ type BackendMembership = {
   group_id: string;
   command_id: string;
   execution_order: number;
+  run_target?: string | null;
 };
 
 type BackendSession = {
@@ -210,6 +213,7 @@ export const isTauriRuntime = () =>
   typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
 
 const usingNativeIpc = () => isTauriRuntime() && !USE_MOCK_IPC;
+const lastRunTargets = new Map<number, string>();
 
 function uiIdFor<T extends Map<number, string>>(forward: T, reverse: Map<string, number>, backendId: string) {
   const existing = reverse.get(backendId);
@@ -795,6 +799,7 @@ export const ipcClient = {
       is_shell: row.is_shell,
       shell_kind: row.shell_kind ?? undefined,
       quick_access: Boolean(row.quick_access),
+      targets: row.targets ?? [],
     }));
   },
 
@@ -814,6 +819,7 @@ export const ipcClient = {
           is_shell: Boolean(command.is_shell),
           shell_kind: command.shell_kind ?? null,
           quick_access: Boolean(command.quick_access),
+          targets: command.targets ?? [],
         },
         confirmed: true,
       });
@@ -825,6 +831,7 @@ export const ipcClient = {
         is_shell: Boolean(command.is_shell),
         shell_kind: command.shell_kind ?? null,
         quick_access: Boolean(command.quick_access),
+        targets: command.targets ?? [],
         confirmed: true,
       });
       rememberCommand(created);
@@ -844,7 +851,17 @@ export const ipcClient = {
     return true;
   },
 
-  runCommand: async (commandId: number): Promise<{ commandId: number; runEventId: string; pid?: number }> => {
+  /** Where a command last ran, so "Khởi động lại" reruns it there. */
+  lastRunTarget: (commandId: number): string | undefined => lastRunTargets.get(commandId),
+
+  /**
+   * `target`: 'local' or an SSH host id from the command's targets; needed
+   * only when the command has several (see RunTargetModal).
+   */
+  runCommand: async (
+    commandId: number,
+    target?: string
+  ): Promise<{ commandId: number; runEventId: string; pid?: number }> => {
     if (!usingNativeIpc()) {
       const result = await invokeTauri<BackendTerminal>('command_run', { commandId });
       runEventToCommand.set(result.run_event_id, commandId);
@@ -856,7 +873,9 @@ export const ipcClient = {
     if (!commandUiToBackend.has(commandId)) await ipcClient.listCommands();
     const terminal = await invokeTauri<BackendTerminal>('command_run', {
       command_id: backendIdFor(commandUiToBackend, commandId, 'Lệnh'),
+      target: target ?? null,
     });
+    if (target) lastRunTargets.set(commandId, target);
     runEventToCommand.set(terminal.run_event_id, commandId);
     runEventToSession.set(
       terminal.run_event_id,
@@ -1028,7 +1047,9 @@ export const ipcClient = {
             name: command.name,
             execution_string: command.execution_string,
             is_shell: command.is_shell,
+            targets: command.targets ?? [],
             execution_order: membership.execution_order,
+            run_target: membership.run_target ?? null,
           };
         })
         .filter((command): command is NonNullable<typeof command> => command !== null)
@@ -1044,7 +1065,13 @@ export const ipcClient = {
     }));
   },
 
-  saveGroup: async (group: Partial<CommandGroup> & { commandIds?: number[] }) => {
+  saveGroup: async (
+    group: Partial<CommandGroup> & {
+      commandIds?: number[];
+      /** Pinned run target per command id; missing / null = default. */
+      commandTargets?: Record<number, string | null | undefined>;
+    }
+  ) => {
     if (!usingNativeIpc()) return invokeTauri<number>('groups_save', { group });
     if (!group.group_name?.trim()) throw new Error('Tên nhóm không được để trống');
 
@@ -1079,6 +1106,7 @@ export const ipcClient = {
         group_id: backendGroup.id,
         command_id: backendIdFor(commandUiToBackend, commandId, 'Lệnh'),
         execution_order: index + 1,
+        run_target: group.commandTargets?.[commandId] ?? null,
       }));
       await invokeTauri<void>('groups_set_memberships', {
         group_id: backendGroup.id,
@@ -1676,14 +1704,28 @@ export const ipcClient = {
     return invokeTauri<void>('transfer_clear_finished');
   },
 
+  fsEditList: async (): Promise<EditInfo[]> => {
+    return invokeTauri<EditInfo[]>('fs_edit_list');
+  },
+
+  fsEditPush: async (localPath: string, force: boolean): Promise<void> => {
+    return invokeTauri<void>('fs_edit_push', { local_path: localPath, force });
+  },
+
+  fsEditStop: async (localPath: string): Promise<void> => {
+    return invokeTauri<void>('fs_edit_stop', { local_path: localPath });
+  },
+
   onTransferEvents: async (handlers: {
     progress: (job: JobSnapshot) => void;
     conflict: (prompt: ConflictPrompt) => void;
     done: (job: JobSnapshot) => void;
+    edit: (info: EditInfo) => void;
   }): Promise<() => void> => {
     if (!usingNativeIpc()) return () => {};
     const { listen } = await import('@tauri-apps/api/event');
     const unlisten = await Promise.all([
+      listen<EditInfo>(IPC_EVENTS.REMOTE_EDIT, (event) => handlers.edit(event.payload)),
       listen<JobSnapshot>(IPC_EVENTS.TRANSFER_PROGRESS, (event) => handlers.progress(event.payload)),
       listen<ConflictPrompt>(IPC_EVENTS.TRANSFER_CONFLICT, (event) => handlers.conflict(event.payload)),
       listen<JobSnapshot>(IPC_EVENTS.TRANSFER_DONE, (event) => handlers.done(event.payload)),

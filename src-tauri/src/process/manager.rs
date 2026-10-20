@@ -1,7 +1,12 @@
 use crate::pty::terminal_io::TerminalIo;
 use dashmap::{DashMap, DashSet};
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+
+/// Finished terminals whose output is kept for a tab that opens late: a
+/// command like `echo 1` exits before its tab attaches.
+const KEEP_FINISHED: usize = 16;
 
 pub struct Live {
     pub run_event_id: String,
@@ -32,6 +37,9 @@ pub struct ProcessManager {
     pending: DashSet<String>,
     finished_before_insert: DashSet<String>,
     transition_lock: Mutex<()>,
+    /// The terminal itself, not a snapshot: output still in flight when the
+    /// process exited lands in its buffer a moment later.
+    recently_finished: Mutex<VecDeque<(String, Arc<dyn TerminalIo>)>>,
 }
 
 impl ProcessManager {
@@ -76,13 +84,34 @@ impl ProcessManager {
     pub fn remove(&self, run_event_id: &str) -> Option<Arc<Live>> {
         let _guard = self.transition_lock.lock().expect("process manager lock");
         match self.live.remove(run_event_id) {
-            Some((_, value)) => Some(value),
+            Some((_, value)) => {
+                let mut finished = self
+                    .recently_finished
+                    .lock()
+                    .expect("finished terminals lock");
+                finished.retain(|(id, _)| id != run_event_id);
+                finished.push_back((run_event_id.to_string(), Arc::clone(&value.pty)));
+                while finished.len() > KEEP_FINISHED {
+                    finished.pop_front();
+                }
+                Some(value)
+            }
             None if self.pending.remove(run_event_id).is_some() => {
                 self.finished_before_insert.insert(run_event_id.to_string());
                 None
             }
             None => None,
         }
+    }
+
+    /// The terminal of a process that already exited, if still kept.
+    pub fn finished(&self, run_event_id: &str) -> Option<Arc<dyn TerminalIo>> {
+        self.recently_finished
+            .lock()
+            .expect("finished terminals lock")
+            .iter()
+            .find(|(id, _)| id == run_event_id)
+            .map(|(_, pty)| Arc::clone(pty))
     }
 
     pub fn snapshot(&self) -> Vec<LiveSnapshot> {
@@ -181,5 +210,26 @@ mod tests {
 
         assert!(manager.get("fast").is_none());
         assert!(manager.is_empty());
+    }
+
+    #[test]
+    fn output_of_a_finished_process_stays_readable() {
+        let manager = ProcessManager::new();
+        manager.insert(live("quick"));
+        manager.get("quick").unwrap().pty.write(b"").unwrap();
+        assert!(manager.remove("quick").is_some());
+        assert!(manager.get("quick").is_none());
+        assert!(manager.finished("quick").is_some());
+
+        for i in 0..KEEP_FINISHED {
+            let id = format!("p{i}");
+            manager.insert(live(&id));
+            manager.remove(&id);
+        }
+        // Only the most recent ones are kept.
+        assert!(manager.finished("quick").is_none());
+        assert!(manager
+            .finished(&format!("p{}", KEEP_FINISHED - 1))
+            .is_some());
     }
 }

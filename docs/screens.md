@@ -1121,6 +1121,28 @@ Sự kiện: `transfer-progress`, `transfer-conflict`, `transfer-done`.
   * MOD-20 và thông báo ngắn khi một lượt truyền xong.
 * Kéo thả: giữa hai Files pane (local ↔ server, server ↔ server) và từ trình quản lý file của hệ điều hành vào Files pane.
 
+**Giai đoạn 3 (đã làm 2 phần):**
+* **Sửa tệp server & tự lưu ngược** (`src-tauri/src/files/edit.rs`):
+  * Mở tệp trên server thì tải bản sao về thư mục tạm `command-manager-edit/` rồi theo dõi bản sao đó.
+  * Khi tệp ngừng thay đổi một nhịp (~1 giây) thì tải lên lại qua `.cm-part` và giữ quyền của tệp gốc.
+  * Nếu tệp trên server đổi kể từ lúc mở thì không ghi đè: báo `conflict`, người dùng bấm "Ghi đè" (`fs_edit_push` với `force`).
+  * Ngăn Transfers có mục "Tệp đang sửa": tải lên ngay, ghi đè, ngừng theo dõi (xóa bản sao).
+  * Sự kiện `files://remote-edit`; lệnh `fs_edit_list`, `fs_edit_push`, `fs_edit_stop`.
+* **Chạy lệnh / nhóm trên server:**
+  * Một lệnh có **nhiều nơi chạy** (migration `015`, bảng `command_target`: `local` và/hoặc id máy chủ; không có dòng nào = chỉ máy này). MOD-02 có danh sách tích chọn "Nơi chạy".
+  * Lệnh có từ hai nơi chạy trở lên: bấm chạy sẽ mở **RunTargetModal** ("Chạy … ở đâu?", phím 1–9 / ↑↓ Enter / Esc). Lệnh chỉ có một nơi chạy thì chạy ngay. `command_run` nhận thêm `target`.
+  * "Khởi động lại" chạy lại ở nơi lần trước; không biết nơi lần trước thì hỏi trước khi dừng lệnh.
+  * Nhóm: mỗi thành viên có thể ghim nơi chạy (`group_membership.run_target`), để trống thì dùng mặc định (máy này nếu được phép, không thì máy chủ đầu tiên).
+  * Xóa máy chủ thì trigger gỡ máy chủ đó khỏi danh sách nơi chạy của lệnh và khỏi nơi chạy đã ghim trong nhóm.
+  * Lệnh của migration `014` (một máy chủ duy nhất) được chuyển thành lệnh có đúng một nơi chạy là máy chủ đó.
+  * Lệnh chạy bằng kênh exec có PTY, qua shell đăng nhập của server, `cd` vào thư mục mặc định của host nếu có. Host "OpenSSH hệ thống" chạy `ssh -t host 'lệnh'`.
+  * Dùng chung run_session / run_event, trạng thái, ring buffer, nút dừng. Mất kết nối = mã thoát 255.
+  * Nhóm lệnh trộn được lệnh local và remote.
+  * `command_run` thành lệnh async: lệnh remote có thể chờ hộp thoại đăng nhập mà không khóa luồng chính.
+  * Dừng nhóm (`session_stop`) dừng lệnh remote qua kênh SSH, không gửi tín hiệu tới PID 0.
+  * Lịch sử ghi lệnh remote với shell_kind `ssh`, không lẫn vào gợi ý local.
+* Chưa làm: kéo tệp ra ngoài hệ điều hành, jump host nhiều cấp, chép tiếp tệp lớn từ chỗ dừng, template chạy trên server.
+
 **Bổ sung để hoàn thiện giai đoạn 2:**
 * **Thả vào terminal** (kéo trong app hoặc từ hệ điều hành):
   * Terminal local: chèn đường dẫn đã quote.

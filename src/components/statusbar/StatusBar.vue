@@ -23,7 +23,7 @@
     <div class="status-right">
       <!-- Transfers (SCR-08): click opens the drawer -->
       <button
-        v-if="jobs.length > 0"
+        v-if="jobs.length > 0 || edits.length > 0"
         type="button"
         class="status-item status-transfers"
         :class="{ 'has-running': activeTotals.count > 0 }"
@@ -62,7 +62,7 @@ import { useRunSession } from '@/composables/useRunSession';
 import { ipcClient, isTauriRuntime } from '@/ipc/client';
 
 const { activeProcesses } = useRunSession();
-const { jobs, activeTotals, toggleDrawer } = useTransfers();
+const { jobs, edits, activeTotals, toggleDrawer } = useTransfers();
 const ringBufferLimit = ref(2 * 1024 * 1024);
 const autostartEnabled = ref(false);
 

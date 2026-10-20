@@ -65,18 +65,23 @@ pub fn commands_create(
     is_shell: bool,
     shell_kind: Option<String>,
     quick_access: Option<bool>,
+    targets: Option<Vec<String>>,
     confirmed: bool,
 ) -> Result<CommandDef> {
     require(confirmed)?;
-    let cmd = CommandDef {
+    let mut cmd = CommandDef {
         id: Uuid::new_v4().to_string(),
         name,
         execution_string,
         is_shell,
         shell_kind,
         quick_access: quick_access.unwrap_or(false),
+        targets: targets.unwrap_or_default(),
     };
-    state.db.write(|c| cmd_repo::insert(c, &cmd))?;
+    state.db.write(|c| {
+        cmd.targets = cmd_repo::normalize_targets(c, &cmd.targets)?;
+        cmd_repo::insert(c, &cmd)
+    })?;
     let _ = app.emit(events::COMMANDS_CHANGED, ());
     Ok(cmd)
 }
@@ -89,7 +94,11 @@ pub fn commands_update(
     confirmed: bool,
 ) -> Result<()> {
     require(confirmed)?;
-    state.db.write(|c| cmd_repo::update(c, &cmd))?;
+    let mut cmd = cmd;
+    state.db.write(|c| {
+        cmd.targets = cmd_repo::normalize_targets(c, &cmd.targets)?;
+        cmd_repo::update(c, &cmd)
+    })?;
     let _ = app.emit(events::COMMANDS_CHANGED, ());
     Ok(())
 }
@@ -847,6 +856,94 @@ pub struct TerminalInfo {
     pub history_level: u8,
 }
 
+/// A saved command started locally or on its SSH host.
+struct Launched {
+    pid: u32,
+    pty: std::sync::Arc<dyn crate::pty::terminal_io::TerminalIo>,
+    shell_kind: String,
+    history_level: u8,
+    killer: Option<Box<dyn portable_pty::ChildKiller + Send + Sync>>,
+}
+
+impl Launched {
+    /// Undoes a launch whose bookkeeping failed.
+    fn kill(self) {
+        match self.killer {
+            Some(mut killer) => {
+                let _ = killer.kill();
+            }
+            None => {
+                self.pty.stop(true);
+            }
+        }
+    }
+}
+
+/// History groups commands by shell; remote runs get their own bucket so
+/// they do not feed local suggestions.
+fn command_history_kind<'a>(cmd: &'a CommandDef, target: &str) -> &'a str {
+    if target != cmd_repo::LOCAL {
+        "ssh"
+    } else {
+        cmd.shell_kind
+            .as_deref()
+            .unwrap_or_else(|| history_shell_kind(cmd.is_shell))
+    }
+}
+
+/// Starts `cmd` on this machine, or on its SSH host. Must not run on the
+/// main thread: a remote start may wait for the login dialog (MOD-18/19),
+/// whose answer is another IPC call.
+#[allow(clippy::too_many_arguments)]
+fn launch(
+    app: &AppHandle,
+    cmd: &CommandDef,
+    target: &str,
+    cols: u16,
+    rows: u16,
+    buffer: usize,
+    run_event_id: String,
+    ipc: crate::pty::backpressure::IpcPipe,
+    on_exit: impl FnOnce(Option<i32>) + Send + 'static,
+) -> Result<Launched> {
+    if target != cmd_repo::LOCAL {
+        let remote = tauri::async_runtime::block_on(super::ssh::launch_remote_command(
+            app,
+            target,
+            &cmd.execution_string,
+            run_event_id,
+            cols,
+            rows,
+            on_exit,
+        ))?;
+        return Ok(Launched {
+            pid: remote.pid,
+            pty: remote.pty,
+            shell_kind: "ssh".into(),
+            history_level: 0,
+            killer: remote.killer,
+        });
+    }
+    let spawned = spawn::spawn(
+        cmd.is_shell,
+        &cmd.execution_string,
+        cmd.shell_kind.as_deref(),
+        cols,
+        rows,
+        buffer,
+        run_event_id,
+        ipc,
+        on_exit,
+    )?;
+    Ok(Launched {
+        pid: spawned.pid,
+        pty: spawned.pty,
+        shell_kind: spawned.shell_kind,
+        history_level: spawned.history_level,
+        killer: Some(spawned.killer),
+    })
+}
+
 fn start_group_member(
     app: &AppHandle,
     session_id: &str,
@@ -858,6 +955,10 @@ fn start_group_member(
         .db
         .read(|c| cmd_repo::get(c, &member.command_id))?
         .ok_or_else(|| Error::msg("command missing from group"))?;
+    // A pinned target that is no longer allowed falls back to the default.
+    let target = cmd
+        .resolve_target(member.run_target.as_deref())
+        .unwrap_or_else(|_| cmd.default_target());
     let event_id = Uuid::new_v4().to_string();
     let history_id = state.db.write(|c| {
         runs::insert_event(
@@ -877,9 +978,7 @@ fn start_group_member(
         history::record(
             c,
             &cmd.execution_string,
-            cmd.shell_kind
-                .as_deref()
-                .unwrap_or_else(|| history_shell_kind(cmd.is_shell)),
+            command_history_kind(&cmd, &target),
             None,
             "command",
             &clock::now_unix(),
@@ -892,10 +991,10 @@ fn start_group_member(
     let command_id2 = cmd.id.clone();
     let history_id2 = history_id.clone();
     state.processes.reserve(&event_id);
-    let spawned = match spawn::spawn(
-        cmd.is_shell,
-        &cmd.execution_string,
-        cmd.shell_kind.as_deref(),
+    let spawned = match launch(
+        app,
+        &cmd,
+        &target,
         80,
         24,
         buffer_bytes(&state),
@@ -947,8 +1046,7 @@ fn start_group_member(
     {
         Ok(started) => started,
         Err(error) => {
-            let mut killer = spawned.killer;
-            let _ = killer.kill();
+            spawned.kill();
             state.processes.cancel(&event_id);
             return Err(error);
         }
@@ -1108,12 +1206,30 @@ pub fn session_start(app: AppHandle, group_id: String) -> Result<String> {
 /// same in-memory PTY/process lifecycle as group runs without inventing a
 /// database group just for a single command.
 #[tauri::command(rename_all = "snake_case")]
-pub fn command_run(app: AppHandle, command_id: String) -> Result<TerminalInfo> {
+pub async fn command_run(
+    app: AppHandle,
+    command_id: String,
+    target: Option<String>,
+) -> Result<TerminalInfo> {
+    // Off the main thread: an SSH command may wait for the login dialog.
+    tauri::async_runtime::spawn_blocking(move || command_run_blocking(app, command_id, target))
+        .await
+        .map_err(|error| Error::msg(format!("command worker failed: {error}")))?
+}
+
+/// `target`: `"local"` or a host id from the command's targets; it may be
+/// left out only when the command has a single target.
+fn command_run_blocking(
+    app: AppHandle,
+    command_id: String,
+    target: Option<String>,
+) -> Result<TerminalInfo> {
     let state = app.state::<AppState>();
     let cmd = state
         .db
         .read(|c| cmd_repo::get(c, &command_id))?
         .ok_or_else(|| Error::msg("command not found"))?;
+    let target = cmd.resolve_target(target.as_deref())?;
     let run_event_id = Uuid::new_v4().to_string();
     let session_id = format!("command-session:{run_event_id}");
     let buf_bytes = buffer_bytes(&state);
@@ -1148,9 +1264,7 @@ pub fn command_run(app: AppHandle, command_id: String) -> Result<TerminalInfo> {
         history::record(
             c,
             &cmd.execution_string,
-            cmd.shell_kind
-                .as_deref()
-                .unwrap_or_else(|| history_shell_kind(cmd.is_shell)),
+            command_history_kind(&cmd, &target),
             None,
             "command",
             &clock::now_unix(),
@@ -1173,10 +1287,10 @@ pub fn command_run(app: AppHandle, command_id: String) -> Result<TerminalInfo> {
     let session_id2 = session_id.clone();
     let history_id2 = history_id.clone();
     state.processes.reserve(&run_event_id);
-    let spawned = match spawn::spawn(
-        cmd.is_shell,
-        &cmd.execution_string,
-        cmd.shell_kind.as_deref(),
+    let spawned = match launch(
+        &app,
+        &cmd,
+        &target,
         100,
         30,
         buf_bytes,
@@ -1229,8 +1343,7 @@ pub fn command_run(app: AppHandle, command_id: String) -> Result<TerminalInfo> {
     {
         Ok(started) => started,
         Err(error) => {
-            let mut killer = spawned.killer;
-            let _ = killer.kill();
+            spawned.kill();
             state.processes.cancel(&run_event_id);
             return Err(error);
         }
@@ -1421,14 +1534,27 @@ pub async fn session_stop(app: AppHandle, session_id: String) -> Result<()> {
         state
             .db
             .write(|c| runs::set_session_status(c, &session_id, "stopped"))?;
-        let session_pids: Vec<u32> = state
+        let lives: Vec<_> = state
             .processes
             .ids_for_session(&session_id)
             .into_iter()
-            .filter_map(|id| state.processes.get(&id).map(|live| live.pid))
+            .filter_map(|id| state.processes.get(&id))
+            .collect();
+        // Commands running on an SSH host have no local PID (0): they stop
+        // through their channel. Signalling PID 0 would hit this app's own
+        // process group.
+        let (remote, local): (Vec<_>, Vec<_>) =
+            lives.into_iter().partition(|live| live.pty.is_remote());
+        let session_pids: Vec<u32> = local
+            .iter()
+            .map(|live| live.pid)
+            .filter(|pid| *pid != 0)
             .collect();
 
         // Signal all processes in the session up front so shutdown happens concurrently
+        for live in &remote {
+            live.pty.stop(false);
+        }
         for pid in &session_pids {
             shutdown::stop_pid(*pid);
         }
@@ -1436,6 +1562,11 @@ pub async fn session_stop(app: AppHandle, session_id: String) -> Result<()> {
         let mut first_error = None;
         for pid in session_pids {
             if let Err(error) = shutdown::stop_and_wait(pid, false) {
+                first_error.get_or_insert(error);
+            }
+        }
+        for live in remote {
+            if let Err(error) = super::ssh::stop_terminal(&app, &live, false) {
                 first_error.get_or_insert(error);
             }
         }
@@ -1452,10 +1583,13 @@ pub async fn session_stop(app: AppHandle, session_id: String) -> Result<()> {
 pub async fn process_stop(app: AppHandle, run_event_id: String, force: Option<bool>) -> Result<()> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let live = state
-            .processes
-            .get(&run_event_id)
-            .ok_or_else(|| Error::msg("process not running"))?;
+        let Some(live) = state.processes.get(&run_event_id) else {
+            // Already exited: nothing left to stop.
+            if state.processes.finished(&run_event_id).is_some() {
+                return Ok(());
+            }
+            return Err(Error::msg("process not running"));
+        };
         if live.pty.is_remote() {
             return super::ssh::stop_terminal(&app, &live, force.unwrap_or(false));
         }
@@ -1473,10 +1607,13 @@ pub fn pty_resize(
     cols: u16,
     rows: u16,
 ) -> Result<()> {
-    let live = state
-        .processes
-        .get(&run_event_id)
-        .ok_or_else(|| Error::msg("process not running"))?;
+    let Some(live) = state.processes.get(&run_event_id) else {
+        // A tab showing a finished command still resizes; nothing to tell.
+        if state.processes.finished(&run_event_id).is_some() {
+            return Ok(());
+        }
+        return Err(Error::msg("process not running"));
+    };
     live.pty.resize(cols, rows)
 }
 
@@ -1485,20 +1622,27 @@ pub fn pty_write(state: State<AppState>, run_event_id: String, b64: String) -> R
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(b64)
         .map_err(|e| Error::msg(e.to_string()))?;
-    let live = state
-        .processes
-        .get(&run_event_id)
-        .ok_or_else(|| Error::msg("process not running"))?;
+    let Some(live) = state.processes.get(&run_event_id) else {
+        if state.processes.finished(&run_event_id).is_some() {
+            return Err(Error::msg("Tiến trình đã kết thúc"));
+        }
+        return Err(Error::msg("process not running"));
+    };
     live.pty.write(&bytes)
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn pty_reattach(state: State<AppState>, run_event_id: String) -> Result<String> {
-    let live = state
-        .processes
-        .get(&run_event_id)
-        .ok_or_else(|| Error::msg("process not running"))?;
-    let snap = live.pty.snapshot()?;
+    // A quick command (`echo 1`) may exit before its tab attaches: its output
+    // is still kept for a while.
+    let pty = match state.processes.get(&run_event_id) {
+        Some(live) => std::sync::Arc::clone(&live.pty),
+        None => state
+            .processes
+            .finished(&run_event_id)
+            .ok_or_else(|| Error::msg("process not running"))?,
+    };
+    let snap = pty.snapshot()?;
     Ok(base64::engine::general_purpose::STANDARD.encode(snap))
 }
 
@@ -1696,19 +1840,45 @@ pub fn autostart_os_set(app: AppHandle, enabled: bool, confirmed: bool) -> Resul
 }
 
 #[tauri::command]
-pub fn clipboard_read_text(app: AppHandle) -> Result<String> {
+pub async fn clipboard_read_text(app: AppHandle) -> Result<String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
-    app.clipboard()
-        .read_text()
-        .map_err(|error| Error::msg(format!("Không đọc được clipboard: {error}")))
+    off_main_thread("đọc clipboard", move || {
+        app.clipboard()
+            .read_text()
+            .map_err(|error| Error::msg(format!("Không đọc được clipboard: {error}")))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn clipboard_write_text(app: AppHandle, text: String) -> Result<()> {
+pub async fn clipboard_write_text(app: AppHandle, text: String) -> Result<()> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
-    app.clipboard()
-        .write_text(text)
-        .map_err(|error| Error::msg(format!("Không ghi được clipboard: {error}")))
+    off_main_thread("ghi clipboard", move || {
+        app.clipboard()
+            .write_text(text)
+            .map_err(|error| Error::msg(format!("Không ghi được clipboard: {error}")))
+    })
+    .await
+}
+
+/// Clipboard calls must never run on the main thread. On Linux, reading asks
+/// the selection owner and waits for its answer; when the owner is this
+/// app's own GTK/WebKit side (text copied from an input or the webview), it
+/// can only answer from the main thread, so a sync command there hangs the
+/// whole app. Off the main thread, with a deadline, the worst case is an
+/// error.
+async fn off_main_thread<T: Send + 'static>(
+    what: &str,
+    task: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
+    let worker = tauri::async_runtime::spawn_blocking(task);
+    match tokio::time::timeout(std::time::Duration::from_secs(3), worker).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => Err(Error::msg(format!("Không thể {what}: {error}"))),
+        Err(_) => Err(Error::msg(format!(
+            "Không thể {what}: chương trình giữ clipboard không trả lời sau 3 giây"
+        ))),
+    }
 }
 
 /// Toggles the webview inspector. Release builds ship without it.

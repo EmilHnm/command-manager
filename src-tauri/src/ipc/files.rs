@@ -5,12 +5,13 @@ use super::events;
 use super::ssh::SshState;
 use crate::db::repos::ssh_hosts;
 use crate::error::{Error, Result};
+use crate::files::edit::{EditEnv, EditInfo, RemoteEdits};
 use crate::files::fs::FsHandle;
 use crate::files::transfer::{
     ConflictAction, ConflictDecision, ConflictPrompt, Endpoint, JobSnapshot, Mode, TransferEnv,
     TransferQueue,
 };
-use crate::files::{check_name, EntryKind, FsEntry, Location};
+use crate::files::{check_name, FsEntry, Location};
 use crate::ssh::manager::Lease;
 use crate::ssh::BoxFuture;
 use russh_sftp::client::SftpSession;
@@ -32,6 +33,7 @@ struct SftpEntry {
 
 pub struct FilesState {
     queue: Arc<TransferQueue>,
+    edits: Arc<RemoteEdits>,
     sftp: Arc<tokio::sync::Mutex<HashMap<String, SftpEntry>>>,
 }
 
@@ -53,7 +55,8 @@ impl FilesState {
             }
         });
         Self {
-            queue: TransferQueue::new(env),
+            queue: TransferQueue::new(env.clone()),
+            edits: RemoteEdits::new(env, std::env::temp_dir().join("command-manager-edit")),
             sftp,
         }
     }
@@ -115,6 +118,16 @@ async fn fs_for(
     let handle = FsHandle::Remote(Arc::clone(&entry.session));
     sessions.insert(host_id.clone(), entry);
     Ok(handle)
+}
+
+impl EditEnv for TauriTransferEnv {
+    fn fs(&self, location: &Location) -> BoxFuture<'static, Result<FsHandle>> {
+        TransferEnv::fs(self, location)
+    }
+
+    fn changed(&self, info: &EditInfo) {
+        let _ = self.app.emit(events::REMOTE_EDIT, info);
+    }
 }
 
 impl TransferEnv for TauriTransferEnv {
@@ -254,48 +267,34 @@ pub async fn fs_delete(
     Ok(())
 }
 
-/// Largest file "open" downloads on its own; bigger ones go through the
-/// transfer queue (with progress and cancel).
-const OPEN_REMOTE_MAX: u64 = 256 * 1024 * 1024;
-
-/// Opens a file that lives on a server: downloads a copy to a temp folder
-/// and hands it to the OS. Edits stay in the copy; the UI says so.
+/// Opens a server file with the local default app: downloads a copy and
+/// uploads it back on every save (see `files::edit`).
 #[tauri::command(rename_all = "snake_case")]
 pub async fn fs_open_remote(app: AppHandle, location: Location, path: String) -> Result<String> {
-    if !location.is_remote() {
-        return Err(Error::msg("Chỉ dùng cho tệp trên máy chủ"));
-    }
-    location.check_absolute(&path)?;
-    let fs = handle(&app, &location).await?;
-    let stat = fs
-        .stat(&path)
-        .await?
-        .ok_or_else(|| Error::msg(format!("Không tồn tại: {path}")))?;
-    if stat.kind == EntryKind::Dir {
-        return Err(Error::msg("Đây là thư mục"));
-    }
-    if stat.size > OPEN_REMOTE_MAX {
-        return Err(Error::msg(
-            "Tệp quá lớn để mở trực tiếp (trên 256 MB); hãy kéo về Files pane local",
-        ));
-    }
-    let name = location.file_name(&path);
-    check_name(&name)?;
-    let dir = std::env::temp_dir()
-        .join("command-manager-open")
-        .join(uuid::Uuid::new_v4().to_string());
-    tokio::fs::create_dir_all(&dir).await?;
-    let local = dir.join(&name);
-    let mut reader = fs.open_read(&path).await?;
-    let mut writer = tokio::fs::File::create(&local).await?;
-    tokio::io::copy(&mut reader, &mut writer)
-        .await
-        .map_err(|error| Error::msg(format!("Lỗi tải {path}: {error}")))?;
-    writer.sync_all().await?;
-    drop(writer);
+    let edits = Arc::clone(&app.state::<FilesState>().edits);
+    let local = edits.open(location, path).await?;
     let local = local.to_string_lossy().into_owned();
     super::commands::open_with_os(&local)?;
     Ok(local)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn fs_edit_list(app: AppHandle) -> Vec<EditInfo> {
+    app.state::<FilesState>().edits.list()
+}
+
+/// "Đẩy lên ngay", or "Ghi đè" after a conflict (`force`).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn fs_edit_push(app: AppHandle, local_path: String, force: Option<bool>) -> Result<()> {
+    let edits = Arc::clone(&app.state::<FilesState>().edits);
+    edits.push(&local_path, force.unwrap_or(false)).await
+}
+
+/// Stops syncing and deletes the local copy.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn fs_edit_stop(app: AppHandle, local_path: String) -> Result<()> {
+    let edits = Arc::clone(&app.state::<FilesState>().edits);
+    edits.stop(&local_path).await
 }
 
 #[tauri::command(rename_all = "snake_case")]

@@ -35,8 +35,42 @@
           </span>
         </div>
 
-        <!-- is_shell Execution Mode -->
+        <!-- Where it may run: this machine and/or SSH hosts (SCR-07) -->
         <div class="form-group">
+          <label class="form-label">Nơi chạy (*)</label>
+          <div class="target-list">
+            <label class="target-item" :class="{ selected: hasTarget(LOCAL_TARGET) }">
+              <input type="checkbox" :checked="hasTarget(LOCAL_TARGET)" @change="toggleTarget(LOCAL_TARGET)" />
+              <span class="target-name">💻 Máy này</span>
+            </label>
+            <label
+              v-for="host in sshHosts"
+              :key="host.id"
+              class="target-item"
+              :class="{ selected: hasTarget(host.id) }"
+            >
+              <input type="checkbox" :checked="hasTarget(host.id)" @change="toggleTarget(host.id)" />
+              <span class="target-dot" :style="{ backgroundColor: host.color || '#744791' }" />
+              <span class="target-name">{{ host.name }}</span>
+              <span class="target-addr">{{ host.username }}@{{ host.host }}{{ host.port !== 22 ? `:${host.port}` : '' }}</span>
+            </label>
+          </div>
+          <span v-if="isFieldInvalid('targets')" class="field-error-msg">
+            <AlertCircle :size="12" />
+            <span>{{ errors.targets }}</span>
+          </span>
+          <span v-else-if="selectedTargets.length > 1" class="field-hint">
+            Khi chạy, app hỏi chạy ở đâu. Trên máy chủ, lệnh chạy qua shell đăng nhập của máy chủ (như
+            <code>ssh host 'lệnh'</code>), trong thư mục mặc định của máy chủ nếu có.
+          </span>
+          <span v-else-if="selectedTargets[0] !== LOCAL_TARGET" class="field-hint">
+            Lệnh chạy qua shell đăng nhập của máy chủ (như <code>ssh host 'lệnh'</code>); pipe, biến môi trường
+            và <code>&amp;&amp;</code> dùng được.
+          </span>
+        </div>
+
+        <!-- is_shell Execution Mode (only matters on this machine) -->
+        <div v-if="hasTarget(LOCAL_TARGET)" class="form-group">
           <label class="form-label">Phương thức thực thi (*)</label>
           <div class="mode-selector">
             <label class="mode-card" :class="{ selected: !form.is_shell }">
@@ -138,6 +172,8 @@
 import { ref, computed, watch, onMounted } from 'vue';
 import { Zap, Save, X, AlertCircle, LoaderCircle } from 'lucide-vue-next';
 import type { CommandDefinition } from '@/types/models';
+import { LOCAL_TARGET, allowedTargets } from '@/types/models';
+import { useSshHosts } from '@/composables/useSshHosts';
 import { useSuggestions } from '@/composables/useSuggestions';
 
 const props = withDefaults(
@@ -166,6 +202,19 @@ const form = ref<Partial<CommandDefinition>>({
   quick_access: false,
 });
 
+const { hosts: sshHosts, fetchHosts: fetchSshHosts } = useSshHosts();
+// Stored as given; no entries means this machine only.
+const selectedTargets = computed(() => allowedTargets(form.value));
+const hasTarget = (target: string) => selectedTargets.value.includes(target);
+const toggleTarget = (target: string) => {
+  const next = hasTarget(target)
+    ? selectedTargets.value.filter((item) => item !== target)
+    : [...selectedTargets.value, target];
+  // Unticking everything is caught by validation, not silently "local".
+  form.value.targets = next.length > 0 ? next : ['__none__'];
+  touched.value.targets = true;
+};
+
 const touched = ref<Record<string, boolean>>({});
 const wasSubmitted = ref(false);
 const { loadHistory, findSuggestions } = useSuggestions();
@@ -176,7 +225,10 @@ const editorSuggestions = computed(() => {
 });
 
 const errors = computed(() => {
-  const errs: { name?: string; execution_string?: string } = {};
+  const errs: { name?: string; execution_string?: string; targets?: string } = {};
+  if (form.value.targets?.includes('__none__')) {
+    errs.targets = 'Chọn ít nhất một nơi chạy.';
+  }
   if (!form.value.name?.trim()) {
     errs.name = 'Tên gợi nhớ không được để trống.';
   }
@@ -188,7 +240,7 @@ const errors = computed(() => {
 
 const hasErrors = computed(() => Object.keys(errors.value).length > 0);
 
-const isFieldInvalid = (field: 'name' | 'execution_string') => {
+const isFieldInvalid = (field: 'name' | 'execution_string' | 'targets') => {
   return (wasSubmitted.value || touched.value[field]) && !!errors.value[field];
 };
 
@@ -202,6 +254,7 @@ watch(
         form.value = {
           ...val,
           quick_access: Boolean(val.quick_access),
+          targets: [...(val.targets ?? [])],
         };
       } else {
         form.value = {
@@ -209,6 +262,7 @@ watch(
           execution_string: '',
           is_shell: false,
           quick_access: false,
+          targets: [],
         };
       }
     } else {
@@ -225,6 +279,7 @@ watch(
 
 onMounted(() => {
   void loadHistory();
+  void fetchSshHosts();
 });
 
 const applySuggestion = (commandLine: string) => {
@@ -252,6 +307,63 @@ const handleSave = () => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.target-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-app-base);
+}
+
+.target-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.target-item.selected {
+  background-color: var(--primary-subtle, #7447911f);
+}
+
+.target-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.target-name {
+  font-weight: 500;
+}
+
+.target-addr {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.field-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.field-hint code {
+  font-family: var(--font-mono);
+  background-color: rgba(255, 255, 255, 0.06);
+  padding: 0 3px;
+  border-radius: 3px;
 }
 
 .label-row {

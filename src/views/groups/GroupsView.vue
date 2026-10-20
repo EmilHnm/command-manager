@@ -234,7 +234,24 @@
                   @change="toggleCommandInPicker(cmd.id)"
                 />
                 <span class="picker-name">{{ cmd.name }}</span>
-                <span class="picker-type">{{ cmd.is_shell ? 'Shell' : 'Argv' }}</span>
+                <!-- Several run targets: pick one for this group -->
+                <select
+                  v-if="selectedCommandIds.includes(cmd.id) && allowedTargets(cmd).length > 1"
+                  class="picker-target"
+                  :value="memberTargets[cmd.id] ?? ''"
+                  title="Lệnh này chạy được ở nhiều nơi; chọn nơi chạy trong nhóm"
+                  @click.stop
+                  @change="memberTargets[cmd.id] = ($event.target as HTMLSelectElement).value || null"
+                >
+                  <option value="">Mặc định ({{ targetLabel(defaultTarget(cmd)) }})</option>
+                  <option v-for="target in allowedTargets(cmd)" :key="target" :value="target">
+                    {{ targetLabel(target) }}
+                  </option>
+                </select>
+                <span v-else-if="allowedTargets(cmd)[0] !== LOCAL_TARGET" class="picker-type">
+                  🌐 {{ targetLabel(allowedTargets(cmd)[0]) }}
+                </span>
+                <span v-else class="picker-type">{{ cmd.is_shell ? 'Shell' : 'Argv' }}</span>
               </label>
             </div>
           </div>
@@ -279,7 +296,9 @@ import { useGroups } from '@/composables/useGroups';
 import { useCommands } from '@/composables/useCommands';
 import { useRunSession } from '@/composables/useRunSession';
 import { APP_ORCHESTRATOR_TAG } from '@/config/version';
-import type { CommandGroupWithCommands } from '@/types/models';
+import type { CommandDefinition, CommandGroupWithCommands } from '@/types/models';
+import { LOCAL_TARGET, allowedTargets } from '@/types/models';
+import { useSshHosts } from '@/composables/useSshHosts';
 
 const router = useRouter();
 const { groups, fetchGroups, saveGroup, deleteGroup, toggleAutostart } = useGroups();
@@ -294,6 +313,18 @@ const groupForm = ref<{ group_name: string; autostart: boolean; execution_mode: 
   execution_mode: 'startup',
 });
 const selectedCommandIds = ref<number[]>([]);
+/** Pinned run target per command in this group; null / missing = default. */
+const memberTargets = ref<Record<number, string | null>>({});
+const { hosts: sshHosts, fetchHosts: fetchSshHosts } = useSshHosts();
+const targetLabel = (target: string) =>
+  target === LOCAL_TARGET
+    ? '💻 Máy này'
+    : `🌐 ${sshHosts.value.find((host) => host.id === target)?.name ?? 'máy chủ đã xóa'}`;
+/** Same rule as the backend: this machine if allowed, else the first host. */
+const defaultTarget = (cmd: CommandDefinition) => {
+  const targets = allowedTargets(cmd);
+  return targets.includes(LOCAL_TARGET) ? LOCAL_TARGET : targets[0];
+};
 
 const showDeleteDialog = ref(false);
 const deletingGroup = ref<CommandGroupWithCommands | null>(null);
@@ -318,7 +349,7 @@ const handleRunAllGroups = async () => {
 };
 
 onMounted(async () => {
-  await Promise.all([fetchGroups(), fetchCommands()]);
+  await Promise.all([fetchGroups(), fetchCommands(), fetchSshHosts()]);
 });
 
 const touchedGroup = ref<{ group_name?: boolean }>({});
@@ -336,6 +367,7 @@ const openCreateGroupModal = () => {
   editingGroupId.value = null;
   groupForm.value = { group_name: '', autostart: false, execution_mode: 'startup' };
   selectedCommandIds.value = [];
+  memberTargets.value = {};
   wasSubmittedGroup.value = false;
   touchedGroup.value = {};
   showGroupModal.value = true;
@@ -346,6 +378,7 @@ watch(showGroupModal, (val) => {
     editingGroupId.value = null;
     groupForm.value = { group_name: '', autostart: false, execution_mode: 'startup' };
     selectedCommandIds.value = [];
+    memberTargets.value = {};
     wasSubmittedGroup.value = false;
     touchedGroup.value = {};
   }
@@ -359,6 +392,7 @@ const openEditGroupModal = (group: CommandGroupWithCommands) => {
     execution_mode: group.execution_mode,
   };
   selectedCommandIds.value = group.commands.map(c => c.id);
+  memberTargets.value = Object.fromEntries(group.commands.map(c => [c.id, c.run_target ?? null]));
   wasSubmittedGroup.value = false;
   touchedGroup.value = {};
   showGroupModal.value = true;
@@ -382,6 +416,7 @@ const saveGroupForm = async () => {
     autostart: groupForm.value.autostart,
     execution_mode: groupForm.value.execution_mode,
     commandIds: selectedCommandIds.value,
+    commandTargets: memberTargets.value,
   });
   showGroupModal.value = false;
 };
@@ -401,6 +436,8 @@ const moveCommand = async (group: CommandGroupWithCommands, index: number, direc
     autostart: group.autostart,
     execution_mode: group.execution_mode,
     commandIds: newCommandIds,
+    // Keep the targets pinned in this group.
+    commandTargets: Object.fromEntries(group.commands.map(c => [c.id, c.run_target ?? null])),
   });
 };
 
@@ -900,6 +937,18 @@ const confirmDeleteGroup = async () => {
   font-size: 12px;
   flex: 1;
   margin-left: 8px;
+  color: var(--text-primary);
+}
+
+.picker-target {
+  margin-left: auto;
+  max-width: 180px;
+  height: 24px;
+  padding: 0 6px;
+  font-size: 11px;
+  background-color: var(--bg-app-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
   color: var(--text-primary);
 }
 

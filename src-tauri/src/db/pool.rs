@@ -1,7 +1,8 @@
 use super::schema::{
     INIT_SQL, MIGRATION_002_SQL, MIGRATION_003_SQL, MIGRATION_004_SQL, MIGRATION_005_SQL,
     MIGRATION_006_SQL, MIGRATION_007_SQL, MIGRATION_008_SQL, MIGRATION_009_SQL, MIGRATION_010_SQL,
-    MIGRATION_011_SQL, MIGRATION_012_SQL, MIGRATION_013_SQL, SCHEMA_VERSION,
+    MIGRATION_011_SQL, MIGRATION_012_SQL, MIGRATION_013_SQL, MIGRATION_014_SQL, MIGRATION_015_SQL,
+    SCHEMA_VERSION,
 };
 use crate::error::{Error, Result};
 use rusqlite::{Connection, OpenFlags};
@@ -150,6 +151,8 @@ pub(crate) fn migrate(conn: &Connection) -> Result<()> {
             11 => MIGRATION_011_SQL,
             12 => MIGRATION_012_SQL,
             13 => MIGRATION_013_SQL,
+            14 => MIGRATION_014_SQL,
+            15 => MIGRATION_015_SQL,
             _ => return Err(Error::msg(format!("missing migration for schema {next}"))),
         };
         conn.execute_batch(sql)?;
@@ -481,5 +484,57 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM ssh_secret", [], |row| row.get(0))
             .expect("count");
         assert_eq!(left, 0, "secrets still cascade with their host");
+    }
+
+    #[test]
+    fn command_host_from_014_becomes_its_only_target() {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys");
+        conn.execute_batch(INIT_SQL).expect("init");
+        for sql in [
+            MIGRATION_002_SQL,
+            MIGRATION_003_SQL,
+            MIGRATION_004_SQL,
+            MIGRATION_005_SQL,
+            MIGRATION_006_SQL,
+            MIGRATION_007_SQL,
+            MIGRATION_008_SQL,
+            MIGRATION_009_SQL,
+            MIGRATION_010_SQL,
+            MIGRATION_011_SQL,
+            MIGRATION_012_SQL,
+            MIGRATION_013_SQL,
+            MIGRATION_014_SQL,
+        ] {
+            conn.execute_batch(sql).expect("older migration");
+        }
+        conn.execute_batch(
+            "INSERT INTO ssh_host (id, name, host, username, created_at)
+               VALUES ('h1', 'prod', '10.0.0.1', 'deploy', '0');
+             INSERT INTO command_definition (id, name, execution_string, ssh_host_id)
+               VALUES ('remote', 'deploy', 'make deploy', 'h1'),
+                      ('plain', 'ls', 'ls', NULL);",
+        )
+        .expect("v14 rows");
+
+        migrate(&conn).expect("migrate to current");
+
+        let targets: Vec<(String, String)> = conn
+            .prepare("SELECT command_id, target FROM command_target ORDER BY command_id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(targets, [("remote".to_string(), "h1".to_string())]);
+
+        // Deleting the host removes it from commands.
+        conn.execute("DELETE FROM ssh_host WHERE id = 'h1'", [])
+            .expect("delete host");
+        let left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM command_target", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
     }
 }

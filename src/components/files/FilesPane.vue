@@ -436,7 +436,7 @@ const openEntry = (entry: FsEntry) => {
     void ipcClient
       .fsOpenRemote(props.location, entry.path)
       .then(() =>
-        notify(`Đã mở bản sao của ${entry.name}. Sửa xong, hãy kéo tệp ngược lên máy chủ để lưu.`)
+        notify(`Đã mở ${entry.name}; mỗi lần lưu sẽ tự tải lên máy chủ (theo dõi trong ⇅).`)
       )
       .catch((e) => notify(e instanceof Error ? e.message : String(e), 'error'));
   }

@@ -31,7 +31,53 @@
     </header>
 
     <div class="td-list custom-scrollbar">
-      <div v-if="jobs.length === 0" class="td-empty">
+      <!-- Server files open in a local app -->
+      <div v-if="edits.length > 0" class="td-edits">
+        <div class="td-section-title">Tệp đang sửa · tự lưu lên máy chủ khi bạn lưu</div>
+        <div v-for="item in edits" :key="item.local_path" class="td-edit" :class="`edit-${item.status}`">
+          <FilePen :size="13" class="td-edit-icon" />
+          <div class="td-job-text">
+            <span class="td-route">
+              {{ describe(item.location) }}
+              <span class="td-path">{{ item.remote_path }}</span>
+            </span>
+            <span class="td-meta" :class="{ 'td-failed': item.status === 'conflict' || item.status === 'error' }">
+              {{ editStatusLabel(item) }}
+            </span>
+          </div>
+          <div class="td-edit-actions">
+            <button
+              v-if="item.status === 'conflict'"
+              type="button"
+              class="btn btn-secondary btn-sm"
+              title="Ghi bản của bạn đè lên tệp trên máy chủ"
+              @click="pushEdit(item.local_path, true)"
+            >
+              Ghi đè
+            </button>
+            <button
+              v-else
+              type="button"
+              class="td-icon-btn"
+              title="Tải lên ngay"
+              :disabled="item.status === 'uploading'"
+              @click="pushEdit(item.local_path, false)"
+            >
+              <Upload :size="13" />
+            </button>
+            <button
+              type="button"
+              class="td-icon-btn"
+              title="Ngừng theo dõi và xóa bản sao trên máy này"
+              @click="stopEdit(item.local_path)"
+            >
+              <X :size="13" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="jobs.length === 0 && edits.length === 0" class="td-empty">
         Chưa có lượt truyền nào. Kéo tệp giữa hai Files pane, hoặc kéo tệp từ trình quản lý file của
         máy vào một Files pane.
       </div>
@@ -116,24 +162,28 @@
       <div class="cm-body">
         <div class="cm-path font-mono">{{ conflict.path }}</div>
         <table v-if="!conflict.kind_mismatch" class="cm-compare">
-          <tr>
-            <th />
-            <th>Kích thước</th>
-            <th>Sửa đổi</th>
-          </tr>
-          <tr>
-            <td>Mới</td>
-            <td>{{ formatBytes(conflict.source_size) }}</td>
-            <td>
-              {{ formatTime(conflict.source_mtime) }}
-              <span v-if="sourceNewer" class="cm-newer">mới hơn</span>
-            </td>
-          </tr>
-          <tr>
-            <td>Đang có</td>
-            <td>{{ formatBytes(conflict.target_size) }}</td>
-            <td>{{ formatTime(conflict.target_mtime) }}</td>
-          </tr>
+          <thead>
+            <tr>
+              <th />
+              <th>Kích thước</th>
+              <th>Sửa đổi</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Mới</td>
+              <td>{{ formatBytes(conflict.source_size) }}</td>
+              <td>
+                {{ formatTime(conflict.source_mtime) }}
+                <span v-if="sourceNewer" class="cm-newer">mới hơn</span>
+              </td>
+            </tr>
+            <tr>
+              <td>Đang có</td>
+              <td>{{ formatBytes(conflict.target_size) }}</td>
+              <td>{{ formatTime(conflict.target_mtime) }}</td>
+            </tr>
+          </tbody>
         </table>
         <p v-else class="cm-note">
           Ở đích đã có một mục khác loại (tệp ↔ thư mục) cùng tên; chỉ có thể bỏ qua hoặc giữ cả hai.
@@ -187,9 +237,18 @@ import {
   MoveRight,
   RotateCw,
   TerminalSquare,
+  FilePen,
+  Upload,
   X,
 } from 'lucide-vue-next';
-import type { ConflictAction, FileLocation, ItemSnapshot, ItemStatus, JobSnapshot } from '@/types/files';
+import type {
+  ConflictAction,
+  EditInfo,
+  FileLocation,
+  ItemSnapshot,
+  ItemStatus,
+  JobSnapshot,
+} from '@/types/files';
 import { formatBytes } from '@/types/files';
 import { useTransfers } from '@/composables/useTransfers';
 import { useFileDrag, type TerminalDropInfo } from '@/composables/useFileDrag';
@@ -197,6 +256,9 @@ import { useSshHosts } from '@/composables/useSshHosts';
 
 const {
   jobs,
+  edits,
+  pushEdit,
+  stopEdit,
   conflicts,
   drawerOpen,
   activeTotals,
@@ -357,6 +419,23 @@ const itemIcon = (status: ItemStatus) => {
 const itemPercent = (item: ItemSnapshot) =>
   item.size > 0 ? Math.min(100, Math.round((item.done_bytes / item.size) * 100)) : 0;
 
+const editStatusLabel = (item: EditInfo) => {
+  switch (item.status) {
+    case 'opened':
+      return 'Đang mở, chưa lưu lần nào';
+    case 'uploading':
+      return 'Đang tải lên…';
+    case 'synced':
+      return `Đã lưu ${item.synced_at ? formatTime(item.synced_at) : ''} · ${item.uploads} lần`;
+    case 'conflict':
+      return item.error ?? 'Tệp trên máy chủ đã đổi';
+    case 'error':
+      return item.error ?? 'Không lưu được';
+    default:
+      return '';
+  }
+};
+
 // --- MOD-20
 const conflict = computed(() => conflicts.value[0] ?? null);
 const choice = ref<ConflictAction>('skip');
@@ -505,6 +584,48 @@ const formatTime = (secs?: number | null) =>
 
 .td-job {
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.td-edits {
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-focus);
+}
+
+.td-section-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.td-edit {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.td-edit-icon {
+  color: #e4b5ff;
+}
+
+.edit-synced .td-edit-icon {
+  color: var(--status-running, #10b981);
+}
+
+.edit-conflict .td-edit-icon,
+.edit-error .td-edit-icon {
+  color: var(--status-failed, #ef4444);
+}
+
+.td-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .td-job-main {

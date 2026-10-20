@@ -25,6 +25,7 @@ export function useGroups() {
     autostart: boolean;
     execution_mode: 'startup' | 'sequential';
     commandIds?: number[];
+    commandTargets?: Record<number, string | null | undefined>;
   }) => {
     loading.value = true;
     error.value = null;

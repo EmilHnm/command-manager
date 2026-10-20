@@ -1,4 +1,4 @@
-pub const SCHEMA_VERSION: i64 = 13;
+pub const SCHEMA_VERSION: i64 = 15;
 pub const INIT_SQL: &str = include_str!("../../migrations/001_init.sql");
 pub const MIGRATION_002_SQL: &str = include_str!("../../migrations/002_templates.sql");
 pub const MIGRATION_003_SQL: &str = include_str!("../../migrations/003_template_history.sql");
@@ -13,3 +13,5 @@ pub const MIGRATION_010_SQL: &str = include_str!("../../migrations/010_command_q
 pub const MIGRATION_011_SQL: &str = include_str!("../../migrations/011_ssh_hosts.sql");
 pub const MIGRATION_012_SQL: &str = include_str!("../../migrations/012_ssh_private_key.sql");
 pub const MIGRATION_013_SQL: &str = include_str!("../../migrations/013_ssh_keychain.sql");
+pub const MIGRATION_014_SQL: &str = include_str!("../../migrations/014_command_ssh_host.sql");
+pub const MIGRATION_015_SQL: &str = include_str!("../../migrations/015_command_targets.sql");

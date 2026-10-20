@@ -83,6 +83,19 @@ export interface ConflictPrompt {
   keep_both_name: string;
 }
 
+export type EditStatus = 'opened' | 'uploading' | 'synced' | 'conflict' | 'error' | 'stopped';
+
+/** A server file open in a local app, uploaded back on save. */
+export interface EditInfo {
+  local_path: string;
+  location: FileLocation;
+  remote_path: string;
+  status: EditStatus;
+  error?: string | null;
+  synced_at?: number | null;
+  uploads: number;
+}
+
 export const sameLocation = (a: FileLocation, b: FileLocation): boolean =>
   a.kind === b.kind && (a.kind === 'local' || (b.kind === 'ssh' && a.host_id === b.host_id));
 

@@ -15,6 +15,10 @@ pub struct Membership {
     pub group_id: String,
     pub command_id: String,
     pub execution_order: i64,
+    /// One of the command's targets, pinned for this group; `None` uses
+    /// the command's default target.
+    #[serde(default)]
+    pub run_target: Option<String>,
 }
 
 pub fn list(conn: &Connection) -> Result<Vec<Group>> {
@@ -73,7 +77,7 @@ pub fn delete(conn: &Connection, id: &str) -> Result<()> {
 
 pub fn memberships(conn: &Connection, group_id: &str) -> Result<Vec<Membership>> {
     let mut stmt = conn.prepare(
-        "SELECT group_id, command_id, execution_order FROM group_membership
+        "SELECT group_id, command_id, execution_order, run_target FROM group_membership
          WHERE group_id = ?1 ORDER BY execution_order",
     )?;
     let rows = stmt.query_map([group_id], |row| {
@@ -81,6 +85,7 @@ pub fn memberships(conn: &Connection, group_id: &str) -> Result<Vec<Membership>>
             group_id: row.get(0)?,
             command_id: row.get(1)?,
             execution_order: row.get(2)?,
+            run_target: row.get(3)?,
         })
     })?;
     Ok(rows.filter_map(|r| r.ok()).collect())
@@ -98,8 +103,16 @@ pub fn replace_memberships(
     )?;
     for m in members {
         tx.execute(
-            "INSERT INTO group_membership (group_id, command_id, execution_order) VALUES (?1, ?2, ?3)",
-            rusqlite::params![group_id, m.command_id, m.execution_order],
+            "INSERT INTO group_membership (group_id, command_id, execution_order, run_target)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                group_id,
+                m.command_id,
+                m.execution_order,
+                m.run_target
+                    .as_deref()
+                    .filter(|target| !target.trim().is_empty())
+            ],
         )?;
     }
     tx.commit()?;

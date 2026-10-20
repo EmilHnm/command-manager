@@ -157,6 +157,7 @@ import { RefreshCw, Trash2, Square, RotateCw, LoaderCircle, ExternalLink, Chevro
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search';
 import { usePtyStream } from '@/composables/usePtyStream';
 import type { ProcessLifecycleStatus, CommandHistory } from '@/types/models';
+import { useTransfers } from '@/composables/useTransfers';
 import { ipcClient } from '@/ipc/client';
 import { useSuggestions } from '@/composables/useSuggestions';
 import { matchesBinding, setSuggestScope, useKeyCommand } from '@/keybindings/dispatcher';
@@ -291,7 +292,10 @@ useKeyCommand('terminal.paste', () => {
   if (!isPaneFocused()) return;
   void ipcClient.readClipboardText()
     .then((text) => { if (text) pasteText(text); })
-    .catch(console.error);
+    .catch((error) => {
+      console.error(error);
+      useTransfers().notify(error instanceof Error ? error.message : String(error), 'error');
+    });
 });
 
 useKeyCommand('terminal.find', () => {

@@ -61,6 +61,9 @@
       @resolved="authRequest = null"
     />
 
+    <!-- "Chạy ở đâu?" for commands with several run targets -->
+    <RunTargetModal />
+
     <!-- Files: drag label, Transfers drawer, MOD-20, notices (SCR-08) -->
     <TransfersLayer />
   </div>
@@ -78,6 +81,7 @@ import CloseConfirmModal from '@/components/dialogs/CloseConfirmModal.vue';
 import HostKeyVerificationModal from '@/components/dialogs/HostKeyVerificationModal.vue';
 import SshAuthPromptModal from '@/components/dialogs/SshAuthPromptModal.vue';
 import TransfersLayer from '@/components/files/TransfersLayer.vue';
+import RunTargetModal from '@/components/dialogs/RunTargetModal.vue';
 import { useTransfers } from '@/composables/useTransfers';
 import { useFileDrag } from '@/composables/useFileDrag';
 import { useSshHosts } from '@/composables/useSshHosts';
