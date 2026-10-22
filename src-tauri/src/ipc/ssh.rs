@@ -886,23 +886,37 @@ fn system_ssh_argv(app: &AppHandle, host: SshHost, command: Option<&str>) -> Res
         argv.push("-A".into());
     }
     if let Some(jump_id) = &host.jump_host_id {
-        let jump = state.db.read(|c| {
-            let jump = ssh_hosts::require(c, jump_id)?;
-            resolve(c, jump)
+        // OpenSSH wants the hops in the order they are crossed: outermost first.
+        let hops = state.db.read(|c| {
+            ssh_hosts::jump_chain(c, jump_id, Some(&host.id))?
+                .into_iter()
+                .rev()
+                .map(|jump| resolve(c, jump))
+                .collect::<Result<Vec<_>>>()
         })?;
         argv.push("-J".into());
-        argv.push(format!(
-            "{}@{}:{}",
-            jump.username,
-            bracket(&jump.host.host),
-            jump.host.port
-        ));
+        argv.push(jump_spec(&hops));
     }
     argv.push(format!("{}@{}", target.username, host.host));
     if let Some(command) = command {
         argv.push(command.to_string());
     }
     Ok(argv)
+}
+
+/// `-J` value: `user@host:port` per hop, comma separated.
+fn jump_spec(hops: &[Target]) -> String {
+    hops.iter()
+        .map(|hop| {
+            format!(
+                "{}@{}:{}",
+                hop.username,
+                bracket(&hop.host.host),
+                hop.host.port
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Quotes a word for the server's POSIX shell.
@@ -1126,5 +1140,29 @@ mod tests {
             "cd '/var/www/it'\\''s' && ls"
         );
         assert_eq!(remote_command_line(&host(Some("  ")), "ls"), "ls");
+    }
+
+    #[test]
+    fn jump_spec_lists_hops_outermost_first() {
+        let slot = || SecretSlot {
+            owner: SecretOwner::Host("h".into()),
+            store: SecretStore::None,
+        };
+        let hop = |user: &str, address: &str, port: u16| {
+            let mut host = host(None);
+            host.host = address.into();
+            host.port = port;
+            Target {
+                host,
+                username: user.into(),
+                key: KeyChoice::Defaults,
+                password: slot(),
+                passphrase: slot(),
+            }
+        };
+        assert_eq!(
+            jump_spec(&[hop("a", "edge.example", 22), hop("b", "fd00::1", 2222)]),
+            "a@edge.example:22,b@[fd00::1]:2222"
+        );
     }
 }

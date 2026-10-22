@@ -44,6 +44,8 @@ export interface ItemSnapshot {
   done_bytes: number;
   status: ItemStatus;
   error?: string | null;
+  /** Bytes kept from an earlier attempt's .cm-part (0: copied from the start). */
+  resumed_from: number;
 }
 
 export interface JobSnapshot {

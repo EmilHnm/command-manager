@@ -4,6 +4,7 @@
 
 use super::client::{self, ClientHandler, Connected};
 use super::{ConnState, SshEnv};
+use crate::db::repos::ssh_hosts;
 use crate::error::{Error, Result};
 use russh::client::Handle;
 use std::collections::HashMap;
@@ -12,6 +13,8 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 pub const IDLE_CLOSE: Duration = Duration::from_secs(60);
+
+const JUMP_FAILED: &str = "Không kết nối được jump host";
 
 pub struct Connection {
     host_id: String,
@@ -79,8 +82,24 @@ impl Inner {
             .clone()
     }
 
-    fn lease(self: Arc<Self>, host_id: String) -> super::BoxFuture<'static, Result<Lease>> {
+    /// `path` holds the hosts already waiting on this one (it is their jump
+    /// host). Checked before taking the slot lock: a loop in the saved jump
+    /// hosts would otherwise wait on a lock its own caller holds.
+    fn lease(
+        self: Arc<Self>,
+        host_id: String,
+        mut path: Vec<String>,
+    ) -> super::BoxFuture<'static, Result<Lease>> {
         Box::pin(async move {
+            if path.contains(&host_id) {
+                return Err(Error::msg("Chuỗi jump host bị vòng lặp"));
+            }
+            if path.len() > ssh_hosts::MAX_JUMP_HOPS {
+                return Err(Error::msg(format!(
+                    "Chỉ hỗ trợ đi qua tối đa {} jump host liên tiếp",
+                    ssh_hosts::MAX_JUMP_HOPS
+                )));
+            }
             let slot = self.slot(&host_id);
             // Held while connecting, so tabs opened together share one
             // login and one set of dialogs.
@@ -98,9 +117,19 @@ impl Inner {
                 ));
             }
             let via = match host.jump_host_id.clone() {
-                Some(jump_id) => Some(Arc::clone(&self).lease(jump_id).await.map_err(|error| {
-                    Error::msg(format!("Không kết nối được jump host: {error}"))
-                })?),
+                Some(jump_id) => {
+                    path.push(host_id.clone());
+                    let lease = Arc::clone(&self).lease(jump_id, path).await;
+                    Some(lease.map_err(|error| {
+                        // Only the hop nearest the failure says so.
+                        let error = error.to_string();
+                        if error.starts_with(JUMP_FAILED) {
+                            Error::msg(error)
+                        } else {
+                            Error::msg(format!("{JUMP_FAILED}: {error}"))
+                        }
+                    })?)
+                }
                 None => None,
             };
             let connected = client::connect(
@@ -161,7 +190,9 @@ impl SshManager {
     /// Returns a lease on the host's connection, connecting (and asking for
     /// host key / password) when there is none.
     pub async fn lease(&self, host_id: &str) -> Result<Lease> {
-        Arc::clone(&self.inner).lease(host_id.to_string()).await
+        Arc::clone(&self.inner)
+            .lease(host_id.to_string(), Vec::new())
+            .await
     }
 
     /// Number of open channels per connected host, for SCR-07.

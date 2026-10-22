@@ -54,8 +54,11 @@ const ACCEPTED_KEYS: [&str; 2] = [
     "AAAAC3NzaC1lZDI1NTE5AAAAIA5u5MSGFrz++vazhNAeiyH3UT073FU18G8+8ExbWbTA",
 ];
 
-#[derive(Clone)]
-struct ShellServer;
+#[derive(Clone, Default)]
+struct ShellServer {
+    /// direct-tcpip channels: their data belongs to the tunnel, not the shell.
+    tunnels: std::collections::HashSet<ChannelId>,
+}
 
 impl server::Handler for ShellServer {
     type Error = russh::Error;
@@ -98,6 +101,31 @@ impl server::Handler for ShellServer {
         Ok(())
     }
 
+    /// Jump host duty: pipes the channel to the address asked for.
+    async fn channel_open_direct_tcpip(
+        &mut self,
+        channel: Channel<Msg>,
+        host_to_connect: &str,
+        port_to_connect: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: server::ChannelOpenHandle,
+        _session: &mut Session,
+    ) -> std::result::Result<(), Self::Error> {
+        let Ok(mut upstream) =
+            tokio::net::TcpStream::connect((host_to_connect, port_to_connect as u16)).await
+        else {
+            return Ok(());
+        };
+        self.tunnels.insert(channel.id());
+        reply.accept().await;
+        tokio::spawn(async move {
+            let mut stream = channel.into_stream();
+            let _ = tokio::io::copy_bidirectional(&mut stream, &mut upstream).await;
+        });
+        Ok(())
+    }
+
     async fn shell_request(
         &mut self,
         channel: ChannelId,
@@ -129,6 +157,9 @@ impl server::Handler for ShellServer {
         data: &[u8],
         session: &mut Session,
     ) -> std::result::Result<(), Self::Error> {
+        if self.tunnels.contains(&channel) {
+            return Ok(());
+        }
         if data.starts_with(b"exit") {
             session.exit_status_request(channel, 0)?;
             session.eof(channel)?;
@@ -160,7 +191,9 @@ async fn start_server_with(max_auth_attempts: usize) -> u16 {
         while let Ok((stream, _)) = listener.accept().await {
             let config = Arc::clone(&config);
             tokio::spawn(async move {
-                if let Ok(session) = server::run_stream(config, stream, ShellServer).await {
+                if let Ok(session) =
+                    server::run_stream(config, stream, ShellServer::default()).await
+                {
                     let _ = session.await;
                 }
             });
@@ -606,4 +639,76 @@ async fn exec_runs_one_command_and_reports_its_exit_code() {
         .expect("end in time")
         .expect("end sent");
     assert_eq!(end, TerminalEnd::Exited(Some(3)));
+}
+
+/// Adds a password host on the test server that goes through `jump`.
+fn add_hop(env: &FakeEnv, id: &str, port: u16, jump: Option<&str>) {
+    env.db
+        .write(|c| {
+            let input = ssh_hosts::SshHostInput {
+                name: id.into(),
+                host: "127.0.0.1".into(),
+                port,
+                username: "deploy".into(),
+                auth_method: "password".into(),
+                key_source: "file".into(),
+                jump_host_id: jump.map(str::to_string),
+                ..Default::default()
+            };
+            ssh_hosts::insert(c, id, &input, "0")
+        })
+        .expect("host");
+    env.set_secret(SecretOwner::Host(id.into()), "password", PASSWORD);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_jump_hosts_in_a_row_share_their_connections() {
+    let port = start_server().await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env(dir.path(), port, &[], true);
+    env.set_secret(host_owner(), "password", PASSWORD);
+    add_hop(&env, "j1", port, None);
+    add_hop(&env, "j2", port, Some("j1"));
+    env.sql("UPDATE ssh_host SET jump_host_id = 'j2' WHERE id = 'h1'");
+
+    let manager = SshManager::new(env.clone());
+    let lease = tokio::time::timeout(Duration::from_secs(10), manager.lease("h1"))
+        .await
+        .expect("in time")
+        .expect("lease");
+    let open = manager.open_channels();
+    assert_eq!(open.get("h1"), Some(&1));
+    assert_eq!(open.get("j2"), Some(&1));
+    assert_eq!(open.get("j1"), Some(&1));
+
+    // The tunnel carries a working session.
+    let (tx, mut rx) = mpsc::channel(16);
+    let terminal = SshTerminal::new("ssh:deep".into(), "h1".into(), 64 * 1024, 80, 24);
+    terminal
+        .start(lease, IpcPipe::new(tx), |_| {})
+        .await
+        .expect("start");
+    read_until(&mut rx, "welcome").await;
+
+    // j2 is reused, not logged into again.
+    let _j2 = manager.lease("j2").await.expect("lease j2");
+    assert_eq!(manager.open_channels().get("j2"), Some(&2));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_jump_host_loop_fails_instead_of_hanging() {
+    let port = start_server().await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env(dir.path(), port, &[], true);
+    add_hop(&env, "j1", port, Some("h1"));
+    // Rows the editor would refuse, e.g. from an old backup.
+    env.sql("UPDATE ssh_host SET jump_host_id = 'j1' WHERE id = 'h1'");
+
+    let manager = SshManager::new(env.clone());
+    let error = tokio::time::timeout(Duration::from_secs(5), manager.lease("h1"))
+        .await
+        .expect("no deadlock")
+        .err()
+        .expect("refused");
+    assert!(error.to_string().contains("vòng lặp"), "{error}");
 }

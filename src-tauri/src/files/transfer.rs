@@ -27,6 +27,10 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 /// Items sent with a full snapshot; failed ones are always included.
 const SNAPSHOT_ITEMS: usize = 2_000;
 pub const PART_SUFFIX: &str = ".cm-part";
+/// A retry resumes this far before the end of the `.cm-part`. SFTP keeps
+/// up to ~512 KiB of writes in flight, so after a dropped connection the
+/// last stretch of the part may have holes; it is written again.
+pub const RESUME_MARGIN: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -106,6 +110,8 @@ pub struct ItemSnapshot {
     pub done_bytes: u64,
     pub status: ItemStatus,
     pub error: Option<String>,
+    /// Bytes kept from an earlier attempt's `.cm-part` (0: from the start).
+    pub resumed_from: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -167,6 +173,17 @@ struct Item {
     status: ItemStatus,
     error: Option<String>,
     done: Arc<AtomicU64>,
+    /// A failed copy left its `.cm-part` for a retry to continue.
+    partial: Option<Partial>,
+    resumed_from: u64,
+}
+
+/// Where a failed copy was going, so a retry writes into the same part
+/// without asking MOD-20 again.
+#[derive(Debug, Clone)]
+struct Partial {
+    dst: String,
+    replace: bool,
 }
 
 struct JobState {
@@ -240,6 +257,7 @@ impl Job {
             done_bytes: item.done.load(Ordering::Relaxed),
             status: item.status,
             error: item.error.clone(),
+            resumed_from: item.resumed_from,
         };
         let wanted = |item: &&Item| {
             if full {
@@ -327,11 +345,42 @@ impl TransferQueue {
         Ok(self.job(id)?.snapshot(true))
     }
 
-    pub fn clear_finished(&self) {
-        self.jobs
-            .lock()
-            .expect("transfer jobs lock")
-            .retain(|job| job.running.load(Ordering::SeqCst));
+    /// Forgets finished jobs. Returns the `.cm-part` files their failed
+    /// items left behind: nothing can resume them any more, so the caller
+    /// hands them to [`Self::remove_leftovers`].
+    pub fn clear_finished(&self) -> Vec<Endpoint> {
+        let mut jobs = self.jobs.lock().expect("transfer jobs lock");
+        let (keep, gone): (Vec<_>, Vec<_>) = jobs
+            .drain(..)
+            .partition(|job| job.running.load(Ordering::SeqCst));
+        *jobs = keep;
+        gone.iter()
+            .flat_map(|job| {
+                let state = job.state();
+                state
+                    .items
+                    .iter()
+                    .filter_map(|item| item.partial.as_ref())
+                    .map(|partial| Endpoint {
+                        location: job.dest.location.clone(),
+                        path: format!("{}{PART_SUFFIX}", partial.dst),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// Deletes leftover parts. Servers that are not connected right now are
+    /// left alone: connecting could open a login dialog nobody expects.
+    pub async fn remove_leftovers(&self, parts: Vec<Endpoint>) {
+        for part in parts {
+            if part.location.is_remote() && self.env.connection_lost(&part.location) {
+                continue;
+            }
+            if let Ok(fs) = self.env.fs(&part.location).await {
+                let _ = fs.remove_file(&part.path).await;
+            }
+        }
     }
 
     /// Queues a transfer and returns its id; the work runs in the background.
@@ -654,6 +703,8 @@ impl TransferQueue {
             status: ItemStatus::Pending,
             error: None,
             done: Arc::new(AtomicU64::new(0)),
+            partial: None,
+            resumed_from: 0,
         });
         state.items.len() - 1
     }
@@ -864,46 +915,79 @@ impl TransferQueue {
         src_fs: &FsHandle,
         dst_fs: &FsHandle,
     ) -> Result<ItemStatus> {
-        let (src, mut dst, mtime, mode, done) = {
-            let state = job.state();
-            let item = &state.items[index];
+        let (src, mut dst, size, mtime, mode, done, partial) = {
+            let mut state = job.state();
+            let item = &mut state.items[index];
             (
                 item.src.clone(),
                 item.dst.clone(),
+                item.size,
                 item.mtime,
                 item.mode,
                 Arc::clone(&item.done),
+                item.partial.take(),
             )
         };
         let mut replace = false;
-        if let Some(existing) = dst_fs.stat(&dst).await? {
-            let source = self.item_stat(job, index);
-            match self
-                .decide(job, index, &source, &existing, dst_fs, &dst)
-                .await?
-            {
-                Decision::Skip => return Ok(ItemStatus::Skipped),
-                Decision::Replace => replace = true,
-                Decision::Rename(free) => dst = free,
+        let mut offset = 0;
+        let resume = match &partial {
+            Some(partial) => resume_point(src_fs, dst_fs, &src, &partial.dst, size, mtime).await,
+            None => None,
+        };
+        match (partial, resume) {
+            (Some(partial), Some(at)) => {
+                dst = partial.dst;
+                replace = partial.replace;
+                offset = at;
+            }
+            (partial, _) => {
+                // The source changed or the part is gone: start over.
+                if let Some(partial) = partial {
+                    let _ = dst_fs
+                        .remove_file(&format!("{}{PART_SUFFIX}", partial.dst))
+                        .await;
+                }
+                if let Some(existing) = dst_fs.stat(&dst).await? {
+                    let source = self.item_stat(job, index);
+                    match self
+                        .decide(job, index, &source, &existing, dst_fs, &dst)
+                        .await?
+                    {
+                        Decision::Skip => return Ok(ItemStatus::Skipped),
+                        Decision::Replace => replace = true,
+                        Decision::Rename(free) => dst = free,
+                    }
+                }
             }
         }
+        job.state().items[index].resumed_from = offset;
 
         let part = format!("{dst}{PART_SUFFIX}");
-        let copied = self.stream(job, src_fs, dst_fs, &src, &part, &done).await;
-        if let Err(error) = copied {
-            let _ = dst_fs.remove_file(&part).await;
+        let finished = async {
+            Self::stream(job, src_fs, dst_fs, &src, &part, offset, &done).await?;
+            // Times and permissions are a nicety: a server that refuses
+            // them still gets the file.
+            let keep_mode = mode.filter(|_| dst_fs_supports_mode(dst_fs));
+            let _ = dst_fs.set_attributes(&part, mtime, keep_mode).await;
+            // An earlier attempt may have removed it already.
+            if replace && dst_fs.stat(&dst).await?.is_some() {
+                dst_fs.remove_file(&dst).await?;
+            }
+            dst_fs.rename(&part, &dst).await
+        }
+        .await;
+        if let Err(error) = finished {
             job.done_bytes
                 .fetch_sub(done.swap(0, Ordering::Relaxed), Ordering::Relaxed);
+            if job.is_cancelled() {
+                let _ = dst_fs.remove_file(&part).await;
+            } else {
+                // Kept for a retry (the UI retries by itself when the
+                // connection dropped); the source is checked again then.
+                job.state().items[index].partial = Some(Partial { dst, replace });
+            }
             return Err(error);
         }
-        // Times and permissions are a nicety: a server that refuses them
-        // still gets the file.
-        let keep_mode = mode.filter(|_| dst_fs_supports_mode(dst_fs));
-        let _ = dst_fs.set_attributes(&part, mtime, keep_mode).await;
-        if replace {
-            dst_fs.remove_file(&dst).await?;
-        }
-        dst_fs.rename(&part, &dst).await?;
 
         if job.mode == Mode::Move {
             src_fs.remove_file(&src).await?;
@@ -912,16 +996,24 @@ impl TransferQueue {
     }
 
     async fn stream(
-        &self,
         job: &Job,
         src_fs: &FsHandle,
         dst_fs: &FsHandle,
         src: &str,
         part: &str,
+        offset: u64,
         done: &AtomicU64,
     ) -> Result<()> {
-        let mut reader = src_fs.open_read(src).await?;
-        let mut writer = dst_fs.create(part).await?;
+        let (mut reader, mut writer) = if offset > 0 {
+            (
+                src_fs.open_read_at(src, offset).await?,
+                dst_fs.open_write_at(part, offset).await?,
+            )
+        } else {
+            (src_fs.open_read(src).await?, dst_fs.create(part).await?)
+        };
+        done.store(offset, Ordering::Relaxed);
+        job.done_bytes.fetch_add(offset, Ordering::Relaxed);
         let mut buffer = vec![0u8; CHUNK];
         let mut cancel = job.cancel.subscribe();
         loop {
@@ -1061,6 +1153,29 @@ enum Decision {
     Skip,
     Replace,
     Rename(String),
+}
+
+/// Where a retry can continue the part a failed copy of `src` left at
+/// `{dst}.cm-part`, or None to start over: the source must still have the
+/// size and time it had when scanned, and the part must not be longer.
+async fn resume_point(
+    src_fs: &FsHandle,
+    dst_fs: &FsHandle,
+    src: &str,
+    dst: &str,
+    size: u64,
+    mtime: Option<u64>,
+) -> Option<u64> {
+    mtime?;
+    let source = src_fs.stat(src).await.ok()??;
+    if source.kind != EntryKind::File || source.size != size || source.mtime != mtime {
+        return None;
+    }
+    let part = dst_fs.stat(&format!("{dst}{PART_SUFFIX}")).await.ok()??;
+    if part.kind != EntryKind::File || part.size > size {
+        return None;
+    }
+    Some(part.size.saturating_sub(RESUME_MARGIN))
 }
 
 fn dst_fs_supports_mode(fs: &FsHandle) -> bool {

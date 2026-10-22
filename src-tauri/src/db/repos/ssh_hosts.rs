@@ -236,27 +236,22 @@ pub fn normalize(conn: &Connection, id: Option<&str>, input: SshHostInput) -> Re
         if Some(jump_id.as_str()) == id {
             return Err(Error::msg("Máy chủ không thể đi qua chính nó"));
         }
-        let jump =
-            get(conn, jump_id)?.ok_or_else(|| Error::msg("Không tìm thấy jump host đã chọn"))?;
-        if jump.use_system_ssh {
-            return Err(Error::msg(
-                "Jump host không được dùng chế độ OpenSSH hệ thống",
-            ));
+        let chain = jump_chain(conn, jump_id, id)?;
+        if let Some(system) = chain.iter().find(|jump| jump.use_system_ssh) {
+            return Err(Error::msg(format!(
+                "Jump host {} dùng chế độ OpenSSH hệ thống nên không đi qua được",
+                system.name
+            )));
         }
-        if jump.jump_host_id.is_some() {
-            return Err(Error::msg("Chỉ hỗ trợ đi qua 1 jump host"));
-        }
-        if let Some(id) = id {
-            let used_as_jump: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM ssh_host WHERE jump_host_id = ?1",
-                [id],
-                |row| row.get(0),
-            )?;
-            if used_as_jump > 0 {
-                return Err(Error::msg(
-                    "Máy chủ này đang là jump host của máy khác nên không thể đi qua jump host",
-                ));
-            }
+        // Hosts already behind this one get the new hops too.
+        let below = match id {
+            Some(id) => depth_below(conn, id)?,
+            None => 0,
+        };
+        if chain.len() + below > MAX_JUMP_HOPS {
+            return Err(Error::msg(format!(
+                "Chỉ hỗ trợ đi qua tối đa {MAX_JUMP_HOPS} jump host liên tiếp"
+            )));
         }
     }
     if input.use_system_ssh {
@@ -291,6 +286,62 @@ pub fn normalize(conn: &Connection, id: Option<&str>, input: SshHostInput) -> Re
         color,
         tags,
     })
+}
+
+/// Jump hosts in a row are capped: every hop is one more login and one more
+/// channel inside a channel.
+pub const MAX_JUMP_HOPS: usize = 5;
+
+/// The jump hosts on the way to a host whose jump host is `first`, nearest
+/// first (`first`, its jump host, ...). Fails on a loop back to `editing`
+/// (the host being saved) or within the saved rows.
+pub fn jump_chain(conn: &Connection, first: &str, editing: Option<&str>) -> Result<Vec<SshHost>> {
+    let mut chain: Vec<SshHost> = Vec::new();
+    let mut next = Some(first.to_string());
+    while let Some(id) = next {
+        if Some(id.as_str()) == editing || chain.iter().any(|hop| hop.id == id) {
+            return Err(Error::msg(
+                "Chuỗi jump host bị vòng lặp: máy chủ này đã nằm trên đường đi",
+            ));
+        }
+        if chain.len() > MAX_JUMP_HOPS {
+            return Err(Error::msg(format!(
+                "Chỉ hỗ trợ đi qua tối đa {MAX_JUMP_HOPS} jump host liên tiếp"
+            )));
+        }
+        let hop = get(conn, &id)?.ok_or_else(|| Error::msg("Không tìm thấy jump host đã chọn"))?;
+        next = hop.jump_host_id.clone();
+        chain.push(hop);
+    }
+    Ok(chain)
+}
+
+/// How many hosts deep the hosts reaching the network through `id` go
+/// (0 when nothing uses it as a jump host).
+fn depth_below(conn: &Connection, id: &str) -> Result<usize> {
+    let mut stmt = conn.prepare("SELECT id FROM ssh_host WHERE jump_host_id = ?1")?;
+    let mut level = vec![id.to_string()];
+    let mut seen = level.clone();
+    let mut depth = 0;
+    loop {
+        let mut next = Vec::new();
+        for parent in &level {
+            let rows = stmt.query_map([parent], |row| row.get::<_, String>(0))?;
+            for child in rows {
+                let child = child?;
+                // A loop in old rows must not spin forever.
+                if !seen.contains(&child) {
+                    seen.push(child.clone());
+                    next.push(child);
+                }
+            }
+        }
+        if next.is_empty() {
+            return Ok(depth);
+        }
+        depth += 1;
+        level = next;
+    }
 }
 
 fn non_empty(value: Option<String>) -> Option<String> {
@@ -504,26 +555,55 @@ mod tests {
     }
 
     #[test]
-    fn jump_hosts_are_one_level_only() {
+    fn jump_chains_reject_loops_and_long_chains() {
         let conn = conn();
-        add(&conn, "bastion", input("bastion"));
-        let mut inner = input("inner");
-        inner.jump_host_id = Some("bastion".into());
-        add(&conn, "inner", inner);
+        add(&conn, "j0", input("j0"));
+        for n in 1..MAX_JUMP_HOPS {
+            let mut hop = input(&format!("j{n}"));
+            hop.jump_host_id = Some(format!("j{}", n - 1));
+            add(&conn, &format!("j{n}"), hop);
+        }
+        let last = format!("j{}", MAX_JUMP_HOPS - 1);
+        let chain = jump_chain(&conn, &last, None).expect("chain");
+        assert_eq!(chain.len(), MAX_JUMP_HOPS);
+        assert_eq!(chain[0].id, last);
+        assert_eq!(chain[MAX_JUMP_HOPS - 1].id, "j0");
 
-        // A host behind `inner` would be two hops away.
+        // MAX_JUMP_HOPS jump hosts in front of a host is fine, one more is not.
         let mut deep = input("deep");
-        deep.jump_host_id = Some("inner".into());
-        assert!(normalize(&conn, None, deep).is_err());
+        deep.jump_host_id = Some(last.clone());
+        add(&conn, "deep", deep);
+        let mut deeper = input("deeper");
+        deeper.jump_host_id = Some("deep".into());
+        assert!(normalize(&conn, None, deeper).is_err());
 
-        // `bastion` is someone's jump host, so it cannot gain one itself.
-        let mut bastion = input("bastion");
-        bastion.jump_host_id = Some("inner".into());
-        assert!(normalize(&conn, Some("bastion"), bastion).is_err());
+        // Giving j0 a jump host would push `deep` one hop too far.
+        add(&conn, "outer", input("outer"));
+        let mut j0 = input("j0");
+        j0.jump_host_id = Some("outer".into());
+        assert!(normalize(&conn, Some("j0"), j0).is_err());
 
-        let mut own = input("inner");
-        own.jump_host_id = Some("inner".into());
-        assert!(normalize(&conn, Some("inner"), own).is_err());
+        // Loops: through itself, or through a host that is behind it.
+        let mut own = input("j1");
+        own.jump_host_id = Some("j1".into());
+        assert!(normalize(&conn, Some("j1"), own).is_err());
+        let mut looped = input("j1");
+        looped.jump_host_id = Some("j3".into());
+        assert!(normalize(&conn, Some("j1"), looped).is_err());
+
+        // A system-OpenSSH host cannot be a hop.
+        let mut system = input("system");
+        system.use_system_ssh = true;
+        add(&conn, "system", system);
+        let mut behind = input("behind");
+        behind.jump_host_id = Some("system".into());
+        assert!(normalize(&conn, None, behind).is_err());
+
+        // ... but it can reach its server through a chain.
+        let mut system_behind = input("system2");
+        system_behind.use_system_ssh = true;
+        system_behind.jump_host_id = Some("j2".into());
+        assert!(normalize(&conn, None, system_behind).is_ok());
     }
 
     #[test]

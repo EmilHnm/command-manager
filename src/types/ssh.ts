@@ -36,6 +36,44 @@ export interface SshHostView extends SshHost {
   open_channels: number;
 }
 
+/** Same cap as ssh_hosts::MAX_JUMP_HOPS. */
+export const MAX_JUMP_HOPS = 5;
+
+/**
+ * Jump hosts crossed to reach a host whose jump host is `firstId`, in the
+ * order they are crossed (outermost first). Stops at a loop or a missing host.
+ */
+export function jumpChain<T extends Pick<SshHost, 'id' | 'jump_host_id'>>(
+  hosts: T[],
+  firstId: string | null | undefined
+): T[] {
+  const chain: T[] = [];
+  let next = firstId;
+  while (next && chain.length <= MAX_JUMP_HOPS) {
+    const hop = hosts.find((h) => h.id === next);
+    if (!hop || chain.includes(hop)) break;
+    chain.unshift(hop);
+    next = hop.jump_host_id;
+  }
+  return chain;
+}
+
+/** How many hosts deep the hosts going through `id` reach (0 if none). */
+export function jumpDepthBelow(hosts: Pick<SshHost, 'id' | 'jump_host_id'>[], id: string): number {
+  let level = [id];
+  const seen = new Set(level);
+  let depth = 0;
+  for (;;) {
+    const next = hosts
+      .filter((h) => h.jump_host_id && level.includes(h.jump_host_id) && !seen.has(h.id))
+      .map((h) => h.id);
+    if (next.length === 0) return depth;
+    next.forEach((child) => seen.add(child));
+    depth += 1;
+    level = next;
+  }
+}
+
 export interface SshHostInput {
   name: string;
   host: string;

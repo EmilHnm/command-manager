@@ -453,6 +453,7 @@ import { useKeychain } from '@/composables/useKeychain';
 import KeychainPanel from '@/components/keychain/KeychainPanel.vue';
 import { useSshHosts } from '@/composables/useSshHosts';
 import type { SshHost, SshHostView, SshAuthMethod } from '@/types/ssh';
+import { jumpChain } from '@/types/ssh';
 import SshHostEditorModal from '@/components/dialogs/SshHostEditorModal.vue';
 import SshConfigImportModal from '@/components/dialogs/SshConfigImportModal.vue';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
@@ -529,9 +530,10 @@ const filteredHosts = computed(() => {
   });
 });
 
+/** "outer → inner" for a host behind several jump hosts. */
 const getJumpHostName = (jumpHostId: string) => {
-  const jump = hosts.value.find((h) => h.id === jumpHostId);
-  return jump ? jump.name : jumpHostId;
+  const chain = jumpChain(hosts.value, jumpHostId);
+  return chain.length > 0 ? chain.map((h) => h.name).join(' → ') : jumpHostId;
 };
 
 const authMethodLabel = (method: SshAuthMethod) => {

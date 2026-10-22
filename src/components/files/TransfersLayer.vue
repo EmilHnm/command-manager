@@ -143,6 +143,9 @@
             <span v-if="item.error" class="td-item-error" :title="item.error">{{ item.error }}</span>
             <span v-else-if="!item.is_dir" class="td-item-size">
               <template v-if="item.status === 'running'">{{ itemPercent(item) }}% · </template>
+              <template v-if="item.resumed_from > 0">
+                chép tiếp từ {{ formatBytes(item.resumed_from) }} ·
+              </template>
               {{ formatBytes(item.size) }}
             </span>
           </div>

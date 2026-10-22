@@ -399,14 +399,17 @@
               >
                 <option :value="null">Không dùng (Kết nối trực tiếp)</option>
                 <option
-                  v-for="candidate in availableJumpHosts"
+                  v-for="{ host: candidate, chain } in availableJumpHosts"
                   :key="candidate.id"
                   :value="candidate.id"
                 >
-                  {{ candidate.name }} ({{ candidate.username }}@{{ candidate.host }}:{{ candidate.port }})
+                  {{ chain.map((hop) => hop.name).join(' → ') }} ({{ candidate.username }}@{{ candidate.host }}:{{ candidate.port }})
                 </option>
               </select>
-              <span class="field-hint">Kết nối trung gian một bước qua máy chủ nhảy</span>
+              <span class="field-hint">
+                Máy chủ nhảy có thể tự đi qua máy chủ nhảy khác (tối đa {{ MAX_JUMP_HOPS }} chặng);
+                mỗi chặng dùng chung kết nối với các máy chủ khác đi qua nó.
+              </span>
             </div>
 
             <!-- System OpenSSH Escape Hatch -->
@@ -567,6 +570,7 @@ import type {
   SshSecretStore,
   SshTestReport,
 } from '@/types/ssh';
+import { MAX_JUMP_HOPS, jumpChain, jumpDepthBelow } from '@/types/ssh';
 import { useSshHosts } from '@/composables/useSshHosts';
 import { useKeychain } from '@/composables/useKeychain';
 import SshKeyModal from '@/components/keychain/SshKeyModal.vue';
@@ -657,10 +661,21 @@ const forgettingSecret = ref(false);
 const formError = ref<string | null>(null);
 const testResult = ref<SshTestReport | null>(null);
 
+/**
+ * Hosts this one can go through: not system-OpenSSH ones, not itself or a
+ * host behind it (a loop), and not one that makes some chain too long.
+ */
 const availableJumpHosts = computed(() => {
-  return (props.existingHosts || []).filter(
-    (h) => h.id !== props.hostToEdit?.id && !h.jump_host_id
-  );
+  const hosts = props.existingHosts || [];
+  const selfId = props.hostToEdit?.id;
+  const below = selfId ? jumpDepthBelow(hosts, selfId) : 0;
+  return hosts
+    .filter((h) => h.id !== selfId && !h.use_system_ssh)
+    .map((h) => ({ host: h, chain: jumpChain(hosts, h.id) }))
+    .filter(
+      ({ chain }) =>
+        !chain.some((hop) => hop.id === selfId) && chain.length + below <= MAX_JUMP_HOPS
+    );
 });
 
 const usesKey = computed(() => form.value.auth_method === 'key' || form.value.auth_method === 'auto');

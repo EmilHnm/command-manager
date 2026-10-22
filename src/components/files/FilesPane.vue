@@ -135,6 +135,16 @@
     <div class="files-footer">
       <span>{{ sorted.length }} mục</span>
       <span v-if="selected.size > 0">· {{ selected.size }} đã chọn ({{ formatBytes(selectedBytes) }})</span>
+      <!-- A native (HTML5) drag, so the OS file manager receives real files. -->
+      <span
+        v-if="location.kind === 'local' && selected.size > 0"
+        class="ff-drag-out"
+        draggable="true"
+        title="Kéo vào trình quản lý tệp hoặc Desktop để chép ra ngoài"
+        @dragstart="handleDragOut"
+      >
+        <GripVertical :size="11" /> Kéo {{ selected.size }} mục ra ngoài
+      </span>
       <span class="ff-spacer" />
       <span v-if="isDropTarget && dropInvalid" class="ff-drop-warn">{{ dropInvalid }}</span>
       <span v-else-if="isDropTarget" class="ff-drop-hint">Thả vào {{ dropTargetDir || path }}</span>
@@ -226,6 +236,7 @@ import {
   FolderPlus,
   FolderSymlink,
   Globe,
+  GripVertical,
   HardDrive,
   LoaderCircle,
   Pencil,
@@ -311,6 +322,28 @@ const sorted = computed(() => {
   }
   return list;
 });
+
+/** `file://` URI with every path segment percent-encoded. */
+const fileUri = (path: string) => {
+  const slashed = path.replace(/\\/g, '/');
+  const encoded = slashed.split('/').map((segment, index) =>
+    // Keep a Windows drive ("C:") as it is.
+    index === 0 && /^[A-Za-z]:$/.test(segment) ? segment : encodeURIComponent(segment)
+  );
+  const joined = encoded.join('/');
+  return joined.startsWith('/') ? `file://${joined}` : `file:///${joined}`;
+};
+
+const handleDragOut = (event: DragEvent) => {
+  const paths = selectedEntries.value.map((entry) => entry.path);
+  if (!event.dataTransfer || paths.length === 0) {
+    event.preventDefault();
+    return;
+  }
+  event.dataTransfer.effectAllowed = 'copy';
+  event.dataTransfer.setData('text/uri-list', paths.map(fileUri).join('\r\n'));
+  event.dataTransfer.setData('text/plain', paths.join('\n'));
+};
 
 const selectedEntries = computed(() => sorted.value.filter((entry) => selected.value.has(entry.path)));
 const selectedBytes = computed(() =>
@@ -944,6 +977,22 @@ defineExpose({ reload, focus: () => rootEl.value?.focus() });
 
 .ff-spacer {
   flex: 1;
+}
+
+.ff-drag-out {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-secondary, inherit);
+  cursor: grab;
+}
+
+.ff-drag-out:hover {
+  border-color: #e4b5ff;
+  color: #e4b5ff;
 }
 
 .ff-drop-hint {

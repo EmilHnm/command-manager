@@ -358,5 +358,9 @@ pub fn transfer_get(app: AppHandle, job_id: String) -> Result<JobSnapshot> {
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn transfer_clear_finished(app: AppHandle) {
-    app.state::<FilesState>().queue.clear_finished();
+    let queue = Arc::clone(&app.state::<FilesState>().queue);
+    let leftovers = queue.clear_finished();
+    if !leftovers.is_empty() {
+        tauri::async_runtime::spawn(async move { queue.remove_leftovers(leftovers).await });
+    }
 }

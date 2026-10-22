@@ -15,6 +15,14 @@ use std::time::Duration;
 const SFTP_SERVER: &str = "/usr/lib/openssh/sftp-server";
 
 async fn sftp() -> Option<Arc<SftpSession>> {
+    let (session, child) = sftp_process().await?;
+    // Keep the process alive for the rest of the test.
+    std::mem::forget(child);
+    Some(session)
+}
+
+/// A session and its server process, for tests that kill the server.
+async fn sftp_process() -> Option<(Arc<SftpSession>, tokio::process::Child)> {
     if !Path::new(SFTP_SERVER).exists() {
         eprintln!("skipping: {SFTP_SERVER} not installed");
         return None;
@@ -29,10 +37,9 @@ async fn sftp() -> Option<Arc<SftpSession>> {
         child.stdout.take().expect("stdout"),
         child.stdin.take().expect("stdin"),
     );
-    // Keep the process alive for the rest of the test.
-    std::mem::forget(child);
-    Some(Arc::new(
-        SftpSession::new(stream).await.expect("sftp session"),
+    Some((
+        Arc::new(SftpSession::new(stream).await.expect("sftp session")),
+        child,
     ))
 }
 
@@ -47,7 +54,7 @@ fn p(path: &Path) -> String {
 }
 
 struct Env {
-    sftp: Arc<SftpSession>,
+    sftp: Mutex<Arc<SftpSession>>,
     queue: OnceLock<Weak<TransferQueue>>,
     answer: Mutex<Option<ConflictDecision>>,
     prompts: Mutex<Vec<ConflictPrompt>>,
@@ -59,7 +66,7 @@ impl TransferEnv for Env {
     fn fs(&self, location: &Location) -> BoxFuture<'static, Result<FsHandle>> {
         let handle = match location {
             Location::Local => FsHandle::Local,
-            Location::Ssh { .. } => FsHandle::Remote(Arc::clone(&self.sftp)),
+            Location::Ssh { .. } => FsHandle::Remote(Arc::clone(&self.sftp.lock().unwrap())),
         };
         Box::pin(async move { Ok(handle) })
     }
@@ -94,7 +101,7 @@ async fn setup(
     let sftp = sftp().await?;
     let dir = tempfile::tempdir().expect("tempdir");
     let env = Arc::new(Env {
-        sftp,
+        sftp: Mutex::new(sftp),
         queue: OnceLock::new(),
         answer: Mutex::new(answer),
         prompts: Mutex::new(Vec::new()),
@@ -168,7 +175,8 @@ async fn listing_is_the_same_locally_and_over_sftp() {
         .read_dir(&Location::Local, &p(root))
         .await
         .unwrap();
-    let remote_list = FsHandle::Remote(env.sftp.clone())
+    let sftp = env.sftp.lock().unwrap().clone();
+    let remote_list = FsHandle::Remote(sftp)
         .read_dir(&remote(), &p(root))
         .await
         .unwrap();
@@ -439,4 +447,147 @@ async fn failures_while_the_server_is_gone_are_flagged_for_retry() {
     let job = wait(&env, &id).await;
     assert_eq!(job.status, JobStatus::Failed);
     assert!(job.connection_lost);
+}
+
+/// Bytes that differ from offset to offset, so a misplaced chunk shows.
+fn pattern(len: usize) -> Vec<u8> {
+    let mut x: u32 = 0x1234_5678;
+    (0..len)
+        .map(|_| {
+            x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (x >> 24) as u8
+        })
+        .collect()
+}
+
+struct Interrupted {
+    id: String,
+    big: PathBuf,
+    data: Vec<u8>,
+    dest: PathBuf,
+    part: PathBuf,
+    kept: u64,
+}
+
+/// Uploads 96 MiB and kills the SFTP server part way, then brings up a new
+/// one. None when the upload won the race.
+async fn interrupted_upload(
+    dir: &Path,
+    env: &Env,
+    queue: &Arc<TransferQueue>,
+) -> Option<Interrupted> {
+    let (first, mut server) = sftp_process().await?;
+    *env.sftp.lock().unwrap() = first;
+    let data = pattern(96 * 1024 * 1024);
+    let big = dir.join("big.bin");
+    std::fs::write(&big, &data).unwrap();
+    let dest = dir.join("dest");
+    std::fs::create_dir(&dest).unwrap();
+    let part = dest.join(format!("big.bin{PART_SUFFIX}"));
+
+    let id = queue
+        .start(
+            vec![endpoint(Location::Local, &big)],
+            endpoint(remote(), &dest),
+            Mode::Copy,
+        )
+        .unwrap();
+    // Pull the plug once a few MiB are across.
+    let mut waited = 0;
+    while std::fs::metadata(&part).map_or(0, |m| m.len()) < 8 * 1024 * 1024 {
+        tokio::time::sleep(Duration::from_millis(2)).await;
+        waited += 1;
+        assert!(waited < 5_000, "upload never started");
+    }
+    env.lost.store(true, std::sync::atomic::Ordering::SeqCst);
+    server.kill().await.unwrap();
+    let job = wait(env, &id).await;
+    if job.status == JobStatus::Done {
+        eprintln!("skipping: the upload finished before the server was killed");
+        return None;
+    }
+    assert_eq!(job.status, JobStatus::Failed, "{job:?}");
+    assert!(job.connection_lost);
+    let kept = std::fs::metadata(&part).expect("part kept").len();
+    assert!(kept > RESUME_MARGIN, "{kept}");
+
+    // The connection is back.
+    let (second, server) = sftp_process().await?;
+    std::mem::forget(server);
+    *env.sftp.lock().unwrap() = second;
+    env.lost.store(false, std::sync::atomic::Ordering::SeqCst);
+    env.done.lock().unwrap().clear();
+    Some(Interrupted {
+        id,
+        big,
+        data,
+        dest,
+        part,
+        kept,
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_dropped_upload_resumes_from_its_part_file() {
+    let Some((dir, env, queue)) = setup(None).await else {
+        return;
+    };
+    let Some(cut) = interrupted_upload(dir.path(), &env, &queue).await else {
+        return;
+    };
+    queue.retry(&cut.id).unwrap();
+    let job = wait(&env, &cut.id).await;
+    assert_eq!(job.status, JobStatus::Done, "{job:?}");
+    let item = queue.get(&cut.id).unwrap().items.remove(0);
+    assert_eq!(item.resumed_from, cut.kept - RESUME_MARGIN);
+    assert_eq!(job.done_bytes, cut.data.len() as u64);
+    assert!(!cut.part.exists());
+    assert!(std::fs::read(cut.dest.join("big.bin")).unwrap() == cut.data);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_changed_source_is_copied_again_from_the_start() {
+    let Some((dir, env, queue)) = setup(None).await else {
+        return;
+    };
+    let Some(cut) = interrupted_upload(dir.path(), &env, &queue).await else {
+        return;
+    };
+    // Same size, new content and time.
+    let mut changed = cut.data.clone();
+    changed[0] ^= 0xff;
+    std::fs::write(&cut.big, &changed).unwrap();
+    let later = std::time::SystemTime::now() + Duration::from_secs(5);
+    std::fs::File::options()
+        .write(true)
+        .open(&cut.big)
+        .unwrap()
+        .set_modified(later)
+        .unwrap();
+
+    queue.retry(&cut.id).unwrap();
+    let job = wait(&env, &cut.id).await;
+    assert_eq!(job.status, JobStatus::Done, "{job:?}");
+    assert_eq!(queue.get(&cut.id).unwrap().items[0].resumed_from, 0);
+    assert!(std::fs::read(cut.dest.join("big.bin")).unwrap() == changed);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn clearing_a_failed_job_removes_its_part_file() {
+    let Some((dir, env, queue)) = setup(None).await else {
+        return;
+    };
+    let Some(cut) = interrupted_upload(dir.path(), &env, &queue).await else {
+        return;
+    };
+    let leftovers = queue.clear_finished();
+    assert_eq!(leftovers.len(), 1);
+    // Not while the server is unreachable...
+    env.lost.store(true, std::sync::atomic::Ordering::SeqCst);
+    queue.remove_leftovers(leftovers.clone()).await;
+    assert!(cut.part.exists());
+    // ... but once it is.
+    env.lost.store(false, std::sync::atomic::Ordering::SeqCst);
+    queue.remove_leftovers(leftovers).await;
+    assert!(!cut.part.exists());
 }

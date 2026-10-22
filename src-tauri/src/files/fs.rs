@@ -4,12 +4,13 @@ use super::{sort_entries, EntryKind, FsEntry, Location};
 use crate::error::{Error, Result};
 use russh_sftp::client::error::Error as SftpError;
 use russh_sftp::client::SftpSession;
-use russh_sftp::protocol::{FileAttributes, StatusCode};
+use russh_sftp::protocol::{FileAttributes, OpenFlags, StatusCode};
 use std::future::Future;
+use std::io::SeekFrom;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWrite};
 
 pub type Reader = Box<dyn AsyncRead + Send + Unpin>;
 pub type Writer = Box<dyn AsyncWrite + Send + Unpin>;
@@ -338,6 +339,53 @@ impl FsHandle {
                 .await
                 .map(|file| Box::new(file) as Reader)
                 .map_err(|error| sftp_error(path, error)),
+        }
+    }
+
+    /// Reads from byte `offset` on.
+    pub async fn open_read_at(&self, path: &str, offset: u64) -> Result<Reader> {
+        let seek = |error: std::io::Error| Error::msg(format!("Không tua được {path}: {error}"));
+        match self {
+            Self::Local => {
+                let mut file = tokio::fs::File::open(path)
+                    .await
+                    .map_err(|error| local_error(path, error))?;
+                file.seek(SeekFrom::Start(offset)).await.map_err(seek)?;
+                Ok(Box::new(file))
+            }
+            Self::Remote(sftp) => {
+                let mut file = sftp
+                    .open(path)
+                    .await
+                    .map_err(|error| sftp_error(path, error))?;
+                file.seek(SeekFrom::Start(offset)).await.map_err(seek)?;
+                Ok(Box::new(file))
+            }
+        }
+    }
+
+    /// Opens an existing file for writing from byte `offset` on, keeping
+    /// what is before it (resuming a `.cm-part`).
+    pub async fn open_write_at(&self, path: &str, offset: u64) -> Result<Writer> {
+        let seek = |error: std::io::Error| Error::msg(format!("Không tua được {path}: {error}"));
+        match self {
+            Self::Local => {
+                let mut file = tokio::fs::OpenOptions::new()
+                    .write(true)
+                    .open(path)
+                    .await
+                    .map_err(|error| local_error(path, error))?;
+                file.seek(SeekFrom::Start(offset)).await.map_err(seek)?;
+                Ok(Box::new(file))
+            }
+            Self::Remote(sftp) => {
+                let mut file = sftp
+                    .open_with_flags(path, OpenFlags::WRITE)
+                    .await
+                    .map_err(|error| sftp_error(path, error))?;
+                file.seek(SeekFrom::Start(offset)).await.map_err(seek)?;
+                Ok(Box::new(file))
+            }
         }
     }
 
