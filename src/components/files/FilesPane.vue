@@ -172,6 +172,14 @@
           <ExternalLink :size="12" />
           {{ location.kind === 'local' ? 'Mở bằng ứng dụng mặc định' : 'Tải bản sao về & mở' }}
         </button>
+        <button
+          v-if="location.kind === 'local' && isDirLike(menu.entry)"
+          type="button"
+          class="fm-item"
+          @click="runMenu(() => openAgentStudio(menu!.entry!.path))"
+        >
+          <Bot :size="12" /> Mở Agent Studio tại đây
+        </button>
         <button type="button" class="fm-item" @click="runMenu(() => beginRename(menu!.entry!))">
           <Pencil :size="12" /> Đổi tên <kbd>{{ keyLabel('files.rename', false) }}</kbd>
         </button>
@@ -192,6 +200,9 @@
         </button>
         <button type="button" class="fm-item" @click="runMenu(toggleHidden)">
           <Eye :size="12" /> {{ showHidden ? 'Ẩn tệp ẩn' : 'Hiện tệp ẩn' }}
+        </button>
+        <button v-if="location.kind === 'local'" type="button" class="fm-item" @click="runMenu(() => openAgentStudio(path))">
+          <Bot :size="12" /> Mở Agent Studio tại đây
         </button>
       </template>
     </div>
@@ -223,6 +234,7 @@ import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, ref, wa
 import {
   AlertTriangle,
   ArrowDown,
+  Bot,
   ArrowUp,
   ChevronRight,
   Copy,
@@ -244,6 +256,7 @@ import {
   Trash2,
 } from 'lucide-vue-next';
 import { ipcClient } from '@/ipc/client';
+import { useRouter } from 'vue-router';
 import type { FileLocation, FsEntry } from '@/types/files';
 import { formatBytes, sameLocation } from '@/types/files';
 import { useFileDrag } from '@/composables/useFileDrag';
@@ -566,6 +579,13 @@ const openContextMenu = (event: MouseEvent, entry: FsEntry | null) => {
     y: Math.min(event.clientY - bounds.top, bounds.height - 180),
     entry,
   };
+};
+
+const router = useRouter();
+
+/** SCR-09 on this folder (its git repo). */
+const openAgentStudio = (dir: string) => {
+  void router.push({ path: '/agents', query: { path: dir } });
 };
 
 const runMenu = (action: () => void) => {

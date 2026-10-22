@@ -34,7 +34,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
-import { Terminal, Zap, Puzzle, Globe, Layers, History, Settings } from 'lucide-vue-next';
+import { Terminal, Zap, Puzzle, Globe, Layers, Bot, History, Settings } from 'lucide-vue-next';
 import { useRunSession } from '@/composables/useRunSession';
 
 const route = useRoute();
@@ -80,6 +80,12 @@ const navItems = computed(() => [
     label: 'Nhóm Lệnh & Sequencer (SCR-03)',
     shortLabel: 'Nhóm',
     icon: Layers,
+  },
+  {
+    path: '/agents',
+    label: 'Agent Studio: Điều phối Đa Agent (SCR-09)',
+    shortLabel: 'Agents',
+    icon: Bot,
   },
   {
     path: '/history',

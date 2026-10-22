@@ -534,7 +534,9 @@ onMounted(async () => {
     fontFamily: terminalFontFamily.value,
     fontSize: props.fontSize,
     lineHeight: 1.4,
-    cursorBlink: true,
+    cursorBlink: props.shellKind !== 'agent',
+    // Agent logs (SCR-09) are read-only.
+    disableStdin: props.shellKind === 'agent',
     cursorStyle: 'block',
     cursorInactiveStyle: 'block',
     convertEol: true,

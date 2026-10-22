@@ -38,7 +38,7 @@ dashmap = "6"
 portable-pty = "0.8"
 shell-words = "1"
 base64 = "0.22"
-tokio = { version = "1", features = ["sync", "time", "rt", "macros", "net", "fs", "io-util"] }
+tokio = { version = "1", features = ["sync", "time", "rt", "macros", "net", "fs", "io-util", "process"] }
 regex = "1"
 russh = { version = "0.64", default-features = false, features = ["ring", "rsa", "flate2"] }
 aes-gcm = "0.11"

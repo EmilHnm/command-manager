@@ -365,11 +365,14 @@ const openRequestedCommand = async () => {
       await refreshProcesses();
       // SSH terminals carry their host so "Tệp" can open the same server.
       const sshHostId = typeof route.query.sshHostId === 'string' ? route.query.sshHostId : undefined;
+      // Agent logs (SCR-09) say so; SSH terminals are known by their host.
+      const shellKind =
+        typeof route.query.shellKind === 'string' ? route.query.shellKind : sshHostId ? 'ssh' : undefined;
       dockHostRef.value?.openCommandTab(
         terminalCommandId,
         rawTerminalCommandName,
         rawRunEventId,
-        sshHostId ? 'ssh' : undefined,
+        shellKind,
         sshHostId
       );
       await router.replace({ path: '/workspace' });

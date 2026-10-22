@@ -44,6 +44,12 @@ const router = createRouter({
       meta: { title: 'Nhóm Lệnh & Sequencer - Command Manager' },
     },
     {
+      path: '/agents',
+      name: 'agents',
+      component: () => import('@/views/agents/AgentStudioView.vue'),
+      meta: { title: 'Agent Studio - Điều Phối Đa Agent - Command Manager' },
+    },
+    {
       path: '/history',
       name: 'history',
       component: HistoryView,

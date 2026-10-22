@@ -2,7 +2,7 @@ use super::schema::{
     INIT_SQL, MIGRATION_002_SQL, MIGRATION_003_SQL, MIGRATION_004_SQL, MIGRATION_005_SQL,
     MIGRATION_006_SQL, MIGRATION_007_SQL, MIGRATION_008_SQL, MIGRATION_009_SQL, MIGRATION_010_SQL,
     MIGRATION_011_SQL, MIGRATION_012_SQL, MIGRATION_013_SQL, MIGRATION_014_SQL, MIGRATION_015_SQL,
-    SCHEMA_VERSION,
+    MIGRATION_016_SQL, MIGRATION_017_SQL, SCHEMA_VERSION,
 };
 use crate::error::{Error, Result};
 use rusqlite::{Connection, OpenFlags};
@@ -153,6 +153,8 @@ pub(crate) fn migrate(conn: &Connection) -> Result<()> {
             13 => MIGRATION_013_SQL,
             14 => MIGRATION_014_SQL,
             15 => MIGRATION_015_SQL,
+            16 => MIGRATION_016_SQL,
+            17 => MIGRATION_017_SQL,
             _ => return Err(Error::msg(format!("missing migration for schema {next}"))),
         };
         conn.execute_batch(sql)?;

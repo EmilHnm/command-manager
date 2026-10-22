@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod argv;
 pub mod backup;
 pub mod clock;
@@ -119,6 +120,7 @@ mod desktop {
                 });
                 app.manage(ipc::ssh::SshState::new(app.handle(), &dir));
                 app.manage(ipc::files::FilesState::new(app.handle()));
+                app.manage(ipc::agents::AgentsState::new(app.handle()));
 
                 let handle = app.handle().clone();
                 let state = app.state::<ipc::AppState>();
@@ -239,6 +241,34 @@ mod desktop {
                 ipc::files::transfer_list,
                 ipc::files::transfer_get,
                 ipc::files::transfer_clear_finished,
+                ipc::agents::agents_detect,
+                ipc::agents::agents_profile_save,
+                ipc::agents::agents_project_open,
+                ipc::agents::agents_project_list,
+                ipc::agents::agents_project_get,
+                ipc::agents::agents_project_save,
+                ipc::agents::agents_run_list,
+                ipc::agents::agents_run_get,
+                ipc::agents::agents_run_start,
+                ipc::agents::agents_run_pause,
+                ipc::agents::agents_run_stop,
+                ipc::agents::agents_run_resume,
+                ipc::agents::agents_run_set_limits,
+                ipc::agents::agents_plan_approve,
+                ipc::agents::agents_plan_revise,
+                ipc::agents::agents_run_merge,
+                ipc::agents::agents_run_keep,
+                ipc::agents::agents_run_discard,
+                ipc::agents::agents_run_delete,
+                ipc::agents::agents_run_diffstat,
+                ipc::agents::agents_run_diff,
+                ipc::agents::agents_task_retry,
+                ipc::agents::agents_task_skip,
+                ipc::agents::agents_task_reassign,
+                ipc::agents::agents_task_request_fix,
+                ipc::agents::agents_task_approve,
+                ipc::agents::agents_task_diff,
+                ipc::agents::agents_open_log,
             ])
             .run(tauri::generate_context!())
             .expect("error while running Command Manager");

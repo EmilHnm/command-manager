@@ -71,6 +71,7 @@ graph TD
     MainShell --> SCR06[SCR-06: Command Templates - Thư viện Mẫu Lệnh]
     MainShell --> SCR07[SCR-07: SSH Servers - Quản lý Máy chủ SSH]
     MainShell --> SCR03[SCR-03: Command Groups & Workflow Sequencer]
+    MainShell --> SCR09[SCR-09: Agent Studio - Điều phối Đa Agent]
     MainShell --> SCR04[SCR-04: Session History & Run Event Logs]
     MainShell --> SCR05[SCR-05: System Settings, Backup & Restore]
 
@@ -89,6 +90,11 @@ graph TD
 
     SCR06 --> MOD10[MOD-10: Template Run & Preset Selector Modal]
     SCR06 --> MOD11[MOD-11: Template Editor & Parameter Spec Modal]
+
+    SCR09 --> MOD21[MOD-21: New Agent Run - Lượt Chạy Mới]
+    SCR09 --> MOD22[MOD-22: Plan Gate - Duyệt Thiết kế & Kế hoạch]
+    SCR09 --> MOD23[MOD-23: Merge Gate - Duyệt Merge]
+    SCR09 --> DOCK01
 
     SCR03 --> MOD04[MOD-04: Group Composer & Execution Order Sequencer]
     SCR03 --> MOD05[MOD-05: Autostart Toggle Warning Modal]
@@ -1141,7 +1147,21 @@ Sự kiện: `transfer-progress`, `transfer-conflict`, `transfer-done`.
   * `command_run` thành lệnh async: lệnh remote có thể chờ hộp thoại đăng nhập mà không khóa luồng chính.
   * Dừng nhóm (`session_stop`) dừng lệnh remote qua kênh SSH, không gửi tín hiệu tới PID 0.
   * Lịch sử ghi lệnh remote với shell_kind `ssh`, không lẫn vào gợi ý local.
-* Chưa làm: kéo tệp ra ngoài hệ điều hành, jump host nhiều cấp, chép tiếp tệp lớn từ chỗ dừng, template chạy trên server.
+* **Jump host nhiều cấp:**
+  * Jump host có thể tự đi qua jump host khác, tối đa 5 chặng (`ssh_hosts::MAX_JUMP_HOPS`). Mỗi chặng là một kết nối dùng chung, giữ mở khi còn host phía sau dùng nó.
+  * Khi lưu: đi ngược chuỗi để chặn vòng lặp, jump host dùng OpenSSH hệ thống, và chuỗi quá dài (tính cả các host đang đi qua host được sửa).
+  * Khi kết nối: `SshManager` mang theo danh sách host đang chờ, báo lỗi "vòng lặp" thay vì treo nếu DB lỡ có vòng (ví dụ khôi phục bản sao lưu cũ).
+  * Host OpenSSH hệ thống: `-J a@x:22,b@y:22` theo thứ tự đi qua.
+  * Danh sách máy chủ hiện cả chuỗi: `Jump: bastion → inner`.
+* **Chép tiếp tệp lớn:**
+  * Lượt chép một tệp thất bại mà không phải do người dùng hủy thì giữ lại `.cm-part` và nơi đích đã chọn ở MOD-20, nên lần thử lại không hỏi lại.
+  * Khi thử lại (tự thử lại 3s / 10s / 30s hoặc nút "Thử lại"): nếu tệp nguồn còn đúng kích thước và thời gian sửa như lúc quét, chép tiếp từ `kích thước .cm-part − 1 MiB`; ngược lại chép từ đầu.
+  * Lùi 1 MiB vì SFTP gửi tối đa ~512 KiB chưa được xác nhận; khi mất kết nối, đoạn cuối của part có thể có lỗ.
+  * Dòng tệp trong ⇅ ghi "chép tiếp từ …" (`ItemSnapshot.resumed_from`).
+  * "Xóa mục đã xong" xóa luôn các `.cm-part` còn sót của lượt lỗi; server đang không kết nối thì bỏ qua (không mở đăng nhập).
+  * Chỉ trong một phiên app: tắt app thì không chép tiếp được nữa.
+* **Kéo ra ngoài (bản thử):** Files pane local có mục đang chọn thì chân pane có chip "Kéo N mục ra ngoài". Chip dùng kéo HTML5 gốc của webview với `text/uri-list` (URI mã hóa từng đoạn), không cần plugin. Tệp trên server chưa hỗ trợ.
+* Chưa làm: template chạy trên server, nhập `ProxyJump` từ `~/.ssh/config` thành jump host.
 
 **Bổ sung để hoàn thiện giai đoạn 2:**
 * **Thả vào terminal** (kéo trong app hoặc từ hệ điều hành):
@@ -1159,6 +1179,160 @@ Sự kiện: `transfer-progress`, `transfer-conflict`, `transfer-done`.
   * `files.rename` F2, `files.refresh` F5, `files.newFolder` Ctrl+Shift+N, `files.toggleHidden` Ctrl+H, `files.selectAll` Ctrl+A, `files.copyPath` Ctrl+Shift+C.
   * Enter / Backspace / Delete là phím cố định 🔒.
   * Backend `SCOPES` đã có `files`.
+
+---
+
+### Màn hình 9: SCR-09 — Agent Studio: Điều phối Đa Agent Phân cấp (Hierarchical Multi-Agent Orchestration)
+
+#### 1. Mục đích & Vai trò
+* Mở một thư mục dự án (git repo), giao một yêu cầu, rồi để một **đội AI CLI** đi từ thiết kế đến triển khai:
+  * một **leader** thiết kế, chia task, review;
+  * nhiều **worker** viết code, mỗi worker một vai (Backend, Frontend, Test…).
+* CLI nào làm leader, CLI nào làm worker là **do người dùng chọn**, không cố định Claude. CLI hỗ trợ sẵn: `claude`, `codex`, `agy` (Google Antigravity), `cursor-agent` (Cursor CLI, bí danh `agent`), `gemini`.
+* Người dùng giữ quyền quyết định ở hai **cổng duyệt**: duyệt thiết kế + kế hoạch trước khi viết code, và duyệt trước khi merge vào nhánh gốc. Giữa hai cổng, app tự chạy.
+* Không push, không đụng nhánh gốc trước cổng 2.
+* **Stitch Screen Reference:** Screen ID `63f5ad75de4e4f02b8c545d6f1e19368` tại Project `14914224436748087443`.
+
+#### 2. Quyết định Kỹ thuật (chốt trước khi triển khai)
+| Vấn đề | Quyết định | Lý do |
+|---|---|---|
+| Ai điều phối | **App** (state machine trong Rust, trạng thái trong SQLite). Leader là CLI được gọi ở các bước Thiết kế / Kế hoạch / Review / Phân loại lỗi. | Quy trình đoán trước được, dừng/tiếp tục được sau khi tắt app, không phụ thuộc leader có nhớ quy trình hay không. Đổi leader = đổi adapter. |
+| Cách chạy CLI | **Headless**, mỗi lượt là một tiến trình: `claude -p`, `codex exec`, `agy -p`, `cursor-agent -p --trust --workspace <worktree>`. Output dạng stream-json được app đọc (kết quả, session id, token) và đồng thời hiển thị ở **tab xem trực tiếp** trong Workspace. | Biết chắc khi nào agent xong và kết quả là gì; vẫn quan sát được. |
+| Dự án nhiều repo | Dự án là **một thư mục**: một git repo, hoặc một thư mục chứa nhiều repo của cùng một cụm (`fe/`, `be/`, `docs/`…; dò tới 2 cấp, bỏ qua thư mục ẩn, `node_modules`, `target`…). Leader làm việc ở thư mục cha (chỉ đọc). Không gian làm việc của task / nhánh tích hợp giữ đúng bố cục đó: mỗi repo một worktree cùng tên nhánh `cm/<run>/<task>`. Task ghi các repo nó thay đổi (`repos`); scope và diff tính từ thư mục dự án (`be/src/...`). Thiết lập (nhánh gốc, lệnh chuẩn bị, lệnh kiểm tra) theo từng repo. Cổng 2 kiểm tra mọi repo có thay đổi trước rồi mới merge từng repo. | Một sản phẩm thường gồm nhiều repo; buộc phải là một repo thì không dùng được. |
+| Kết quả có cấu trúc | Bước của leader bắt buộc trả JSON theo schema: `claude --json-schema`, `codex exec --output-schema <file>`, `agy --json-schema`. `cursor-agent` chưa có cờ schema: app đưa schema vào prompt và tách JSON từ câu trả lời. Mọi CLI đều được app kiểm tra lại; sai schema thì nhắc lại 1 lần kèm lỗi, sau đó báo người dùng. | Không phải đoán từ văn bản tự do. |
+| Tiếp tục ngữ cảnh | Lưu session id của từng agent cho từng task. Sửa sau review = gọi lại **đúng phiên đó**: `claude -p --resume <id>`, `codex exec resume <id>`, `agy -p --conversation <id>`, `cursor-agent -p --resume <chatId>` (app có thể tạo trước phiên bằng `cursor-agent create-chat` để biết id ngay từ đầu). | Worker nhớ nó đã làm gì. |
+| Cô lập | Mỗi task một **git worktree** + nhánh riêng: `<data_dir>/agents/wt/<run>/<task>` trên nhánh `cm/<run>/<task>`, tách từ nhánh tích hợp `cm/<run>/integration` (cũng có worktree riêng `_integration`). Worktree nằm ngoài repo nên không lọt vào file watcher, `rg`, dev server của người dùng. | Worker không ghi đè nhau; bỏ một task = xóa worktree. |
+| Commit | **App commit**, không để agent commit: sau khi worker xong, app `git add -A && git commit` trong worktree với message `cm(<task>): <tiêu đề>`. Merge vào nhánh tích hợp cũng do app làm (`--no-ff`). | Lịch sử sạch, đoán trước được; agent không cần quyền git. |
+| Quyền | Hồ sơ quyền theo **bước**, không theo agent: <br>• *Chỉ đọc* (Thiết kế, Kế hoạch, Review): `claude --permission-mode plan`, `codex -s read-only`, `agy --mode plan`, `cursor-agent --mode plan`. <br>• *Ghi trong worktree* (Triển khai, Sửa): `claude --permission-mode acceptEdits` + danh sách lệnh được phép, `codex -s workspace-write`, `agy --mode accept-edits` + `permissions.allow`, `cursor-agent -p --sandbox enabled` + `permissions` (allow/deny, ví dụ `Shell(git)`) trong `.cursor/cli.json` của worktree. <br>• *Tự duyệt mọi thứ* (`--dangerously-*`, `--yolo`, `cursor-agent --force`): **tắt mặc định**, bật riêng từng agent với cảnh báo đỏ. | Mọi repo mã nguồn mở đã xem đều bật bỏ qua quyền mặc định; app không làm vậy. |
+| Kiểm tra code | Mỗi dự án khai báo **lệnh kiểm tra** (ví dụ `cargo test`, `pnpm build`, `pnpm lint`) và **lệnh chuẩn bị worktree** (ví dụ `pnpm install`). App tự chạy chúng; leader nhận kết quả khi review. | Review dựa trên bằng chứng chứ không chỉ đọc diff. |
+| Riêng Cursor CLI | `cursor-agent -p` **mặc định đã có quyền ghi tệp và chạy shell** (chỉ bị giới hạn bởi cấu hình permissions). Vì vậy: bước chỉ đọc luôn thêm `--mode plan`; bước ghi luôn bật `--sandbox enabled` và app ghi `.cursor/cli.json` với danh sách deny mặc định vào worktree. Không dùng `-w/--worktree` của Cursor (worktree do app quản lý, truyền bằng `--workspace`). Cần `--trust` để không bị hỏi tin cậy thư mục khi chạy headless. Kiểm tra đăng nhập bằng `cursor-agent status`. | Tránh trường hợp Cursor ghi ra ngoài phạm vi khi người dùng tưởng bước đó chỉ đọc. |
+| Không có MCP ở phiên bản đầu | Leader không tự gọi worker. Chế độ "leader tự điều phối qua MCP" để giai đoạn sau (§9). | Ít thành phần, dễ kiểm soát. |
+
+#### 3. Vòng đời một lượt chạy (Run)
+```
+ Yêu cầu ──► [1 Thiết kế] ──► [2 Kế hoạch] ──► ⛩ CỔNG 1 ──► [3 Triển khai] ⇄ [4 Review] ──► [5 Tích hợp] ──► ⛩ CỔNG 2 ──► Merge local
+            leader, đọc      leader, JSON       người dùng    worker, ghi      leader, đọc     app + leader       người dùng
+```
+1. **Thiết kế** (leader, chỉ đọc, cwd = repo): đọc code + `AGENTS.md`/`CLAUDE.md` nếu có. Trả về tài liệu thiết kế (markdown): phạm vi, kiến trúc, **API contract / kiểu dữ liệu dùng chung**, rủi ro.
+2. **Kế hoạch** (leader, cùng phiên): trả JSON danh sách task:
+   ```json
+   { "tasks": [ { "key": "api-users", "title": "...", "role": "backend",
+                  "description": "...", "acceptance": ["..."],
+                  "scope": ["src-tauri/src/users/**"], "depends_on": ["schema"] } ] }
+   ```
+   App gán agent theo bảng **vai → CLI** của lượt chạy (đổi tay được ở cổng 1).
+3. **⛩ Cổng 1 — Duyệt thiết kế & kế hoạch (MOD-22):** sửa task, đổi agent, thêm/xóa task, hoặc gửi góp ý để leader làm lại bước 1–2 (cùng phiên). Bấm *Duyệt & Triển khai* để tiếp.
+4. **Triển khai:** bộ lập lịch chạy các task có đủ phụ thuộc (đã merge vào nhánh tích hợp):
+   * tạo worktree từ HEAD nhánh tích hợp → chạy lệnh chuẩn bị → gọi worker với prompt gồm: thiết kế, contract, task, tiêu chí chấp nhận, phạm vi tệp;
+   * worker xong → app commit → chạy lệnh kiểm tra trong worktree.
+   * Worker thoát mã 0 mà **không thay đổi tệp nào** = task lỗi "Không có thay đổi" (bắt trường hợp agent bị từ chối quyền nhưng vẫn báo thành công, như `agy -p`).
+   * Tệp sửa ngoài `scope` → cảnh báo trong review, không chặn.
+   * Hai task có `scope` chồng nhau không chạy song song.
+5. **Review** (leader, chỉ đọc, phiên review riêng cho mỗi task): nhận diff + kết quả kiểm tra, trả JSON:
+   ```json
+   { "verdict": "approved" | "changes_requested",
+     "summary": "...", "comments": [ { "file": "...", "line": 42, "issue": "...", "severity": "must|should" } ] }
+   ```
+   * `changes_requested` → gửi góp ý vào **đúng phiên của worker** → commit mới → review lại. Tối đa N vòng (mặc định 3), quá thì task chuyển "Cần người xem".
+   * `approved` → app merge nhánh task vào nhánh tích hợp. Xung đột merge → nhờ worker giải quyết trong worktree của nó (rebase lên nhánh tích hợp), không được thì "Cần người xem".
+6. **Tích hợp:** khi mọi task xong, chạy lệnh kiểm tra trên nhánh tích hợp. Lỗi → leader phân loại thành task sửa (quay lại bước 4) hoặc báo người dùng.
+7. **⛩ Cổng 2 — Duyệt merge (MOD-23):** tóm tắt toàn bộ diff, kết quả kiểm tra, chi phí. Chọn:
+   * *Merge vào `<nhánh gốc>`* (local, `--no-ff`, không push);
+   * *Giữ nhánh* `cm/<run>/integration` để tự xem/tạo PR;
+   * *Bỏ lượt chạy* (xóa worktree + nhánh, có xác nhận).
+
+**Dừng / tiếp tục:** *Tạm dừng* chờ các agent đang chạy xong lượt hiện tại rồi dừng; *Dừng ngay* kết thúc tiến trình (task về "Chờ", worktree giữ nguyên). Tắt app khi đang chạy = tạm dừng; mở lại thì lượt chạy hiện "Đã tạm dừng — Tiếp tục".
+
+**Giới hạn an toàn mỗi lượt chạy:** số agent song song (mặc định 2), thời gian tối đa mỗi lượt gọi (mặc định 20 phút), tổng số lượt gọi, số vòng review. Chạm giới hạn → tạm dừng và hỏi.
+
+#### 4. Wireframe Chi tiết
+Vào màn hình: mục **Agent Studio** ở thanh điều hướng; chuột phải thư mục trong Files pane local → *Mở Agent Studio tại đây*; Command Palette `Agent Studio: Mở thư mục…`; nút ở tab terminal local (dùng cwd hiện tại).
+
+```
++--------------------------------------------------------------------------------------------------+
+| Agent Studio   📁 ~/projects/shop  (feat/cart ✓ sạch)   [Đổi thư mục]        [Đội & CLI] [+ Lượt mới] |
++----------------------+---------------------------------------------------------------------------+
+| LƯỢT CHẠY            |  "Thêm giỏ hàng có mã giảm giá"            Leader: claude · ⏸ Tạm dừng ⏹ Dừng |
+| ● Giỏ hàng   Review  |  ① Thiết kế ✓ ─ ② Kế hoạch ✓ ─ ⛩1 ✓ ─ ③ Triển khai ● ─ ④ Tích hợp ─ ⛩2          |
+| ✓ Đăng nhập  Đã merge|  ┌ Task ──────────────────────┬ Vai ──────┬ Agent ┬ Trạng thái ───┬ Vòng ┬ ±  ┐ |
+| ⏸ Báo cáo    Tạm dừng|  │ schema   Bảng cart, coupon │ backend   │ codex │ ✓ Đã merge    │ 1    │+82 │ |
+|                      |  │ api-cart API giỏ hàng      │ backend   │ codex │ ● Review (2/3)│ 2    │+240│ |
+|                      |  │ ui-cart  Trang giỏ hàng    │ frontend  │ agy   │ ● Đang làm    │ 1    │+95 │ |
+|                      |  │ e2e      Test luồng mua    │ test      │ claude│ ○ Chờ api-cart│ –    │    │ |
+|                      |  └────────────────────────────┴───────────┴───────┴───────────────┴──────┴────┘ |
+|                      |  ── api-cart ───────────────────────────────────────────────────────────── |
+|                      |  Review vòng 2: ✗ Cần sửa — "Thiếu kiểm tra coupon hết hạn" (must) src/cart.rs:88 |
+|                      |  Kiểm tra: cargo test ✓  · Phạm vi: ⚠ sửa ngoài scope: src/main.rs             |
+|                      |  [Xem log trực tiếp] [Xem diff] [Mở worktree trong Files] [Terminal tại worktree]|
+|                      |  [Giao lại cho agent khác ▾] [Bỏ qua review] [Cần người xem]                     |
++----------------------+---------------------------------------------------------------------------+
+| Chi phí lượt này: 412k token · ~$3.10  ·  Agent đang chạy 2/2  ·  Đã gọi 9/60 lượt                |
++--------------------------------------------------------------------------------------------------+
+```
+* **Tab xem trực tiếp:** mỗi lượt gọi agent mở (hoặc tái dùng) một tab chỉ-xem trong Workspace, tên `🤖 codex · api-cart · vòng 2`. Nội dung là stream-json đã định dạng: lời agent, lệnh nó chạy, tệp nó sửa, kết quả. Tab tồn tại sau khi agent xong để đọc lại.
+* **Tab "Đội & CLI"** (cài đặt của SCR-09):
+  * phát hiện CLI đã cài (`which` + `--version`), trạng thái đăng nhập nếu kiểm tra được;
+  * mỗi CLI: model mặc định, effort, hồ sơ quyền, danh sách lệnh được phép, nút *Thử* (gọi 1 prompt ngắn, đo thời gian);
+  * **Đội mẫu**: bộ leader + bảng vai → CLI lưu lại để dùng nhanh (ví dụ "Claude lãnh đạo, Codex backend, Agy frontend").
+* **Thiết lập dự án** (lưu theo thư mục): nhánh gốc, lệnh chuẩn bị worktree, lệnh kiểm tra, ghi chú cho mọi agent (thêm vào prompt).
+
+#### 5. Trạng thái Task
+`Chờ` (chưa đủ phụ thuộc) → `Sẵn sàng` → `Đang làm` → `Kiểm tra` → `Review` → (`Đang sửa` ⇄ `Review`) → `Đã duyệt` → `Đã merge`.
+Nhánh phụ: `Lỗi` (agent lỗi / hết giờ / không thay đổi gì — *Thử lại*, *Giao agent khác*), `Xung đột merge`, `Cần người xem` (hết vòng review), `Bỏ qua`.
+
+#### 6. Dữ liệu & IPC
+```sql
+CREATE TABLE agent_project (id TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, base_branch TEXT,
+  setup_cmd TEXT, check_cmds TEXT /* JSON array */, notes TEXT, team_id TEXT, created_at TEXT);
+CREATE TABLE agent_team (id TEXT PRIMARY KEY, name TEXT, leader_cli TEXT, roles TEXT /* JSON {role: cli} */);
+CREATE TABLE agent_cli_profile (cli TEXT PRIMARY KEY, model TEXT, effort TEXT, allow TEXT /* JSON */,
+  bypass_permissions INTEGER NOT NULL DEFAULT 0, extra_args TEXT);
+CREATE TABLE agent_run (id TEXT PRIMARY KEY, project_id TEXT REFERENCES agent_project(id) ON DELETE CASCADE,
+  request TEXT, leader_cli TEXT, roles TEXT, stage TEXT, status TEXT, design_md TEXT,
+  leader_session TEXT, limits TEXT /* JSON */, base_commit TEXT, created_at TEXT, finished_at TEXT);
+CREATE TABLE agent_task (id TEXT PRIMARY KEY, run_id TEXT REFERENCES agent_run(id) ON DELETE CASCADE,
+  key TEXT, title TEXT, role TEXT, cli TEXT, description TEXT, acceptance TEXT, scope TEXT,
+  depends_on TEXT, status TEXT, round INTEGER DEFAULT 0, worker_session TEXT, branch TEXT,
+  worktree TEXT, last_review TEXT /* JSON */, sort_order INTEGER);
+CREATE TABLE agent_invocation (id TEXT PRIMARY KEY, run_id TEXT, task_id TEXT, cli TEXT, step TEXT,
+  session_id TEXT, argv TEXT, started_at TEXT, finished_at TEXT, exit_code INTEGER,
+  input_tokens INTEGER, output_tokens INTEGER, cost_usd REAL, log_path TEXT);
+```
+* Log đầy đủ của mỗi lượt gọi ghi ra `data_dir/agents/<run>/<invocation>.jsonl` (không nhét vào SQLite).
+* Rust: module `agents/` gồm `adapter.rs` (trait `CliAdapter`: `argv(step, prompt, cwd, resume, schema, profile)`, `parse(line) -> AgentEvent`), `adapters/{claude,codex,agy,cursor,gemini}.rs`, `git.rs` (worktree, commit, diff, merge), `scheduler.rs`, `run.rs` (state machine). Tiến trình agent chạy qua process manager hiện có (dừng được, ring buffer cho tab xem).
+* IPC: `agents_detect`, `agents_profile_get/save`, `agents_team_*`, `agents_project_open/save`, `agents_run_start/pause/resume/stop/discard`, `agents_gate_approve/revise`, `agents_task_update/retry/reassign/skip`, `agents_diff`, `agents_merge`.
+* Sự kiện: `agents:run` (stage/status), `agents:task`, `agents:invocation` (bắt đầu/kết thúc/token), `agents:gate` (mở MOD-22/23).
+
+#### 7. Rủi ro & Cách giảm
+| Rủi ro | Cách giảm |
+|---|---|
+| CLI đổi tham số giữa các phiên bản | Adapter ghi phiên bản đã kiểm; khi phát hiện bản khác, chạy *Thử* tự động và cảnh báo nếu hỏng. |
+| Agent bị từ chối quyền nhưng vẫn "thành công" | Luật "không có thay đổi = lỗi"; hiện các lệnh bị từ chối trong tab log. |
+| Chi phí chạy vòng | Giới hạn số lượt gọi, vòng review, thời gian; hiện token/chi phí trực tiếp. |
+| Worktree tốn đĩa (`node_modules`, `target/`) | Lệnh chuẩn bị tùy dự án; dọn worktree ngay khi task đã merge; tùy chọn dùng chung `CARGO_TARGET_DIR`. |
+| Leader trả JSON sai | Schema bắt buộc + kiểm tra + 1 lần nhắc lại. |
+| Agent đọc bí mật trong repo (`.env`) | Cảnh báo ở lượt chạy đầu nếu thấy tệp bí mật không bị `.gitignore`; worktree chỉ chứa tệp đã commit. |
+| Repo đang có thay đổi chưa commit | Bắt đầu lượt chạy đòi cây làm việc sạch (hoặc tạo nhánh tích hợp từ commit hiện tại và cảnh báo phần chưa commit không được dùng). |
+
+#### 7b. Trạng thái triển khai (giai đoạn 1 — đã xong)
+* **Backend** (`src-tauri/src/agents/`):
+  * `adapter.rs`: dựng lệnh headless và đọc stream-json cho `claude`, `codex`, `agy`, `cursor-agent`. Đã kiểm với CLI thật: claude/codex/agy trả JSON đúng schema (`claude --json-schema`, `codex exec --output-schema`, `agy --json-schema`); cursor nhét schema vào prompt.
+  * `process.rs`: chạy CLI trong process group riêng (dừng/hết giờ giết cả con cháu), stderr hiện mờ trong log, stdout thô lưu `<data_dir>/agents/runs/<run>/<invocation>.jsonl`.
+  * `git.rs`: worktree, commit (dùng danh tính git của người dùng, thiếu thì dùng `Command Manager Agents`), diff ba chấm so với nhánh tích hợp, merge `--no-ff` (xung đột → abort, trả danh sách tệp), glob scope.
+  * `engine.rs`: máy trạng thái; task chạy **tuần tự** theo phụ thuộc. Lệnh kiểm tra thất bại thì review luôn bị đổi thành "Cần sửa". Worker không đổi tệp nào → task lỗi (gợi ý số thao tác bị từ chối quyền).
+  * Migration 016: `agent_project`, `agent_cli_profile`, `agent_run`, `agent_task`, `agent_invocation`. Mở app: lượt chạy đang "running" thành "Tạm dừng".
+* **Tab log:** mỗi lượt gọi là một terminal chỉ-đọc (`agent:<id>`, shell kind `agent`) trong process manager; nút dừng của tab dừng agent. Tab cũ (sau khi khởi động lại app) được dựng lại từ tệp jsonl.
+* **Nhiều repo** (migration 017: cột `repos` ở `agent_project`, `agent_run`, `agent_task`; dữ liệu cũ đọc như một repo `.`): `agents/workspace.rs` dò repo và quy ước đường dẫn.
+* **UI:** SCR-09, MOD-21/22/23, "Đội & CLI" (`AgentTeamModal`: model, effort, tham số thêm, tự duyệt; thiết lập dự án), xem diff (`AgentDiffModal`). Vào màn hình từ thanh điều hướng hoặc chuột phải thư mục local trong Files pane → "Mở Agent Studio tại đây".
+* **Thao tác task** (chỉ khi lượt chạy không chạy, ở bước triển khai): Thử lại (xung đột merge: app merge nhánh tích hợp vào nhánh task rồi giao worker gỡ xung đột), Giao lại cho CLI khác, Bỏ qua review (merge luôn), Bỏ qua task, Yêu cầu agent sửa lại (góp ý của người dùng thành một vòng review).
+
+#### 8. Lộ trình Triển khai
+| Giai đoạn | Nội dung |
+|---|---|
+| **1. Lõi** | Adapter `claude`, `codex`, `agy`, `cursor-agent`; phát hiện CLI; một lượt chạy, task **tuần tự**; 2 cổng duyệt; vòng review → sửa; worktree + commit + merge; tab xem trực tiếp; tạm dừng/tiếp tục. |
+| **2. Song song** | Lập lịch theo phụ thuộc, nhiều agent cùng lúc, xung đột scope, xung đột merge, lệnh kiểm tra + bước tích hợp, giới hạn & chi phí. |
+| **3. Mở rộng** | `gemini` + adapter tùy biến (mẫu argv), đội mẫu, chạy lại một task với agent khác để so sánh, xuất báo cáo lượt chạy. |
+| **4. (Tùy chọn)** | Chế độ "leader tự điều phối": app cung cấp MCP server (`create_task`, `assign`, `get_diff`, `send_feedback`, `approve`) để một phiên leader tương tác tự quản lý đội. |
 
 ---
 
@@ -1708,7 +1882,7 @@ Rộng 560px, căn giữa, nền mờ, dùng chung khung modal với MOD-02.
    * Windows Credential Manager chỉ chứa được ~2,5 KB, nên khóa RSA 4096 phải lưu trong SQLite.
    * "Dùng OpenSSH hệ thống" chỉ đi với Tệp khóa.
    * Chuyển về Tệp khóa thì nội dung khóa đã lưu bị xóa.
-4. **Jump host:** dropdown chỉ liệt kê host khác không dùng OpenSSH hệ thống, và loại các host sẽ tạo vòng lặp.
+4. **Jump host:** dropdown chỉ liệt kê host khác không dùng OpenSSH hệ thống, loại các host sẽ tạo vòng lặp hoặc làm chuỗi vượt 5 chặng, và ghi cả chuỗi (`bastion → inner`).
 5. **Kiểm tra kết nối:**
    * Chạy với giá trị **đang nhập** (chưa lưu), kể cả mật khẩu, passphrase và nội dung khóa. Có thể mở MOD-18/MOD-19 trong lúc kiểm tra.
    * Đang chạy thì nút đổi thành `[Hủy kiểm tra]`.
@@ -1848,6 +2022,89 @@ Hỏi cách xử lý khi tệp đích đã tồn tại. Do sự kiện `transfer
    * Chỉ cho **Bỏ qua** hoặc **Giữ cả hai**; không cho ghi đè.
    * Thư mục gặp thư mục thì gộp, không hỏi.
 4. **Đóng hộp:** `Esc` / `[X]` = Bỏ qua tệp này (không hủy cả job).
+
+---
+
+### MOD-21: Modal Tạo Lượt Chạy Agent (New Agent Run)
+
+#### 1. Mục đích & Vai trò
+Bắt đầu một lượt chạy trong SCR-09: nhập yêu cầu, chọn leader và bảng vai → CLI, giới hạn.
+* **Stitch Screen Reference:** Screen ID `7f653f3f131d4d8d84dd349b1242b45b` tại Project `14914224436748087443`.
+
+#### 2. Wireframe Chi tiết
+```
++------------------------------------------------------------------+
+| 🤖 Lượt Chạy Mới — ~/projects/shop (feat/cart)               [X] |
++------------------------------------------------------------------+
+|  Yêu cầu *                                                       |
+|  [ Thêm giỏ hàng có mã giảm giá, áp dụng khi thanh toán...     ] |
+|  [                                                              ] |
+|  Đội mẫu   [ Claude lãnh đạo · Codex BE · Agy FE           ▼ ]   |
+|  Leader    [ claude (Opus) ▼ ]                                   |
+|  Vai       backend  [ codex ▼ ]   frontend [ agy ▼ ]   [+ Vai]   |
+|  Cổng duyệt  [✓] Duyệt thiết kế & kế hoạch   [✓] Duyệt trước merge |
+|  Giới hạn  Song song [2]  Vòng review [3]  Lượt gọi [60]  ⏱ [20] phút |
+|  ⚠ agy đang bật "Tự duyệt mọi thứ" (Đội & CLI)                    |
++------------------------------------------------------------------+
+|                                   [Hủy]   [▶ Bắt đầu thiết kế]   |
++------------------------------------------------------------------+
+```
+
+#### 3. Quy tắc Tương tác
+* CLI chưa cài hoặc *Thử* thất bại thì mờ trong danh sách, có lý do khi rê chuột.
+* Cây làm việc chưa sạch → cảnh báo vàng, vẫn cho bắt đầu (dùng commit hiện tại).
+* Hai cổng duyệt bật mặc định; tắt cổng 2 cần xác nhận thêm.
+
+---
+
+### MOD-22: Cổng 1 — Duyệt Thiết Kế & Kế Hoạch (Plan Gate)
+* **Stitch Screen Reference:** Screen ID `4bccdb777cf849e68f1a498e876d2ffe` tại Project `14914224436748087443`.
+
+#### 1. Wireframe Chi tiết
+```
++--------------------------------------------------------------------------------+
+| ⛩ Duyệt Thiết Kế & Kế Hoạch — "Giỏ hàng"                                  [X] |
++---------------------------------------+----------------------------------------+
+| [Thiết kế] [API contract]             | Task (4)                         [+]   |
+|  ## Phạm vi                           |  ⠿ schema   backend  [codex ▼] ✎ 🗑     |
+|  ...markdown, sửa được...             |  ⠿ api-cart backend  [codex ▼] ✎ 🗑  ← schema |
+|                                       |  ⠿ ui-cart  frontend [agy   ▼] ✎ 🗑  ← api-cart(contract) |
+|                                       |  ⠿ e2e      test     [claude▼] ✎ 🗑  ← api-cart, ui-cart |
++---------------------------------------+----------------------------------------+
+| Góp ý cho leader: [ Tách coupon thành task riêng...                          ] |
+|                     [Bỏ lượt chạy]   [↻ Gửi góp ý, làm lại]   [✓ Duyệt & Triển khai] |
++--------------------------------------------------------------------------------+
+```
+#### 2. Quy tắc Tương tác
+* Sửa tay thiết kế/task được lưu như bản đã duyệt; *Gửi góp ý* gọi lại leader trong cùng phiên kèm các chỉnh sửa tay.
+* Phụ thuộc vòng hoặc task trỏ tới key không tồn tại → chặn nút Duyệt, đánh dấu đỏ.
+* Đóng hộp = giữ lượt chạy ở trạng thái "Chờ duyệt" (mở lại từ SCR-09).
+
+---
+
+### MOD-23: Cổng 2 — Duyệt Merge (Merge Gate)
+* **Stitch Screen Reference:** Screen ID `602913b19f81486cbe981f14363343c3` tại Project `14914224436748087443`.
+
+#### 1. Wireframe Chi tiết
+```
++--------------------------------------------------------------------------+
+| ⛩ Duyệt Merge — "Giỏ hàng"  cm/7f3a/integration → feat/cart          [X] |
++--------------------------------------------------------------------------+
+|  4 task · 23 tệp · +612 −88 · 7 vòng review · 412k token (~$3.10)          |
+|  Kiểm tra: cargo test ✓  pnpm build ✓  pnpm lint ✓                         |
+|  ▸ schema    ✓ duyệt vòng 1                                                |
+|  ▸ api-cart  ✓ duyệt vòng 3  (2 góp ý "should" chưa xử lý)                 |
+|  ▸ ui-cart   ✓ duyệt vòng 1                                                |
+|  ▸ e2e       ✓ duyệt vòng 2                                                |
+|  [Xem toàn bộ diff]  [Mở nhánh trong Terminal]                             |
++--------------------------------------------------------------------------+
+|  [Bỏ lượt chạy]   [Giữ nhánh, tự xử lý]   [✓ Merge vào feat/cart (local)] |
++--------------------------------------------------------------------------+
+```
+#### 2. Quy tắc Tương tác
+* Nhánh gốc đã có commit mới từ lúc bắt đầu → merge thử trước; xung đột thì không merge, chuyển "Giữ nhánh" và báo các tệp xung đột.
+* Merge xong: dọn worktree + nhánh task, giữ nhánh tích hợp 7 ngày (hoặc đến khi xóa tay). Không bao giờ push.
+
 
 ---
 

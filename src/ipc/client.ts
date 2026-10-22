@@ -1,4 +1,19 @@
 import type {
+  AgentCli,
+  AgentProject,
+  AgentProjectView,
+  AgentRun,
+  CliInfo,
+  CliProfile,
+  DiffStat,
+  NewRunInput,
+  ProjectSettings,
+  RunDetail,
+  RunLimits,
+  RunSummary,
+  TaskDraft,
+} from '@/types/agents';
+import type {
   ActiveProcessInfo,
   CommandDefinition,
   CommandGroup,
@@ -234,7 +249,8 @@ function isTerminalBackendId(backendId: string) {
   return (
     backendId.startsWith('terminal:') ||
     backendId.startsWith('template:') ||
-    backendId.startsWith('ssh:')
+    backendId.startsWith('ssh:') ||
+    backendId.startsWith('agent:')
   );
 }
 
@@ -1896,6 +1912,94 @@ export const ipcClient = {
     const { listen } = await import('@tauri-apps/api/event');
     return listen<SshAuthRequestEvent>(IPC_EVENTS.SSH_AUTH_REQUEST, (event) => {
       callback(event.payload);
+    });
+  },
+
+  // ---- SCR-09 Agent Studio ----
+
+  agentsDetect: () => invokeTauri<CliInfo[]>('agents_detect'),
+
+  agentsProfileSave: (profile: CliProfile) =>
+    invokeTauri<CliProfile>('agents_profile_save', { profile }),
+
+  agentsProjectOpen: (path: string) =>
+    invokeTauri<AgentProjectView>('agents_project_open', { path }),
+
+  agentsProjectList: () => invokeTauri<AgentProject[]>('agents_project_list'),
+
+  agentsProjectGet: (projectId: string) =>
+    invokeTauri<AgentProjectView>('agents_project_get', { project_id: projectId }),
+
+  agentsProjectSave: (projectId: string, settings: ProjectSettings) =>
+    invokeTauri<AgentProjectView>('agents_project_save', { project_id: projectId, settings }),
+
+  agentsRunList: (projectId: string) =>
+    invokeTauri<RunSummary[]>('agents_run_list', { project_id: projectId }),
+
+  agentsRunGet: (runId: string) => invokeTauri<RunDetail>('agents_run_get', { run_id: runId }),
+
+  agentsRunStart: (run: NewRunInput) => invokeTauri<AgentRun>('agents_run_start', { run }),
+
+  agentsRunPause: (runId: string) => invokeTauri<void>('agents_run_pause', { run_id: runId }),
+
+  agentsRunStop: (runId: string) => invokeTauri<void>('agents_run_stop', { run_id: runId }),
+
+  agentsRunResume: (runId: string) => invokeTauri<void>('agents_run_resume', { run_id: runId }),
+
+  agentsRunSetLimits: (runId: string, limits: RunLimits) =>
+    invokeTauri<void>('agents_run_set_limits', { run_id: runId, limits }),
+
+  agentsPlanApprove: (runId: string, design: string, contract: string, tasks: TaskDraft[]) =>
+    invokeTauri<void>('agents_plan_approve', { run_id: runId, design, contract, tasks }),
+
+  agentsPlanRevise: (runId: string, design: string, feedback: string) =>
+    invokeTauri<void>('agents_plan_revise', { run_id: runId, design, feedback }),
+
+  agentsRunMerge: (runId: string) => invokeTauri<void>('agents_run_merge', { run_id: runId }),
+
+  agentsRunKeep: (runId: string) => invokeTauri<void>('agents_run_keep', { run_id: runId }),
+
+  agentsRunDiscard: (runId: string) => invokeTauri<void>('agents_run_discard', { run_id: runId }),
+
+  agentsRunDelete: (runId: string) => invokeTauri<void>('agents_run_delete', { run_id: runId }),
+
+  agentsRunDiffstat: (runId: string) =>
+    invokeTauri<DiffStat>('agents_run_diffstat', { run_id: runId }),
+
+  agentsRunDiff: (runId: string) => invokeTauri<string>('agents_run_diff', { run_id: runId }),
+
+  agentsTaskRetry: (taskId: string) => invokeTauri<void>('agents_task_retry', { task_id: taskId }),
+
+  agentsTaskSkip: (taskId: string) => invokeTauri<void>('agents_task_skip', { task_id: taskId }),
+
+  agentsTaskReassign: (taskId: string, cli: AgentCli) =>
+    invokeTauri<void>('agents_task_reassign', { task_id: taskId, cli }),
+
+  agentsTaskRequestFix: (taskId: string, feedback: string) =>
+    invokeTauri<void>('agents_task_request_fix', { task_id: taskId, feedback }),
+
+  agentsTaskApprove: (taskId: string) =>
+    invokeTauri<void>('agents_task_approve', { task_id: taskId }),
+
+  agentsTaskDiff: (taskId: string) => invokeTauri<string>('agents_task_diff', { task_id: taskId }),
+
+  /**
+   * The log terminal of an agent process, rebuilt from disk when needed.
+   * Returns what `/workspace` needs to open it as a tab.
+   */
+  agentsOpenLog: async (invocationId: string, title: string) => {
+    const terminalId = await invokeTauri<string>('agents_open_log', { invocation_id: invocationId });
+    const commandId = terminalUiIdFor(terminalId);
+    terminalNames.set(commandId, title);
+    runEventToCommand.set(terminalId, commandId);
+    return { commandId, runEventId: terminalId };
+  },
+
+  onAgentsChanged: async (callback: (runId: string) => void) => {
+    if (!usingNativeIpc()) return () => undefined;
+    const { listen } = await import('@tauri-apps/api/event');
+    return listen<{ run_id: string }>(IPC_EVENTS.AGENTS_CHANGED, (event) => {
+      callback(event.payload.run_id);
     });
   },
 };

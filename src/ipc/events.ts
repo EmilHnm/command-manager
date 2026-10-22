@@ -17,6 +17,7 @@ export const IPC_EVENTS = {
   TRANSFER_CONFLICT: 'files://transfer-conflict',
   TRANSFER_DONE: 'files://transfer-done',
   REMOTE_EDIT: 'files://remote-edit',
+  AGENTS_CHANGED: 'agents://changed',
 } as const;
 
 export interface PtyDataEvent {
