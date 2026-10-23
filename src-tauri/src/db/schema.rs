@@ -1,4 +1,4 @@
-pub const SCHEMA_VERSION: i64 = 17;
+pub const SCHEMA_VERSION: i64 = 21;
 pub const INIT_SQL: &str = include_str!("../../migrations/001_init.sql");
 pub const MIGRATION_002_SQL: &str = include_str!("../../migrations/002_templates.sql");
 pub const MIGRATION_003_SQL: &str = include_str!("../../migrations/003_template_history.sql");
@@ -17,3 +17,7 @@ pub const MIGRATION_014_SQL: &str = include_str!("../../migrations/014_command_s
 pub const MIGRATION_015_SQL: &str = include_str!("../../migrations/015_command_targets.sql");
 pub const MIGRATION_016_SQL: &str = include_str!("../../migrations/016_agents.sql");
 pub const MIGRATION_017_SQL: &str = include_str!("../../migrations/017_agent_repos.sql");
+pub const MIGRATION_018_SQL: &str = include_str!("../../migrations/018_agent_step_models.sql");
+pub const MIGRATION_019_SQL: &str = include_str!("../../migrations/019_agent_followups.sql");
+pub const MIGRATION_020_SQL: &str = include_str!("../../migrations/020_agent_timeouts.sql");
+pub const MIGRATION_021_SQL: &str = include_str!("../../migrations/021_agent_pull_requests.sql");

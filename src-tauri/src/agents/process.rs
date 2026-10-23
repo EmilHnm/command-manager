@@ -3,7 +3,7 @@
 //! a cancel (the run's "Dừng ngay" or the tab's stop), taking the CLI's
 //! child processes with it.
 
-use super::adapter::{child_path, Cli, LogLine, Outcome, Parser};
+use super::adapter::{child_path, Cli, LogLine, Outcome, Parser, Quota};
 use super::log::AgentLog;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -16,6 +16,12 @@ use tokio::sync::watch;
 
 const STDERR_TAIL: usize = 20;
 
+pub fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
 pub struct Spawn<'a> {
     pub cli: Cli,
     pub program: &'a Path,
@@ -24,6 +30,10 @@ pub struct Spawn<'a> {
     pub timeout: Duration,
     /// Every stdout line as received, for diagnosing a CLI.
     pub raw_log: Option<PathBuf>,
+    /// Stop once a usage-limit window of the account is this full (0..1).
+    pub quota_limit: Option<f64>,
+    /// Set for the CLI and every command it runs.
+    pub env: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +41,25 @@ pub enum RunError {
     Cancelled,
     TimedOut,
     Failed(String),
+    /// The account's usage limit reached the run's threshold.
+    Quota(Quota),
+}
+
+/// A process that did not finish, and what it had reported until then
+/// (its session, to continue it later).
+#[derive(Debug)]
+pub struct Stopped {
+    pub error: RunError,
+    pub partial: Box<Outcome>,
+}
+
+impl From<RunError> for Stopped {
+    fn from(error: RunError) -> Self {
+        Self {
+            error,
+            partial: Box::default(),
+        }
+    }
 }
 
 impl std::fmt::Display for RunError {
@@ -39,6 +68,14 @@ impl std::fmt::Display for RunError {
             Self::Cancelled => write!(f, "Đã dừng"),
             Self::TimedOut => write!(f, "Hết thời gian"),
             Self::Failed(message) => write!(f, "{message}"),
+            Self::Quota(quota) => match quota.fullest() {
+                Some((name, window)) => write!(
+                    f,
+                    "Hạn mức {name} đã dùng {:.0}%",
+                    window.utilization * 100.0
+                ),
+                None => write!(f, "Đã chạm hạn mức sử dụng"),
+            },
         }
     }
 }
@@ -47,12 +84,18 @@ pub async fn run(
     spawn: Spawn<'_>,
     log: &AgentLog,
     mut stop: watch::Receiver<bool>,
-) -> Result<Outcome, RunError> {
+) -> Result<Outcome, Stopped> {
     let mut cmd = Command::new(spawn.program);
     cmd.args(&spawn.args)
         .current_dir(spawn.cwd)
         .env("PATH", child_path(spawn.program))
         .env("NO_COLOR", "1")
+        .envs(
+            spawn
+                .env
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -60,10 +103,10 @@ pub async fn run(
     #[cfg(unix)]
     cmd.process_group(0);
     let mut child = cmd.spawn().map_err(|error| {
-        RunError::Failed(format!(
+        Stopped::from(RunError::Failed(format!(
             "Không chạy được {}: {error}",
             spawn.program.display()
-        ))
+        )))
     })?;
     let pid = child.id();
 
@@ -102,6 +145,12 @@ pub async fn run(
                     for entry in parser.feed(&line) {
                         log.line(&entry);
                     }
+                    let full = parser.outcome.quota.as_ref().filter(|quota| {
+                        quota.rejected || quota.blocking(spawn.quota_limit, unix_now()).is_some()
+                    });
+                    if let Some(quota) = full {
+                        break Some(RunError::Quota(quota.clone()));
+                    }
                 }
                 _ => break None,
             },
@@ -124,7 +173,10 @@ pub async fn run(
         if let Some(task) = stderr_task {
             task.abort();
         }
-        return Err(error);
+        return Err(Stopped {
+            error,
+            partial: Box::new(parser.finish()),
+        });
     }
     let status = child.wait().await;
     if let Some(task) = stderr_task {
@@ -193,7 +245,7 @@ pub async fn run_shell(
     cwd: &Path,
     timeout: Duration,
     log: &AgentLog,
-    mut stop: watch::Receiver<bool>,
+    stop: watch::Receiver<bool>,
 ) -> Result<(bool, Option<i32>, String), RunError> {
     let mut cmd = if cfg!(windows) {
         let mut cmd = Command::new("cmd");
@@ -204,10 +256,41 @@ pub async fn run_shell(
         cmd.args(["-c", command]);
         cmd
     };
+    cmd.env("CI", "1");
+    watch_output(cmd, command, cwd, timeout, log, stop).await
+}
+
+/// Runs `program` with `args` (no shell), output to the log like a check.
+pub async fn run_program(
+    program: &Path,
+    args: &[String],
+    cwd: &Path,
+    timeout: Duration,
+    log: &AgentLog,
+    stop: watch::Receiver<bool>,
+) -> Result<(bool, Option<i32>, String), RunError> {
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    let what = program.file_name().map_or_else(
+        || program.to_string_lossy().into_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    watch_output(cmd, &what, cwd, timeout, log, stop).await
+}
+
+/// Runs a prepared command, its stdout and stderr to the log; the end of
+/// the output is returned.
+async fn watch_output(
+    mut cmd: Command,
+    command: &str,
+    cwd: &Path,
+    timeout: Duration,
+    log: &AgentLog,
+    mut stop: watch::Receiver<bool>,
+) -> Result<(bool, Option<i32>, String), RunError> {
     // Same PATH as the agents: a desktop-started app may lack ~/.local/bin.
     cmd.current_dir(cwd)
         .env("PATH", child_path(Path::new("")))
-        .env("CI", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -296,6 +379,8 @@ echo '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":1}}'"#,
                 cwd: dir.path(),
                 timeout: Duration::from_secs(10),
                 raw_log: Some(dir.path().join("raw.jsonl")),
+                quota_limit: None,
+                env: Vec::new(),
             },
             &log,
             rx,
@@ -325,6 +410,8 @@ echo '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":1}}'"#,
                 cwd: dir.path(),
                 timeout: Duration::from_secs(10),
                 raw_log: None,
+                quota_limit: None,
+                env: Vec::new(),
             },
             &log,
             rx,
@@ -358,12 +445,17 @@ echo '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":1}}'"#,
                 cwd: dir.path(),
                 timeout: Duration::from_secs(20),
                 raw_log: None,
+                quota_limit: None,
+                env: Vec::new(),
             },
             &log,
             rx,
         )
         .await;
-        assert_eq!(result, Err(RunError::Cancelled));
+        assert_eq!(
+            result.map_err(|stopped| stopped.error),
+            Err(RunError::Cancelled)
+        );
         assert!(started.elapsed() < Duration::from_secs(5));
         let _tx = stopper.await.unwrap();
 

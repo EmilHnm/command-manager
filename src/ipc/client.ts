@@ -3,11 +3,16 @@ import type {
   AgentProject,
   AgentProjectView,
   AgentRun,
+  CheckProposal,
   CliInfo,
+  ModelInfo,
+  PrRequest,
+  Verification,
   CliProfile,
   DiffStat,
   NewRunInput,
   ProjectSettings,
+  RoleCli,
   RunDetail,
   RunLimits,
   RunSummary,
@@ -1949,8 +1954,13 @@ export const ipcClient = {
   agentsRunSetLimits: (runId: string, limits: RunLimits) =>
     invokeTauri<void>('agents_run_set_limits', { run_id: runId, limits }),
 
-  agentsPlanApprove: (runId: string, design: string, contract: string, tasks: TaskDraft[]) =>
-    invokeTauri<void>('agents_plan_approve', { run_id: runId, design, contract, tasks }),
+  agentsPlanApprove: (
+    runId: string,
+    design: string,
+    contract: string,
+    tasks: TaskDraft[],
+    checks: CheckProposal[] = []
+  ) => invokeTauri<void>('agents_plan_approve', { run_id: runId, design, contract, tasks, checks }),
 
   agentsPlanRevise: (runId: string, design: string, feedback: string) =>
     invokeTauri<void>('agents_plan_revise', { run_id: runId, design, feedback }),
@@ -1958,6 +1968,57 @@ export const ipcClient = {
   agentsRunMerge: (runId: string) => invokeTauri<void>('agents_run_merge', { run_id: runId }),
 
   agentsRunKeep: (runId: string) => invokeTauri<void>('agents_run_keep', { run_id: runId }),
+
+  agentsRunVerifyPrs: (runId: string) =>
+    invokeTauri<Verification>('agents_run_verify_prs', { run_id: runId }),
+
+  agentsPrDraft: (runId: string) => invokeTauri<PrRequest>('agents_pr_draft', { run_id: runId }),
+
+  agentsRunAttachPr: (
+    runId: string,
+    attach: { repo: string; url: string; branch: string | null; base: string | null }
+  ) => invokeTauri<AgentRun>('agents_run_attach_pr', { run_id: runId, attach }),
+
+  agentsRunOpenPrs: (runId: string, request: PrRequest) =>
+    invokeTauri<AgentRun>('agents_run_open_prs', { run_id: runId, request }),
+
+  agentsRunSetModels: (
+    runId: string,
+    leader: { model: string | null; effort: string | null },
+    roles: RoleCli[]
+  ) =>
+    invokeTauri<void>('agents_run_set_models', {
+      run_id: runId,
+      leader_model: leader.model,
+      leader_effort: leader.effort,
+      roles,
+    }),
+
+  agentsTasksReassign: (
+    runId: string,
+    taskIds: string[],
+    cli: AgentCli,
+    model: string | null,
+    effort: string | null,
+    timeoutMinutes: number | null = null
+  ) =>
+    invokeTauri<void>('agents_tasks_reassign', {
+      run_id: runId,
+      task_ids: taskIds,
+      cli,
+      model,
+      effort,
+      timeout_minutes: timeoutMinutes,
+    }),
+
+  agentsModels: (cli: AgentCli, refresh = false) =>
+    invokeTauri<ModelInfo[]>('agents_models', { cli, refresh }),
+
+  agentsTaskSetTimeout: (taskId: string, timeoutMinutes: number | null) =>
+    invokeTauri<void>('agents_task_set_timeout', { task_id: taskId, timeout_minutes: timeoutMinutes }),
+
+  agentsRunFollowUp: (runId: string, request: string) =>
+    invokeTauri<void>('agents_run_follow_up', { run_id: runId, request }),
 
   agentsRunDiscard: (runId: string) => invokeTauri<void>('agents_run_discard', { run_id: runId }),
 
@@ -1972,8 +2033,10 @@ export const ipcClient = {
 
   agentsTaskSkip: (taskId: string) => invokeTauri<void>('agents_task_skip', { task_id: taskId }),
 
-  agentsTaskReassign: (taskId: string, cli: AgentCli) =>
-    invokeTauri<void>('agents_task_reassign', { task_id: taskId, cli }),
+  agentsTaskRereview: (taskId: string) => invokeTauri<void>('agents_task_rereview', { task_id: taskId }),
+
+  agentsTaskReassign: (taskId: string, cli: AgentCli, model?: string | null, effort?: string | null) =>
+    invokeTauri<void>('agents_task_reassign', { task_id: taskId, cli, model: model || null, effort: effort || null }),
 
   agentsTaskRequestFix: (taskId: string, feedback: string) =>
     invokeTauri<void>('agents_task_request_fix', { task_id: taskId, feedback }),

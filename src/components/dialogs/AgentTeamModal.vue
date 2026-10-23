@@ -51,11 +51,30 @@
                 ✓ {{ infoOf(draft.cli)?.version || 'đã cài' }}
               </span>
               <span v-else class="cli-version missing-text">Chưa cài ({{ binaries[draft.cli] }})</span>
+              <button
+                v-if="infoOf(draft.cli)?.path"
+                type="button"
+                class="btn btn-ghost btn-xs models-btn"
+                :disabled="loading[draft.cli]"
+                :title="modelErrors[draft.cli] || 'Đọc lại danh sách model từ CLI'"
+                @click="loadModels(draft.cli, true)"
+              >
+                <RefreshCw :size="11" :class="{ spin: loading[draft.cli] }" />
+                {{ modelErrors[draft.cli] ? 'lỗi đọc model' : `${modelsOf(draft.cli).length} model` }}
+              </button>
             </div>
+            <datalist :id="`team-models-${draft.cli}`">
+              <option v-for="item in modelsOf(draft.cli)" :key="item.id" :value="item.id">{{ item.label }}</option>
+            </datalist>
             <div class="cli-grid">
               <label class="field">
                 <span class="field-label">Model</span>
-                <input v-model="draft.model" class="field-input font-mono" placeholder="mặc định của CLI" />
+                <input
+                  v-model="draft.model"
+                  class="field-input font-mono"
+                  :list="`team-models-${draft.cli}`"
+                  placeholder="mặc định của CLI"
+                />
               </label>
               <label class="field">
                 <span class="field-label">Effort</span>
@@ -68,6 +87,22 @@
                 <span class="field-label">Tham số thêm (cách nhau bởi dấu cách)</span>
                 <input v-model="draft.extraArgs" class="field-input font-mono" :placeholder="extraHint[draft.cli]" />
               </label>
+            </div>
+            <div class="steps">
+              <span class="field-label">Theo bước — để trống thì dùng Model / Effort ở trên. Model rẻ hơn cho viết code và review tiết kiệm nhiều hạn mức.</span>
+              <div v-for="phase in PHASES" :key="phase" class="step-row">
+                <span class="step-name">{{ PHASE_LABELS[phase] }}</span>
+                <input
+                  v-model="draft.steps[phase].model"
+                  :list="`team-models-${draft.cli}`"
+                  class="field-input font-mono"
+                  :placeholder="draft.model ? `như trên (${draft.model})` : 'mặc định của CLI'"
+                />
+                <select v-model="draft.steps[phase].effort" class="field-input" :disabled="draft.cli === 'cursor'">
+                  <option value="">{{ draft.effort ? `như trên (${draft.effort})` : 'mặc định' }}</option>
+                  <option v-for="level in EFFORTS" :key="level" :value="level">{{ level }}</option>
+                </select>
+              </div>
             </div>
             <label class="bypass-row" :class="{ on: draft.bypass }">
               <input v-model="draft.bypass" type="checkbox" />
@@ -119,6 +154,17 @@
                 placeholder="cargo test&#10;pnpm build"
               ></textarea>
             </label>
+            <label class="field field-narrow">
+              <span class="field-label">Timeout mỗi lệnh chuẩn bị / kiểm tra (phút)</span>
+              <input
+                v-model.number="repo.check_timeout"
+                type="number"
+                min="1"
+                :max="MAX_TIMEOUT_MINUTES"
+                class="field-input font-mono"
+                :placeholder="`${CHECK_TIMEOUT_MINUTES} (mặc định)`"
+              />
+            </label>
           </div>
           <label class="field">
             <span class="field-label">Ghi chú cho mọi agent (thêm vào prompt)</span>
@@ -155,10 +201,20 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from 'vue';
 import { Bot, FolderGit2, RefreshCw, Save, Users, X } from 'lucide-vue-next';
-import type { AgentCli, AgentProjectView, CliInfo, CliProfile } from '@/types/agents';
-import { AGENT_CLIS, AGENT_CLI_LABELS, repoLabel } from '@/types/agents';
+import type { AgentCli, AgentPhase, AgentProjectView, CliInfo, CliProfile, StepModel } from '@/types/agents';
+import {
+  AGENT_CLIS,
+  AGENT_CLI_LABELS,
+  CHECK_TIMEOUT_MINUTES,
+  MAX_TIMEOUT_MINUTES,
+  PHASE_LABELS,
+  repoLabel,
+} from '@/types/agents';
 import { ipcClient } from '@/ipc/client';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
+import { useAgentModels } from '@/composables/useAgentModels';
+
+const { modelsOf, load: loadModels, loading, errors: modelErrors } = useAgentModels();
 
 const props = defineProps<{
   visible: boolean;
@@ -175,6 +231,7 @@ const emit = defineEmits<{
 }>();
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const PHASES: AgentPhase[] = ['lead', 'work', 'review'];
 
 const binaries: Record<AgentCli, string> = {
   claude: 'claude',
@@ -203,7 +260,15 @@ interface CliDraft {
   effort: string;
   extraArgs: string;
   bypass: boolean;
+  steps: Record<AgentPhase, { model: string; effort: string }>;
 }
+
+const stepDraft = (step?: StepModel) => ({ model: step?.model ?? '', effort: step?.effort ?? '' });
+
+const stepValue = (step: { model: string; effort: string }): StepModel => ({
+  model: step.model.trim() || null,
+  effort: step.effort || null,
+});
 
 const tab = ref<'cli' | 'project'>('cli');
 const drafts = ref<CliDraft[]>([]);
@@ -212,6 +277,8 @@ interface RepoDraft {
   base_branch: string;
   setup_cmd: string;
   checks: string;
+  /** '' (empty input): the default. */
+  check_timeout: number | '';
 }
 
 const projectDraft = reactive({ notes: '' });
@@ -239,6 +306,11 @@ const load = () => {
       effort: profile?.effort ?? '',
       extraArgs: joinArgs(profile?.extra_args ?? []),
       bypass: profile?.bypass_permissions ?? false,
+      steps: {
+        lead: stepDraft(profile?.steps?.lead),
+        work: stepDraft(profile?.steps?.work),
+        review: stepDraft(profile?.steps?.review),
+      },
     };
   });
   const project = props.project;
@@ -247,6 +319,7 @@ const load = () => {
     base_branch: repo.base_branch ?? '',
     setup_cmd: repo.setup_cmd ?? '',
     checks: repo.check_cmds.join('\n'),
+    check_timeout: repo.check_timeout_minutes ?? '',
   }));
   projectDraft.notes = project?.notes ?? '';
 };
@@ -309,6 +382,11 @@ function writeCli(draft: CliDraft) {
       effort: draft.effort || null,
       bypass_permissions: draft.bypass,
       extra_args: splitArgs(draft.extraArgs),
+      steps: {
+        lead: stepValue(draft.steps.lead),
+        work: stepValue(draft.steps.work),
+        review: stepValue(draft.steps.review),
+      },
     });
     emit('saved-cli', profile);
   }, `Đã lưu ${draft.cli}`);
@@ -324,6 +402,7 @@ function saveProject() {
         base_branch: repo.base_branch.trim() || null,
         setup_cmd: repo.setup_cmd.trim() || null,
         check_cmds: repo.checks.split('\n').map((line) => line.trim()).filter(Boolean),
+        check_timeout_minutes: typeof repo.check_timeout === 'number' && repo.check_timeout > 0 ? repo.check_timeout : null,
       })),
       notes: projectDraft.notes.trim() || null,
     });
@@ -507,6 +586,34 @@ function saveProject() {
   display: grid;
   grid-template-columns: 1fr 140px;
   gap: 8px;
+}
+
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.models-btn {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.field-narrow {
+  max-width: 280px;
+}
+
+.step-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 140px;
+  gap: 8px;
+  align-items: center;
+}
+
+.step-name {
+  font-size: 12px;
+  color: var(--text-secondary, #94a3b8);
 }
 
 .field {

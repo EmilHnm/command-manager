@@ -47,6 +47,16 @@
               <Code2 :size="13" />
               <span>API Contract / Types</span>
             </button>
+            <button
+              v-if="checkDrafts.length > 0"
+              type="button"
+              class="spec-tab"
+              :class="{ active: activeSpecTab === 'checks' }"
+              @click="activeSpecTab = 'checks'"
+            >
+              <ShieldCheck :size="13" />
+              <span>Lệnh kiểm tra ({{ checkDrafts.filter((c) => c.use).length }}/{{ checkDrafts.length }})</span>
+            </button>
           </div>
 
           <div class="spec-editor-wrap">
@@ -56,6 +66,27 @@
               class="spec-textarea font-mono custom-scrollbar"
               placeholder="Tài liệu thiết kế kiến trúc..."
             ></textarea>
+            <div v-else-if="activeSpecTab === 'checks'" class="checks-pane custom-scrollbar">
+              <p class="checks-hint">
+                Leader đề xuất từ quy tắc của dự án (AGENTS.md, skill, CI) cho repo chưa có lệnh kiểm tra. Lệnh được
+                duyệt sẽ lưu vào thiết lập dự án và chạy trên máy này, trong worktree của từng task. Chỉ giữ lệnh bạn
+                tin.
+              </p>
+              <div v-for="check in checkDrafts" :key="check.repo" class="check-card">
+                <label class="check-head">
+                  <input v-model="check.use" type="checkbox" />
+                  <span class="font-mono">{{ check.repo === '.' ? 'repo' : check.repo }}</span>
+                </label>
+                <label class="check-field">
+                  <span>Lệnh chuẩn bị worktree</span>
+                  <input v-model="check.setup" class="check-input font-mono" :disabled="!check.use" placeholder="(không có)" />
+                </label>
+                <label class="check-field">
+                  <span>Lệnh kiểm tra (mỗi dòng một lệnh)</span>
+                  <textarea v-model="check.commands" rows="3" class="check-input font-mono" :disabled="!check.use"></textarea>
+                </label>
+              </div>
+            </div>
             <textarea
               v-else
               v-model="apiContract"
@@ -250,8 +281,9 @@ import {
   XCircle,
   RotateCcw,
   Check,
+  ShieldCheck,
 } from 'lucide-vue-next';
-import type { AgentCli, CliInfo, RunDetail, TaskDraft } from '@/types/agents';
+import type { AgentCli, CheckProposal, CliInfo, RunDetail, TaskDraft } from '@/types/agents';
 import { AGENT_CLIS, isMultiRepo } from '@/types/agents';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 
@@ -259,7 +291,7 @@ const props = defineProps<{
   visible: boolean;
   detail: RunDetail | null;
   clis: CliInfo[];
-  approve: (data: { design: string; contract: string; tasks: TaskDraft[] }) => Promise<void>;
+  approve: (data: { design: string; contract: string; tasks: TaskDraft[]; checks: CheckProposal[] }) => Promise<void>;
   revise: (data: { design: string; feedback: string }) => Promise<void>;
   discard: () => Promise<void>;
 }>();
@@ -268,7 +300,23 @@ const emit = defineEmits<{
   (e: 'close'): void;
 }>();
 
-const activeSpecTab = ref<'design' | 'contract'>('design');
+const activeSpecTab = ref<'design' | 'contract' | 'checks'>('design');
+
+/** The leader's check proposals as the user edits them. */
+const checkDrafts = ref<{ repo: string; use: boolean; setup: string; commands: string }[]>([]);
+
+const approvedChecks = (): CheckProposal[] =>
+  checkDrafts.value
+    .filter((check) => check.use)
+    .map((check) => ({
+      repo: check.repo,
+      setup: check.setup.trim(),
+      commands: check.commands
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean),
+    }))
+    .filter((check) => check.commands.length > 0);
 const selectedTaskKey = ref('');
 const feedbackText = ref('');
 const designDoc = ref('');
@@ -293,8 +341,17 @@ watch(
   () => props.visible,
   (visible) => {
     if (!visible || !props.detail) return;
-    const { run, tasks: planned } = props.detail;
+    const { run } = props.detail;
+    // Delivered batches are done; the gate is about the current one.
+    const planned = props.detail.tasks.filter((task) => task.batch === run.followups.length);
     designDoc.value = run.design_md ?? '';
+    checkDrafts.value = run.suggested_checks.map((check) => ({
+      repo: check.repo,
+      use: true,
+      setup: check.setup,
+      commands: check.commands.join('\n'),
+    }));
+    activeSpecTab.value = 'design';
     apiContract.value = run.contract ?? '';
     tasks.value = planned.map((task) => ({
       key: task.key,
@@ -405,7 +462,12 @@ async function act(action: () => Promise<void>) {
 function handleApprove() {
   if (planError.value) return;
   void act(() =>
-    props.approve({ design: designDoc.value, contract: apiContract.value, tasks: tasks.value })
+    props.approve({
+      design: designDoc.value,
+      contract: apiContract.value,
+      tasks: tasks.value,
+      checks: approvedChecks(),
+    })
   );
 }
 
@@ -568,6 +630,57 @@ async function discardConfirmed() {
   flex: 1;
   min-height: 0;
   padding: 10px;
+}
+
+.checks-pane {
+  height: 100%;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.checks-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary, #94a3b8);
+}
+
+.check-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-subtle, #242a3e);
+  border-radius: 6px;
+}
+
+.check-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.check-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted, #64748b);
+}
+
+.check-input {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-primary, #f1f5f9);
+  background-color: var(--bg-app-base, #0f1117);
+  border: 1px solid var(--border-subtle, #242a3e);
+  border-radius: 4px;
+  resize: vertical;
 }
 
 .spec-textarea {

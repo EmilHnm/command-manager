@@ -2,7 +2,7 @@
 //! design → plan → gate 1 → implement / check / review / fix → merge.
 
 use super::adapter::Cli;
-use super::engine::{AgentEnv, Engine, NewRun};
+use super::engine::{AgentEnv, AttachPr, Engine, NewRun};
 use super::git;
 use super::log::AgentLog;
 use crate::db::repos::agents::{
@@ -28,24 +28,48 @@ case "$last" in
   *"lead reviewer"*)
     out '{"type":"system","subtype":"init","session_id":"rev"}'
     verdict=approved
+    if [ -f "$here/picky" ]; then verdict=changes_requested; fi
     case "$last" in *'Task `b`'*)
       if [ ! -f "$here/reviewed-b" ]; then touch "$here/reviewed-b"; verdict=changes_requested; fi;;
     esac
     out '{"type":"result","subtype":"success","is_error":false,"session_id":"rev","result":"","structured_output":{"verdict":"'$verdict'","summary":"s","comments":[{"file":"b.txt","line":1,"issue":"more","severity":"must"}]}}'
     ;;
+  *"follow-up request"*)
+    out '{"type":"system","subtype":"init","session_id":"lead"}'
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"lead","result":"","structured_output":{"contract":"fn more()","tasks":[{"key":"c","title":"Task C","role":"backend","repos":'"$repos"',"description":"write c","acceptance":["c.txt"],"scope":["c.txt"],"depends_on":["a"]}]}}'
+    ;;
   *"split the work"*|*"could not be used"*)
     out '{"type":"system","subtype":"init","session_id":"lead"}'
-    out '{"type":"result","subtype":"success","is_error":false,"session_id":"lead","result":"","structured_output":{"contract":"fn work()","tasks":[{"key":"a","title":"Task A","role":"backend","repos":'"$repos"',"description":"write a","acceptance":["a.txt"],"scope":["a.txt"],"depends_on":[]},{"key":"b","title":"Task B","role":"backend","repos":'"$repos"',"description":"write b","acceptance":["b.txt"],"scope":["b.txt"],"depends_on":["a"]}]}}'
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"lead","result":"","structured_output":{"contract":"fn work()","checks":[{"repo":".","setup":" ","commands":["test -f README"," "]}],"tasks":[{"key":"a","title":"Task A","role":"backend","repos":'"$repos"',"description":"write a","acceptance":["a.txt"],"scope":["a.txt"],"depends_on":[]},{"key":"b","title":"Task B","role":"backend","repos":'"$repos"',"description":"write b","acceptance":["b.txt"],"scope":["b.txt"],"depends_on":["a"]}]}}'
+    ;;
+  *"cut short"*)
+    out '{"type":"system","subtype":"init","session_id":"'$resume'"}'
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"'$resume'","result":"Design resumed"}'
     ;;
   *"lead architect"*|*"reviewed your design"*)
+    printf '%s\n' "$*" >> "$here/args-lead"
     out '{"type":"system","subtype":"init","session_id":"lead"}'
+    if [ -f "$here/quota" ]; then
+      resets=$(( $(date +%s) + 2 ))
+      out '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":0.9,"resetsAt":'$resets'},"seven_day":{"utilization":0.3,"resetsAt":'$resets'}}}}'
+      sleep 20
+    fi
     out '{"type":"result","subtype":"success","is_error":false,"session_id":"lead","result":"Design OK"}'
     ;;
   *)
     key=""
-    case "$last" in *'Task `a`'*) key=a;; *'Task `b`'*) key=b;; esac
+    case "$last" in *'Task `a`'*) key=a;; *'Task `b`'*) key=b;; *'Task `c`'*) key=c;; esac
     if [ -z "$key" ]; then key=${resume#w-}; fi
+    printf '%s\n' "$last" >> "$here/prompts-$key"
+    printf '%s\n' "$*" >> "$here/args-$key"
+    printf '%s\n' "$GIT_CONFIG_KEY_0" > "$here/env-$key"
     out '{"type":"system","subtype":"init","session_id":"w-'$key'"}'
+    # A resumed session reports its whole cost so far.
+    cost=0.01
+    if [ -n "$resume" ]; then cost=0.03; fi
+    if [ -n "$resume" ] && [ -f "$here/lazy-fix" ]; then
+      touch "$here/lazy-$key"
+    fi
     if [ ! -f "$here/lazy-$key" ]; then
       # Every repo of the workspace: the folder itself, or its sub-folders.
       for d in . */; do
@@ -53,7 +77,7 @@ case "$last" in
       done
     fi
     out '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"'$key'.txt"}}]}}'
-    out '{"type":"result","subtype":"success","is_error":false,"session_id":"w-'$key'","result":"done","usage":{"input_tokens":10,"output_tokens":2},"total_cost_usd":0.01}'
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"w-'$key'","result":"done","usage":{"input_tokens":10,"output_tokens":2},"total_cost_usd":'$cost'}'
     ;;
 esac
 "#;
@@ -76,6 +100,10 @@ impl AgentEnv for FakeEnv {
 
     fn find_cli(&self, _cli: Cli) -> Option<PathBuf> {
         Some(self.cli.clone())
+    }
+
+    fn find_gh(&self) -> Option<PathBuf> {
+        Some(self.dir.join("cli/gh"))
     }
 
     fn open_log(&self, id: &str, _title: &str) -> Arc<AgentLog> {
@@ -157,9 +185,13 @@ fn new_run(project_id: &str, plan_gate: bool) -> NewRun {
         request: "Thêm a và b".into(),
         title: None,
         leader_cli: "claude".into(),
+        leader_model: Some("lead-model".into()),
+        leader_effort: None,
         roles: vec![RoleCli {
             role: "Backend".into(),
             cli: "claude".into(),
+            model: Some(" role-model ".into()),
+            ..Default::default()
         }],
         plan_gate,
         merge_gate: true,
@@ -236,6 +268,7 @@ async fn a_run_goes_from_design_to_a_merge_in_the_base_branch() {
             "Design OK (edited)".into(),
             "fn work()".into(),
             drafts,
+            Vec::new(),
         )
         .unwrap();
     idle(&s.engine, &run.id).await;
@@ -398,6 +431,8 @@ async fn real_clis_answer_review_json() {
                 schema: Some(&schema),
                 schema_file: (cli != Cli::Claude).then_some(schema_file.as_path()),
                 profile: &profile,
+                budget_usd: None,
+                extra_dirs: &[],
             },
         );
         let log = AgentLog::new("real".into(), 256 * 1024, None);
@@ -410,6 +445,8 @@ async fn real_clis_answer_review_json() {
                 cwd: dir.path(),
                 timeout: Duration::from_secs(180),
                 raw_log: Some(dir.path().join(format!("{}.jsonl", cli.as_str()))),
+                quota_limit: None,
+                env: Vec::new(),
             },
             &log,
             stop,
@@ -424,7 +461,7 @@ async fn real_clis_answer_review_json() {
                 outcome.input_tokens,
                 outcome.output_tokens
             ),
-            Err(error) => eprintln!("{cli:?}: {error}"),
+            Err(stopped) => eprintln!("{cli:?}: {}", stopped.error),
         }
     }
 }
@@ -521,4 +558,805 @@ async fn a_folder_of_repos_works_repo_by_repo() {
         s.engine.detail(&run.id).unwrap().run.status,
         run_status::MERGED
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failing_checks_go_back_to_the_worker_without_a_review() {
+    // Passes once the worker has written a.txt twice (implement + fix).
+    let s = setup(&["test ! -f a.txt || [ $(wc -l < a.txt) -ge 2 ]"]).await;
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::MERGE_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+    let a = &detail.tasks[0];
+    assert_eq!(a.status, task_status::MERGED);
+    assert_eq!(a.round, 1);
+    let steps: Vec<&str> = detail
+        .invocations
+        .iter()
+        .filter(|i| i.task_id.as_deref() == Some(a.id.as_str()))
+        .map(|i| i.step.as_str())
+        .collect();
+    // No review of the failing round.
+    assert_eq!(steps, vec!["implement", "fix", "review"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_usage_limit_pauses_and_the_step_goes_on_in_its_session() {
+    let s = setup(&[]).await;
+    std::fs::write(s.cli_dir.join("quota"), "").unwrap();
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, true))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(detail.run.stage, stage::DESIGN);
+    assert_eq!(detail.run.status, run_status::PAUSED);
+    let note = detail.run.status_note.clone().unwrap_or_default();
+    assert!(note.contains("5 giờ") && note.contains("90%"), "{note}");
+    assert!(detail.resume_at.is_some());
+    assert!(detail.quotas.contains_key("claude"));
+    let cut = &detail.invocations[0];
+    assert!(cut.resumable, "{cut:?}");
+    assert_eq!(cut.session_id.as_deref(), Some("lead"));
+
+    // The window has reset: going on continues the same session.
+    std::fs::remove_file(s.cli_dir.join("quota")).unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    s.engine.resume(&run.id).unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::PLAN_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+    assert_eq!(detail.run.design_md.as_deref(), Some("Design resumed"));
+    assert!(detail.resume_at.is_none());
+    let design: Vec<_> = detail
+        .invocations
+        .iter()
+        .filter(|i| i.step == "design")
+        .collect();
+    assert_eq!(design.len(), 2);
+    assert_eq!(design[1].session_id.as_deref(), Some("lead"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn later_tasks_get_handoffs_and_a_delivered_run_takes_a_follow_up() {
+    let s = setup(&[]).await;
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::MERGE_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+    // a's worker left its note; b's worker got it.
+    let a = &detail.tasks[0];
+    assert_eq!(a.handoff.as_deref(), Some("done\nFiles changed: a.txt"));
+    let b_prompts = std::fs::read_to_string(s.cli_dir.join("prompts-b")).unwrap();
+    assert!(b_prompts.contains("Notes from teammates"), "{b_prompts}");
+    assert!(b_prompts.contains("### `a` — Task A\ndone\nFiles changed: a.txt"));
+    let a_prompts = std::fs::read_to_string(s.cli_dir.join("prompts-a")).unwrap();
+    assert!(!a_prompts.contains("Notes from teammates"));
+    // Models picked for the run beat the profile's (claude: Sonnet for work).
+    let lead_args = std::fs::read_to_string(s.cli_dir.join("args-lead")).unwrap();
+    assert!(lead_args.contains("--model lead-model"), "{lead_args}");
+    let a_args = std::fs::read_to_string(s.cli_dir.join("args-a")).unwrap();
+    assert!(a_args.contains("--model role-model"), "{a_args}");
+    assert!(!a_args.contains("sonnet"), "{a_args}");
+
+    // Models can change while the run is not running, roles stay.
+    s.engine
+        .set_models(
+            &run.id,
+            Some("lead-2".into()),
+            Some(" ".into()),
+            vec![RoleCli {
+                role: "backend".into(),
+                cli: "codex".into(),
+                model: Some("role-2".into()),
+                effort: Some("low".into()),
+            }],
+        )
+        .unwrap();
+    let changed = s.engine.detail(&run.id).unwrap().run;
+    assert_eq!(changed.leader_model.as_deref(), Some("lead-2"));
+    assert_eq!(changed.leader_effort, None);
+    assert_eq!(changed.roles[0].cli, "claude");
+    assert_eq!(changed.roles[0].model.as_deref(), Some("role-2"));
+    assert!(s
+        .engine
+        .set_models(
+            &run.id,
+            None,
+            None,
+            vec![RoleCli {
+                role: "qa".into(),
+                ..Default::default()
+            }]
+        )
+        .is_err());
+
+    // Only delivered runs go on.
+    assert!(s.engine.follow_up(&run.id, "x".into()).await.is_err());
+    s.engine.merge_into_base(&run.id).await.unwrap();
+    // Someone commits on the base branch after the merge.
+    std::fs::write(s.repo.join("later.txt"), "x\n").unwrap();
+    git::commit_all(&s.repo, "later").await.unwrap();
+    let head = git::commit_of(&s.repo, "main").await.unwrap();
+
+    s.engine
+        .follow_up(&run.id, "Reviewer: thêm c".into())
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::MERGE_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+    assert_eq!(detail.run.followups.len(), 1);
+    assert_eq!(detail.run.repos[0].base_commit, head);
+    assert_eq!(
+        detail.run.contract.as_deref(),
+        Some("fn work()\n\n## Follow-up 1\nfn more()")
+    );
+    let keys: Vec<(&str, u32, &str)> = detail
+        .tasks
+        .iter()
+        .map(|t| (t.key.as_str(), t.batch, t.status.as_str()))
+        .collect();
+    assert_eq!(
+        keys,
+        vec![
+            ("a", 0, task_status::MERGED),
+            ("b", 0, task_status::MERGED),
+            ("c", 1, task_status::MERGED)
+        ]
+    );
+    // The dependency on delivered work was dropped.
+    assert!(detail.tasks[2].depends_on.is_empty());
+    // The follow-up plan ran with the new leader model, c with the role's.
+    let lead_args = std::fs::read_to_string(s.cli_dir.join("args-c")).unwrap();
+    assert!(lead_args.contains("--model role-2"), "{lead_args}");
+    let c_prompts = std::fs::read_to_string(s.cli_dir.join("prompts-c")).unwrap();
+    assert!(c_prompts.contains("### `b` — Task B"), "{c_prompts}");
+    // The leader planned it in its own session.
+    let plan = detail
+        .invocations
+        .iter()
+        .rev()
+        .find(|i| i.step == "plan")
+        .unwrap();
+    assert_eq!(plan.session_id.as_deref(), Some("lead"));
+
+    // Only the follow-up's work is merged this time, on top of the new base.
+    s.engine.merge_into_base(&run.id).await.unwrap();
+    assert!(s.repo.join("c.txt").exists());
+    assert!(s.repo.join("later.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(s.repo.join("a.txt")).unwrap(),
+        "work\n"
+    );
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(detail.run.status, run_status::MERGED);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_tasks_are_handed_over_together() {
+    let s = setup(&[]).await;
+    std::fs::write(s.cli_dir.join("lazy-a"), "").unwrap();
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    let a = detail.tasks[0].clone();
+    assert_eq!(a.status, task_status::FAILED, "{a:?}");
+
+    // Nothing changes when one of them cannot be handed over.
+    assert!(s
+        .engine
+        .reassign_tasks(&run.id, &[], "claude", None, None, None)
+        .is_err());
+    assert!(s
+        .engine
+        .reassign_tasks(
+            &run.id,
+            std::slice::from_ref(&a.id),
+            "gemini",
+            None,
+            None,
+            None
+        )
+        .is_err());
+    assert!(s
+        .engine
+        .reassign_tasks(
+            &run.id,
+            std::slice::from_ref(&a.id),
+            "claude",
+            None,
+            None,
+            Some(0)
+        )
+        .is_err());
+    assert_eq!(
+        s.engine.detail(&run.id).unwrap().tasks[0].status,
+        task_status::FAILED
+    );
+
+    std::fs::remove_file(s.cli_dir.join("lazy-a")).unwrap();
+    let ids: Vec<String> = detail.tasks.iter().map(|t| t.id.clone()).collect();
+    s.engine
+        .reassign_tasks(&run.id, &ids, "claude", Some("m2".into()), None, Some(90))
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::MERGE_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+    for task in &detail.tasks {
+        assert_eq!(task.status, task_status::MERGED, "{task:?}");
+        assert_eq!(task.model.as_deref(), Some("m2"));
+        assert_eq!(task.timeout_minutes, Some(90));
+    }
+    // A task's own timeout can change, within bounds.
+    s.engine.set_task_timeout(&a.id, None).unwrap();
+    assert!(s.engine.set_task_timeout(&a.id, Some(601)).is_err());
+    // The run's limits became the project's defaults, and follow changes.
+    let project = s
+        .env
+        .db
+        .read(|c| repo::project_get(c, &s.project_id))
+        .unwrap();
+    assert_eq!(project.limits, Some(detail.run.limits));
+    let mut limits = detail.run.limits;
+    limits.timeout_minutes = 75;
+    s.engine.set_limits(&run.id, limits).unwrap();
+    let project = s
+        .env
+        .db
+        .read(|c| repo::project_get(c, &s.project_id))
+        .unwrap();
+    assert_eq!(project.limits.unwrap().timeout_minutes, 75);
+    limits.timeout_minutes = 601;
+    assert!(s.engine.set_limits(&run.id, limits).is_err());
+    let a_args = std::fs::read_to_string(s.cli_dir.join("args-a")).unwrap();
+    // The first try ran with the role's model, the handed-over one with m2.
+    let runs: Vec<&str> = a_args.lines().filter(|l| l.starts_with("-p ")).collect();
+    assert!(runs[0].contains("--model role-model"), "{a_args}");
+    assert!(runs.last().unwrap().contains("--model m2"), "{a_args}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn project_skills_reach_the_agents_and_proposed_checks_wait_for_the_gate() {
+    let s = setup(&[]).await;
+    // The repo's own rules and skills, committed.
+    std::fs::write(s.repo.join("AGENTS.md"), "Run pnpm check.\n").unwrap();
+    let skill = s.repo.join(".claude/skills/code-review");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: code-review\ndescription: Review by the team's checklist.\n---\n",
+    )
+    .unwrap();
+    git::commit_all(&s.repo, "rules").await.unwrap();
+
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, true))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(detail.run.stage, stage::PLAN_GATE);
+    // Proposed, not applied: nothing runs before the user says so.
+    assert_eq!(detail.run.suggested_checks.len(), 1);
+    assert_eq!(
+        detail.run.suggested_checks[0].commands,
+        vec!["test -f README"]
+    );
+    assert_eq!(detail.run.suggested_checks[0].setup, "");
+    let project = s
+        .env
+        .db
+        .read(|c| repo::project_get(c, &s.project_id))
+        .unwrap();
+    assert!(project.repos[0].check_cmds.is_empty());
+
+    let drafts: Vec<TaskDraft> = detail
+        .tasks
+        .iter()
+        .map(|t| TaskDraft {
+            key: t.key.clone(),
+            title: t.title.clone(),
+            role: t.role.clone(),
+            cli: t.cli.clone(),
+            description: t.description.clone(),
+            acceptance: t.acceptance.clone(),
+            scope: t.scope.clone(),
+            depends_on: t.depends_on.clone(),
+            repos: t.repos.clone(),
+        })
+        .collect();
+    s.engine
+        .approve_plan(
+            &run.id,
+            "Design OK".into(),
+            "fn work()".into(),
+            drafts,
+            detail.run.suggested_checks.clone(),
+        )
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::MERGE_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+    assert!(detail.run.suggested_checks.is_empty());
+    let project = s
+        .env
+        .db
+        .read(|c| repo::project_get(c, &s.project_id))
+        .unwrap();
+    assert_eq!(project.repos[0].check_cmds, vec!["test -f README"]);
+    let checks = detail.tasks[0].checks.as_ref().unwrap();
+    assert!(checks[0].ok && checks[0].command.contains("test -f README"));
+
+    // Workers cannot push: every push URL is rewritten to a helper that
+    // does not exist, whatever remote or -C names it.
+    let env = std::fs::read_to_string(s.cli_dir.join("env-a")).unwrap();
+    assert!(env.contains("pushInsteadOf"), "{env}");
+    let remote = s.cli_dir.join("remote.git");
+    git::git(&s.cli_dir, &["init", "-q", "--bare", "remote.git"])
+        .await
+        .unwrap();
+    let pushed = std::process::Command::new("git")
+        .args([
+            "-C",
+            &s.repo.to_string_lossy(),
+            "push",
+            &remote.to_string_lossy(),
+            "main",
+        ])
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", env.trim())
+        .env("GIT_CONFIG_VALUE_0", "")
+        .output()
+        .unwrap();
+    assert!(!pushed.status.success());
+    assert!(git::git(&remote, &["show-ref"]).await.is_err());
+
+    // Workers are pointed at the rules and the skill.
+    let a_prompts = std::fs::read_to_string(s.cli_dir.join("prompts-a")).unwrap();
+    assert!(a_prompts.contains("- `AGENTS.md`"), "{a_prompts}");
+    assert!(a_prompts.contains(
+        "- `code-review`: Review by the team's checklist. → `.claude/skills/code-review/SKILL.md`"
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gate_two_pushes_and_opens_a_pull_request_once() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup(&[]).await;
+    let remote = s.cli_dir.join("remote.git");
+    git::git(&s.cli_dir, &["init", "-q", "--bare", "remote.git"])
+        .await
+        .unwrap();
+    git::git(
+        &s.repo,
+        &["remote", "add", "origin", &remote.to_string_lossy()],
+    )
+    .await
+    .unwrap();
+    // A gh that records its arguments and answers like the real one.
+    let gh = s.cli_dir.join("gh");
+    std::fs::write(
+        &gh,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$(dirname \"$0\")/gh-args\"\necho 'Creating pull request'\necho 'https://github.com/o/r/pull/7'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let mut draft = s.engine.pr_draft(&run.id).await.unwrap();
+    assert_eq!(draft.repos.len(), 1);
+    assert_eq!(draft.repos[0].branch, run.integration_branch);
+    assert_eq!(draft.repos[0].base, "main");
+    assert!(draft.body.contains("`a` Task A"), "{}", draft.body);
+
+    draft.repos[0].branch = "-x".into();
+    assert!(s
+        .engine
+        .open_pull_requests(&run.id, draft.clone())
+        .await
+        .is_err());
+    draft.repos[0].branch = "feat/cart".into();
+    let done = s
+        .engine
+        .open_pull_requests(&run.id, draft.clone())
+        .await
+        .unwrap();
+    assert_eq!(done.status, run_status::KEPT);
+    assert_eq!(done.stage, stage::DONE);
+    assert_eq!(done.pull_requests[0].url, "https://github.com/o/r/pull/7");
+    assert!(git::git(&remote, &["show-ref", "refs/heads/feat/cart"])
+        .await
+        .is_ok());
+    let args = std::fs::read_to_string(s.cli_dir.join("gh-args")).unwrap();
+    assert!(
+        args.contains("pr create --base main --head feat/cart --title Thêm a và b --body-file"),
+        "{args}"
+    );
+
+    // A follow-up pushes to the same branch and does not open another PR.
+    s.engine
+        .follow_up(&run.id, "Reviewer: thêm c".into())
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let draft = s.engine.pr_draft(&run.id).await.unwrap();
+    assert_eq!(draft.repos[0].branch, "feat/cart");
+    let done = s.engine.open_pull_requests(&run.id, draft).await.unwrap();
+    assert_eq!(done.pull_requests.len(), 1);
+    let args = std::fs::read_to_string(s.cli_dir.join("gh-args")).unwrap();
+    assert_eq!(args.lines().count(), 1, "{args}");
+    let pushed = git::git(&remote, &["log", "--oneline", "feat/cart"])
+        .await
+        .unwrap();
+    assert!(pushed.contains("merge c"), "{pushed}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_forced_review_takes_hand_made_changes_and_merges() {
+    let s = setup(&[]).await;
+    std::fs::write(s.cli_dir.join("lazy-a"), "").unwrap();
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let a = s.engine.detail(&run.id).unwrap().tasks[0].clone();
+    assert_eq!(a.status, task_status::FAILED);
+    // Nothing to review yet.
+    assert!(s.engine.rereview_task(&a.id).await.is_err());
+
+    // The user writes the code by hand in the task's worktree.
+    let worktree = PathBuf::from(a.worktree.clone().unwrap());
+    std::fs::write(worktree.join("a.txt"), "by hand\n").unwrap();
+    std::fs::remove_file(s.cli_dir.join("lazy-a")).unwrap();
+    s.engine.rereview_task(&a.id).await.unwrap();
+    idle(&s.engine, &run.id).await;
+
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::MERGE_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+    assert_eq!(detail.tasks[0].status, task_status::MERGED);
+    assert_eq!(
+        detail.tasks[0].last_review.as_ref().unwrap().verdict,
+        "approved"
+    );
+    // a's worker never ran again: the leader reviewed the hand-made work.
+    let a_runs = detail
+        .invocations
+        .iter()
+        .filter(|i| i.task_id.as_deref() == Some(a.id.as_str()))
+        .map(|i| i.step.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(a_runs, vec!["implement", "review"]);
+    let log = git::git(&s.repo, &["log", "--format=%s", &run.integration_branch])
+        .await
+        .unwrap();
+    assert!(log.contains("sửa tay trước khi review lại"), "{log}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_fix_round_that_changes_nothing_stops_instead_of_looping() {
+    let s = setup(&[]).await;
+    // The reviewer never approves; the worker's fixes change nothing.
+    std::fs::write(s.cli_dir.join("picky"), "").unwrap();
+    std::fs::write(s.cli_dir.join("lazy-fix"), "").unwrap();
+    let mut new = new_run(&s.project_id, false);
+    new.limits = Some(repo::Limits {
+        max_rounds: 50,
+        max_invocations: 900,
+        ..Default::default()
+    });
+    let run = s.engine.start_run(new).await.unwrap();
+    idle(&s.engine, &run.id).await;
+
+    let detail = s.engine.detail(&run.id).unwrap();
+    let a = &detail.tasks[0];
+    assert_eq!(a.status, task_status::NEEDS_HUMAN, "{a:?}");
+    assert!(
+        a.status_note
+            .as_deref()
+            .unwrap()
+            .contains("không thay đổi gì"),
+        "{:?}",
+        a.status_note
+    );
+    let steps: Vec<&str> = detail
+        .invocations
+        .iter()
+        .filter(|i| i.task_id.as_deref() == Some(a.id.as_str()))
+        .map(|i| i.step.as_str())
+        .collect();
+    assert_eq!(steps, vec!["implement", "review", "fix"]);
+    // The fix resumed the worker's session: only its own share is counted.
+    let fix = detail.invocations.iter().find(|i| i.step == "fix").unwrap();
+    assert_eq!(fix.session_id.as_deref(), Some("w-a"));
+    assert!((fix.cost_usd.unwrap() - 0.02).abs() < 1e-9, "{fix:?}");
+    assert_eq!((fix.input_tokens, fix.output_tokens), (0, 0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pr_opened_by_hand_is_attached_and_followed_up_on_its_branch() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup(&[]).await;
+    let remote = s.cli_dir.join("remote.git");
+    git::git(&s.cli_dir, &["init", "-q", "--bare", "remote.git"])
+        .await
+        .unwrap();
+    git::git(
+        &s.repo,
+        &["remote", "add", "origin", &remote.to_string_lossy()],
+    )
+    .await
+    .unwrap();
+    // gh answers `pr view` like GitHub; `pr create` must never be called.
+    let gh = s.cli_dir.join("gh");
+    std::fs::write(
+        &gh,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$(dirname \"$0\")/gh-args\"\ncase \"$*\" in *'pr view'*) echo '{\"headRefName\":\"feat/manual\",\"baseRefName\":\"main\"}';; *) exit 1;; esac\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    // The user makes their own branch from the work, adds to it, pushes.
+    git::git(&s.repo, &["branch", "feat/manual", &run.integration_branch])
+        .await
+        .unwrap();
+    let side = s.cli_dir.join("side");
+    git::git(
+        &s.repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            &side.to_string_lossy(),
+            "feat/manual",
+        ],
+    )
+    .await
+    .unwrap();
+    std::fs::write(side.join("manual.txt"), "by hand\n").unwrap();
+    git::commit_all(&side, "manual").await.unwrap();
+    git::git(&side, &["push", "-q", "origin", "feat/manual"])
+        .await
+        .unwrap();
+    let manual = git::commit_of(&side, "HEAD").await.unwrap();
+
+    let bad = AttachPr {
+        repo: ".".into(),
+        url: "https://example.com/pr/1".into(),
+        branch: None,
+        base: None,
+    };
+    assert!(s.engine.attach_pull_request(&run.id, bad).await.is_err());
+    let done = s
+        .engine
+        .attach_pull_request(
+            &run.id,
+            AttachPr {
+                repo: ".".into(),
+                url: "https://github.com/o/r/pull/9/files".into(),
+                branch: None,
+                base: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (done.stage.as_str(), done.status.as_str()),
+        (stage::DONE, run_status::KEPT)
+    );
+    assert_eq!(done.pull_requests[0].branch, "feat/manual");
+    assert_eq!(done.pull_requests[0].url, "https://github.com/o/r/pull/9");
+
+    // The follow-up starts from the PR's branch and pushes onto it.
+    s.engine
+        .follow_up(&run.id, "Reviewer: thêm c".into())
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::MERGE_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+    assert_eq!(detail.run.repos[0].base_commit, manual);
+    let draft = s.engine.pr_draft(&run.id).await.unwrap();
+    assert_eq!(draft.repos[0].branch, "feat/manual");
+    s.engine.open_pull_requests(&run.id, draft).await.unwrap();
+    let pushed = git::git(&remote, &["log", "--oneline", "feat/manual"])
+        .await
+        .unwrap();
+    assert!(
+        pushed.contains("manual") && pushed.contains("merge c"),
+        "{pushed}"
+    );
+    let args = std::fs::read_to_string(s.cli_dir.join("gh-args")).unwrap();
+    assert!(!args.contains("pr create"), "{args}");
+}
+
+const FAKE_GH: &str = r#"#!/bin/sh
+d=$(dirname "$0")
+printf '%s\n' "$*" >> "$d/gh-args"
+case "$*" in
+  *"pr view"*"--json state"*)
+    echo '{"state":"OPEN","reviewDecision":"CHANGES_REQUESTED","headRefName":"feat/manual","baseRefName":"main","author":{"login":"me"},"reviews":[],"files":'"$(cat "$d/gh-files")"'}';;
+  *"pr view"*)
+    echo '{"headRefName":"feat/manual","baseRefName":"main"}';;
+  *"api graphql"*)
+    echo '{"data":{"repository":{"pullRequest":{"author":{"login":"me"},"reviewThreads":{"nodes":[
+      {"isResolved":false,"comments":{"nodes":[{"author":{"login":"rv"},"body":"Rename x","path":"a.txt","line":1,"url":"u"}]}},
+      {"isResolved":false,"comments":{"nodes":[{"author":{"login":"rv"},"body":"why?","path":"b.txt","line":2},{"author":{"login":"me"},"body":"because","path":"b.txt","line":2}]}},
+      {"isResolved":true,"comments":{"nodes":[{"author":{"login":"rv"},"body":"old","path":"a.txt","line":1}]}}
+    ]}}}}}';;
+  *) exit 1;;
+esac
+"#;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn verify_pr_checks_it_is_the_runs_and_follows_up_open_comments() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup(&[]).await;
+    let remote = s.cli_dir.join("remote.git");
+    git::git(&s.cli_dir, &["init", "-q", "--bare", "remote.git"])
+        .await
+        .unwrap();
+    git::git(
+        &s.repo,
+        &["remote", "add", "origin", &remote.to_string_lossy()],
+    )
+    .await
+    .unwrap();
+    let gh = s.cli_dir.join("gh");
+    std::fs::write(&gh, FAKE_GH).unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    // The user pushed the work as feat/manual and opened the PR by hand.
+    git::git(
+        &s.repo,
+        &[
+            "push",
+            "-q",
+            "origin",
+            &format!("{}:refs/heads/feat/manual", run.integration_branch),
+        ],
+    )
+    .await
+    .unwrap();
+    git::git(&s.repo, &["push", "-q", "origin", "main"])
+        .await
+        .unwrap();
+    std::fs::write(s.cli_dir.join("gh-files"), r#"[{"path":"x.txt"}]"#).unwrap();
+    s.engine
+        .attach_pull_request(
+            &run.id,
+            AttachPr {
+                repo: ".".into(),
+                url: "https://github.com/o/r/pull/9".into(),
+                branch: None,
+                base: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    // A PR with other files: reported, nothing started.
+    let found = s.engine.verify_pull_requests(&run.id).await.unwrap();
+    let pr = &found.prs[0];
+    assert!(pr.error.is_none(), "{:?}", pr.error);
+    assert_eq!((pr.run_files, pr.matched, pr.pr_files), (2, 0, 1));
+    assert!(pr.mismatch);
+    assert!(!found.followed_up);
+    assert!(found.note.as_deref().unwrap().contains("gắn nhầm"));
+    // Only the thread nobody answered is open.
+    assert_eq!(pr.open_comments.len(), 1);
+    assert!(pr.open_comments[0].body.contains("Rename x"));
+    assert_eq!(found.review.as_ref().unwrap().verdict, "approved");
+    assert_eq!(s.engine.detail(&run.id).unwrap().run.stage, stage::DONE);
+
+    // The right PR: its open comment becomes a follow-up.
+    std::fs::write(
+        s.cli_dir.join("gh-files"),
+        r#"[{"path":"a.txt"},{"path":"b.txt"}]"#,
+    )
+    .unwrap();
+    let found = s.engine.verify_pull_requests(&run.id).await.unwrap();
+    assert_eq!((found.prs[0].matched, found.prs[0].mismatch), (2, false));
+    assert!(found.followed_up);
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert!(detail.run.followups[0]
+        .request
+        .contains("[rv] a.txt:1: rv: Rename x"));
+    assert_eq!(
+        detail.run.stage,
+        stage::MERGE_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+    assert!(detail.verification.unwrap().followed_up);
+    // The leader read the PR's code in a worktree that is gone now.
+    let verify = detail
+        .invocations
+        .iter()
+        .find(|i| i.step == "verify")
+        .unwrap();
+    assert_eq!(verify.ok, Some(true));
+    assert!(!s
+        .env
+        .data_dir()
+        .join("agents/wt")
+        .join(&run.id[..8])
+        .join("_verify")
+        .exists());
 }

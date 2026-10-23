@@ -67,6 +67,18 @@
                 </option>
               </select>
             </div>
+            <div class="model-row" title="Model cho thiết kế & kế hoạch của lượt này; review dùng model Review trong Đội & CLI">
+              <input
+                v-model="form.leaderModel"
+                class="form-input font-mono"
+                :list="`models-${form.leader}`"
+                :placeholder="profileModelHint(profileOf(form.leader), 'lead')"
+              />
+              <select v-model="form.leaderEffort" class="form-select effort-select" :disabled="form.leader === 'cursor'">
+                <option value="">effort mặc định</option>
+                <option v-for="level in EFFORT_LEVELS" :key="level" :value="level">{{ level }}</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -92,12 +104,25 @@
               </div>
               <div class="role-arrow">→</div>
               <div class="role-cli-col">
-                <select v-model="item.cli" class="form-select">
+                <select v-model="item.cli" class="form-select" @change="item.model = ''">
                   <option v-for="cli in AGENT_CLIS" :key="cli" :value="cli" :disabled="!installed(cli)">
                     {{ cliOptionLabel(cli) }}
                   </option>
                 </select>
               </div>
+              <div class="role-model-col">
+                <input
+                  v-model="item.model"
+                  class="form-input font-mono"
+                  :list="`models-${item.cli}`"
+                  :placeholder="profileModelHint(profileOf(item.cli), 'work')"
+                  title="Model của vai này trong lượt chạy"
+                />
+              </div>
+              <select v-model="item.effort" class="form-select effort-select" :disabled="item.cli === 'cursor'" title="Effort của vai này">
+                <option value="">effort</option>
+                <option v-for="level in EFFORT_LEVELS" :key="level" :value="level">{{ level }}</option>
+              </select>
               <button
                 v-if="form.roles.length > 1"
                 type="button"
@@ -164,11 +189,31 @@
             <div class="limit-item">
               <span class="limit-label">Timeout mỗi lượt</span>
               <div class="limit-input-wrap">
-                <input v-model.number="form.limits.timeout_minutes" type="number" min="5" max="120" class="form-input font-mono text-center" />
+                <input v-model.number="form.limits.timeout_minutes" type="number" min="5" :max="MAX_TIMEOUT_MINUTES" step="5" class="form-input font-mono text-center" />
                 <span class="limit-unit">phút</span>
               </div>
             </div>
+
+            <div class="limit-item" title="Dừng lượt chạy khi chi phí CLI báo về chạm mức này (Claude tự dừng giữa chừng; Codex không báo chi phí)">
+              <span class="limit-label">Ngân sách</span>
+              <div class="limit-input-wrap">
+                <input v-model.number="form.limits.max_cost_usd" type="number" min="0.5" max="500" step="0.5" class="form-input font-mono text-center" />
+                <span class="limit-unit">USD</span>
+              </div>
+            </div>
+
+            <div class="limit-item" title="Claude báo % hạn mức 5 giờ / 7 ngày của tài khoản; chạm ngưỡng thì dừng agent đang chạy và tạm dừng lượt chạy (0 = tắt)">
+              <span class="limit-label">Dừng khi hạn mức ≥</span>
+              <div class="limit-input-wrap">
+                <input v-model.number="form.limits.quota_pause_percent" type="number" min="0" max="100" step="5" class="form-input font-mono text-center" />
+                <span class="limit-unit">%</span>
+              </div>
+            </div>
           </div>
+          <label class="auto-resume">
+            <input v-model="form.limits.auto_resume" type="checkbox" />
+            <span>Tự chạy tiếp khi hạn mức reset (bước dở được làm tiếp trong phiên cũ, không làm lại từ đầu)</span>
+          </label>
         </div>
 
         <div v-if="dirtyRepos.length > 0" class="warning-banner">
@@ -226,6 +271,9 @@
       @confirm="confirmNoMergeGate = false"
       @cancel="keepMergeGate"
     />
+    <datalist v-for="cli in AGENT_CLIS" :id="`models-${cli}`" :key="cli">
+      <option v-for="item in modelsOf(cli)" :key="item.id" :value="item.id">{{ item.label }}</option>
+    </datalist>
   </div>
 </template>
 
@@ -233,8 +281,20 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { Bot, X, Plus, Trash2, AlertTriangle, Play, LoaderCircle } from 'lucide-vue-next';
 import type { AgentCli, AgentProjectView, CliInfo, NewRunInput, RoleCli } from '@/types/agents';
-import { AGENT_CLIS, AGENT_CLI_LABELS, DEFAULT_LIMITS, isMultiRepo, repoLabel } from '@/types/agents';
+import {
+  AGENT_CLIS,
+  AGENT_CLI_LABELS,
+  DEFAULT_LIMITS,
+  EFFORT_LEVELS,
+  MAX_TIMEOUT_MINUTES,
+  isMultiRepo,
+  profileModelHint,
+  repoLabel,
+} from '@/types/agents';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
+import { useAgentModels } from '@/composables/useAgentModels';
+
+const { modelsOf } = useAgentModels();
 
 const props = defineProps<{
   visible: boolean;
@@ -300,10 +360,26 @@ const selectedTeam = ref('claude-lead');
 const saving = ref(false);
 const error = ref<string | null>(null);
 
+interface RoleDraft {
+  role: string;
+  cli: AgentCli;
+  model: string;
+  effort: string;
+}
+
+const roleDraft = (role: RoleCli): RoleDraft => ({
+  role: role.role,
+  cli: role.cli,
+  model: role.model ?? '',
+  effort: role.effort ?? '',
+});
+
 const form = reactive({
   request: '',
   leader: 'claude' as AgentCli,
-  roles: PRESETS[0].roles.map((r) => ({ ...r })),
+  leaderModel: '',
+  leaderEffort: '',
+  roles: PRESETS[0].roles.map(roleDraft),
   plan_gate: true,
   merge_gate: true,
   limits: { ...DEFAULT_LIMITS },
@@ -357,6 +433,8 @@ watch(
     error.value = null;
     saving.value = false;
     if (props.initialPrompt) form.request = props.initialPrompt;
+    // The project's last run set these; it knows how long its work takes.
+    form.limits = { ...DEFAULT_LIMITS, ...(props.project?.limits ?? {}) };
   },
   { immediate: true }
 );
@@ -365,12 +443,16 @@ function applyPreset() {
   const preset = PRESETS.find((p) => p.id === selectedTeam.value);
   if (!preset) return;
   form.leader = preset.leader;
-  form.roles = preset.roles.map((r) => ({ ...r }));
+  form.leaderModel = '';
+  form.leaderEffort = '';
+  form.roles = preset.roles.map(roleDraft);
 }
 
 function addRole() {
-  form.roles.push({ role: '', cli: 'codex' });
+  form.roles.push(roleDraft({ role: '', cli: 'codex' }));
 }
+
+const profileOf = (cli: AgentCli) => props.clis.find((info) => info.cli === cli)?.profile;
 
 function removeRole(idx: number) {
   if (form.roles.length > 1) {
@@ -401,7 +483,11 @@ async function handleSubmit() {
     await props.submit({
       request: form.request.trim(),
       leader_cli: form.leader,
-      roles: form.roles.filter((r) => r.role.trim()).map((r) => ({ role: r.role.trim(), cli: r.cli })),
+      leader_model: form.leaderModel.trim() || null,
+      leader_effort: form.leaderEffort || null,
+      roles: form.roles
+        .filter((r) => r.role.trim())
+        .map((r) => ({ role: r.role.trim(), cli: r.cli, model: r.model.trim() || null, effort: r.effort || null })),
       plan_gate: form.plan_gate,
       merge_gate: form.merge_gate,
       limits: { ...form.limits },
@@ -619,6 +705,27 @@ async function handleSubmit() {
   flex: 1;
 }
 
+.role-model-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.model-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.model-row .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.effort-select {
+  flex: none;
+  width: 110px;
+}
+
 .btn-remove-role {
   color: var(--text-muted, #64748b);
 }
@@ -666,9 +773,19 @@ async function handleSubmit() {
   line-height: 14px;
 }
 
+.auto-resume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #94a3b8);
+  cursor: pointer;
+}
+
 .limits-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
 }
 

@@ -21,6 +21,42 @@ export interface CliProfile {
   /** "Tự duyệt mọi thứ": the CLI's own bypass flag. */
   bypass_permissions: boolean;
   extra_args: string[];
+  /** Model / effort per step; empty fields use the ones above. */
+  steps: StepModels;
+}
+
+export interface StepModel {
+  model?: string | null;
+  effort?: string | null;
+}
+
+/** lead: design + plan; work: implement + fix; review: code review. */
+export interface StepModels {
+  lead: StepModel;
+  work: StepModel;
+  review: StepModel;
+}
+
+export type AgentPhase = keyof StepModels;
+
+export const PHASE_LABELS: Record<AgentPhase, string> = {
+  lead: 'Thiết kế & kế hoạch',
+  work: 'Viết code & sửa',
+  review: 'Review',
+};
+
+export interface QuotaWindow {
+  /** 0..1 */
+  utilization: number;
+  /** Unix seconds. */
+  resets_at: number;
+}
+
+/** A CLI account's usage limits (Claude's 5-hour / 7-day windows). */
+export interface Quota {
+  five_hour: QuotaWindow | null;
+  seven_day: QuotaWindow | null;
+  rejected: boolean;
 }
 
 export interface CliInfo {
@@ -40,7 +76,12 @@ export interface RepoConfig {
   base_branch?: string | null;
   setup_cmd?: string | null;
   check_cmds: string[];
+  /** How long one setup or check command may run; empty: CHECK_TIMEOUT_MINUTES. */
+  check_timeout_minutes?: number | null;
 }
+
+export const CHECK_TIMEOUT_MINUTES = 15;
+export const MAX_TIMEOUT_MINUTES = 600;
 
 /** A folder: one git repo, or a folder holding several (fe/, be/...). */
 export interface AgentProject {
@@ -48,6 +89,8 @@ export interface AgentProject {
   path: string;
   repos: RepoConfig[];
   notes?: string | null;
+  /** The last run's limits here: the next run starts from them. */
+  limits?: RunLimits | null;
   created_at: string;
   last_opened_at?: string | null;
 }
@@ -68,6 +111,61 @@ export interface ProjectSettings {
   notes?: string | null;
 }
 
+export interface PullRequest {
+  repo: string;
+  branch: string;
+  base: string;
+  url: string;
+}
+
+/** Gate 2's "Push & tạo PR". */
+export interface PrRequest {
+  repos: { repo: string; branch: string; base: string }[];
+  title: string;
+  body: string;
+  draft: boolean;
+}
+
+export interface PrComment {
+  author: string;
+  path: string | null;
+  line: number | null;
+  body: string;
+  url: string | null;
+}
+
+export interface PrCheck {
+  repo: string;
+  url: string;
+  branch: string;
+  base: string;
+  state: string;
+  review_decision: string;
+  run_files: number;
+  matched: number;
+  pr_files: number;
+  missing: string[];
+  /** Fewer than half of the run's files are in the PR. */
+  mismatch: boolean;
+  open_comments: PrComment[];
+  error: string | null;
+}
+
+/** What "Verify PR" found. */
+export interface Verification {
+  checked_at: string;
+  prs: PrCheck[];
+  review: Review | null;
+  followed_up: boolean;
+  note: string | null;
+}
+
+export interface CheckProposal {
+  repo: string;
+  setup: string;
+  commands: string[];
+}
+
 export interface RunRepo {
   path: string;
   base_branch: string;
@@ -84,13 +182,45 @@ export const repoLabel = (path: string, projectPath = '') =>
 export interface RoleCli {
   role: string;
   cli: AgentCli;
+  /** For this run; empty: the CLI profile's (Đội & CLI). */
+  model?: string | null;
+  effort?: string | null;
 }
+
+/** A model a CLI offers (`agents_models`). */
+export interface ModelInfo {
+  /** What `--model` takes. */
+  id: string;
+  label: string;
+}
+
+/** Until a CLI's own list is read: names it takes as aliases. Any name works. */
+export const MODEL_SUGGESTIONS: Record<AgentCli, string[]> = {
+  claude: ['opus', 'sonnet', 'haiku'],
+  codex: [],
+  agy: [],
+  cursor: [],
+};
+
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/** What a step uses when the run picks nothing: the profile's choice. */
+export const profileModelHint = (profile: CliProfile | undefined, phase: AgentPhase) => {
+  const model = profile?.steps?.[phase]?.model || profile?.model;
+  return model ? `mặc định: ${model}` : 'mặc định của CLI';
+};
 
 export interface RunLimits {
   concurrency: number;
   max_rounds: number;
   max_invocations: number;
   timeout_minutes: number;
+  /** Spending cap of the run, in list-price dollars the CLIs report. */
+  max_cost_usd: number;
+  /** Pause when an account usage window is this full (%); 0 = off. */
+  quota_pause_percent: number;
+  /** Go on by itself once the window resets. */
+  auto_resume: boolean;
 }
 
 export const DEFAULT_LIMITS: RunLimits = {
@@ -98,6 +228,9 @@ export const DEFAULT_LIMITS: RunLimits = {
   max_rounds: 3,
   max_invocations: 60,
   timeout_minutes: 20,
+  max_cost_usd: 5,
+  quota_pause_percent: 85,
+  auto_resume: true,
 };
 
 export type RunStage = 'design' | 'plan' | 'plan_gate' | 'implement' | 'integrate' | 'merge_gate' | 'done';
@@ -143,6 +276,12 @@ export interface AgentRun {
   title: string;
   request: string;
   leader_cli: AgentCli;
+  leader_model: string | null;
+  leader_effort: string | null;
+  /** Check commands the leader proposed for repos without any; gate 1 settles them. */
+  suggested_checks: CheckProposal[];
+  /** Opened from gate 2, one per repo; a follow-up's push updates them. */
+  pull_requests: PullRequest[];
   roles: RoleCli[];
   plan_gate: boolean;
   merge_gate: boolean;
@@ -162,6 +301,8 @@ export interface AgentRun {
   created_at: string;
   updated_at: string;
   finished_at: string | null;
+  /** Requests made after delivery (a code review's comments...); their tasks are batch 1, 2... */
+  followups: { request: string; created_at: string }[];
 }
 
 export interface AgentTask {
@@ -188,6 +329,15 @@ export interface AgentTask {
   removed: number;
   out_of_scope: string[];
   sort_order: number;
+  /** 0: the run's request; n: its n-th follow-up. */
+  batch: number;
+  /** What the worker left for the tasks after it. */
+  handoff: string | null;
+  /** Picked when the task was given to another CLI; null: the role's. */
+  model: string | null;
+  effort: string | null;
+  /** This task's agent timeout; null: the run's. */
+  timeout_minutes: number | null;
 }
 
 /** A task as gate 1 (MOD-22) edits it. */
@@ -218,6 +368,8 @@ export interface AgentInvocation {
   input_tokens: number;
   output_tokens: number;
   cost_usd: number | null;
+  /** Cut short: the next try continues its session. */
+  resumable: boolean;
 }
 
 export interface RunUsage {
@@ -233,6 +385,12 @@ export interface RunDetail {
   invocations: AgentInvocation[];
   usage: RunUsage;
   driving: boolean;
+  /** Last usage limits seen, per CLI. */
+  quotas: Partial<Record<AgentCli, Quota>>;
+  /** Paused for a usage limit: when it goes on (unix seconds). */
+  resume_at: number | null;
+  /** The last "Verify PR". */
+  verification: Verification | null;
 }
 
 export interface RunSummary extends AgentRun {
@@ -247,6 +405,8 @@ export interface NewRunInput {
   request: string;
   title?: string | null;
   leader_cli: AgentCli;
+  leader_model?: string | null;
+  leader_effort?: string | null;
   roles: RoleCli[];
   plan_gate: boolean;
   merge_gate: boolean;

@@ -86,7 +86,41 @@ pub struct Request<'a> {
     /// The schema written to a file, for CLIs that take a path.
     pub schema_file: Option<&'a Path>,
     pub profile: &'a CliProfile,
+    /// What the step may still spend, for CLIs that can stop themselves.
+    pub budget_usd: Option<f64>,
+    /// Folders outside `cwd` the agent reads (the run's context files).
+    pub extra_dirs: &'a [PathBuf],
 }
+
+/// Commands a worker leaves to the orchestrator (it commits, merges and
+/// opens pull requests).
+const CLAUDE_BLOCKED_COMMANDS: &[&str] = &[
+    "Bash(git push:*)",
+    "Bash(git commit:*)",
+    "Bash(git checkout:*)",
+    "Bash(git switch:*)",
+    "Bash(git rebase:*)",
+    "Bash(git reset --hard:*)",
+    "Bash(gh pr create:*)",
+    "Bash(gh pr merge:*)",
+];
+
+/// Claude Code tools a headless step must not use: sub-agents and
+/// background work multiply the cost of one step many times over (one
+/// design step with three Explore agents burned ~24M tokens) and wake the
+/// session up again after its answer.
+const CLAUDE_BLOCKED_TOOLS: &[&str] = &[
+    "Agent",
+    "Task",
+    "Workflow",
+    "Monitor",
+    "ScheduleWakeup",
+    "CronCreate",
+    "RemoteTrigger",
+    "SendMessage",
+    "PushNotification",
+    "EnterWorktree",
+];
 
 /// Arguments after the program name. The prompt is always an argument of
 /// its own (never parsed by a shell).
@@ -101,6 +135,21 @@ pub fn args(cli: Cli, request: &Request) -> Vec<String> {
     match cli {
         Cli::Claude => {
             push(&["-p", "--output-format", "stream-json", "--verbose"]);
+            // A list option: the flag after it ends the list.
+            push(&["--disallowedTools"]);
+            push(CLAUDE_BLOCKED_TOOLS);
+            if write {
+                // Courtesy only: these rules match a command's start, so
+                // `git -C x push` gets through. The process environment is
+                // what actually stops pushes (see `engine::write_env`).
+                push(CLAUDE_BLOCKED_COMMANDS);
+                if !bypass {
+                    // acceptEdits approves edits but asks for every command,
+                    // and nobody answers a headless run: tests, typecheck and
+                    // git would all be refused.
+                    push(&["--allowedTools", "Bash"]);
+                }
+            }
             let mode = match (request.access, bypass) {
                 (Access::ReadOnly, _) => "plan",
                 (Access::Write, true) => "bypassPermissions",
@@ -118,6 +167,12 @@ pub fn args(cli: Cli, request: &Request) -> Vec<String> {
             }
             if let Some(effort) = &profile.effort {
                 push(&["--effort", effort]);
+            }
+            if let Some(budget) = request.budget_usd {
+                push(&["--max-budget-usd", &format!("{:.2}", budget.max(0.01))]);
+            }
+            for dir in request.extra_dirs {
+                push(&["--add-dir", &dir.to_string_lossy()]);
             }
         }
         Cli::Codex => {
@@ -195,6 +250,12 @@ pub fn args(cli: Cli, request: &Request) -> Vec<String> {
             args.push("-p".into());
             args.push(prompt);
         }
+        // List options (`--add-dir`, `--disallowedTools`, maybe in the extra
+        // arguments) would take the prompt as one more item.
+        Cli::Claude => {
+            args.push("--".into());
+            args.push(prompt);
+        }
         _ => args.push(prompt),
     }
     args
@@ -224,9 +285,117 @@ pub struct Outcome {
     /// Tool calls the CLI refused for lack of permission.
     pub denials: u32,
     pub finished: bool,
+    /// The account's usage limits, as last reported during the run.
+    pub quota: Option<Quota>,
+}
+
+/// One usage-limit window of a subscription.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct QuotaWindow {
+    /// 0.0 to 1.0.
+    pub utilization: f64,
+    /// Unix seconds.
+    pub resets_at: i64,
+}
+
+/// Claude's subscription limits (`rate_limit_event`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Quota {
+    pub five_hour: Option<QuotaWindow>,
+    pub seven_day: Option<QuotaWindow>,
+    /// The account is over a limit right now.
+    pub rejected: bool,
+}
+
+impl Quota {
+    /// The fullest window: its name and state.
+    pub fn fullest(&self) -> Option<(&'static str, &QuotaWindow)> {
+        [("5 giờ", &self.five_hour), ("7 ngày", &self.seven_day)]
+            .into_iter()
+            .filter_map(|(name, window)| window.as_ref().map(|window| (name, window)))
+            .max_by(|a, b| a.1.utilization.total_cmp(&b.1.utilization))
+    }
+
+    /// The window that blocks work now: over `limit` (0..1), or any window
+    /// while the account is refused, and not reset yet at `now`.
+    pub fn blocking(&self, limit: Option<f64>, now: i64) -> Option<(&'static str, &QuotaWindow)> {
+        [("5 giờ", &self.five_hour), ("7 ngày", &self.seven_day)]
+            .into_iter()
+            .filter_map(|(name, window)| window.as_ref().map(|window| (name, window)))
+            .filter(|(_, window)| window.resets_at == 0 || window.resets_at > now)
+            .filter(|(_, window)| self.rejected || limit.is_some_and(|l| window.utilization >= l))
+            .max_by(|a, b| a.1.utilization.total_cmp(&b.1.utilization))
+    }
+
+    fn parse(info: &Value) -> Option<Self> {
+        let window = |value: Option<&Value>| {
+            let value = value?;
+            Some(QuotaWindow {
+                utilization: value.get("utilization")?.as_f64()?,
+                resets_at: value.get("resetsAt").and_then(Value::as_i64).unwrap_or(0),
+            })
+        };
+        let windows = info.get("unifiedWindows");
+        let quota = Self {
+            five_hour: window(windows.and_then(|w| w.get("five_hour"))),
+            seven_day: window(windows.and_then(|w| w.get("seven_day"))),
+            rejected: str_at(info, "status") == "rejected",
+        };
+        (quota.five_hour.is_some() || quota.seven_day.is_some() || quota.rejected).then_some(quota)
+    }
 }
 
 impl Outcome {
+    /// The CLI stopped because the account is out of usage (Claude's "You've
+    /// hit your session limit", codex's "usage limit"): wait, do not fail.
+    pub fn hit_limit(&self) -> bool {
+        if self.quota.as_ref().is_some_and(|quota| quota.rejected) {
+            return true;
+        }
+        let Some(error) = &self.error else {
+            return false;
+        };
+        let error = error.to_lowercase();
+        [
+            "usage limit",
+            "session limit",
+            "rate limit",
+            "out of usage",
+            "quota exceeded",
+            "quota reached",
+            "resource_exhausted",
+        ]
+        .iter()
+        .any(|needle| error.contains(needle))
+    }
+
+    /// Seconds until the limit resets, when the error says ("Resets in
+    /// 149h8m18s", "resets in 2d 3h").
+    pub fn limit_resets_in(&self) -> Option<u64> {
+        let error = self.error.as_deref()?.to_lowercase();
+        let rest = &error[error.find("resets in ")? + "resets in ".len()..];
+        let (mut total, mut number, mut any) = (0u64, 0u64, false);
+        for ch in rest.chars() {
+            match ch {
+                '0'..='9' => number = number * 10 + ch.to_digit(10)? as u64,
+                'd' | 'h' | 'm' | 's' => {
+                    let unit = match ch {
+                        'd' => 86_400,
+                        'h' => 3_600,
+                        'm' => 60,
+                        _ => 1,
+                    };
+                    total += number * unit;
+                    number = 0;
+                    any = true;
+                }
+                ' ' => {}
+                _ => break,
+            }
+        }
+        any.then_some(total)
+    }
+
     /// The structured answer: the CLI's own, else JSON found in the text.
     pub fn json(&self) -> Option<Value> {
         self.structured.clone().or_else(|| extract_json(&self.text))
@@ -360,6 +529,11 @@ impl Parser {
                     }
                 }
             }
+            "rate_limit_event" => {
+                if let Some(quota) = value.get("rate_limit_info").and_then(Quota::parse) {
+                    self.outcome.quota = Some(quota);
+                }
+            }
             // cursor-agent reports tools as their own events.
             "tool_call" if str_at(value, "subtype") == "started" => {
                 if let Some(Value::Object(call)) = value.get("tool_call") {
@@ -383,7 +557,27 @@ impl Parser {
                     .get("structured_output")
                     .filter(|v| v.is_object())
                     .cloned();
-                if let Some(usage) = value.get("usage") {
+                // `modelUsage` covers the whole session (every turn and
+                // model); `usage` only the last turn.
+                if let Some(Value::Object(models)) = value.get("modelUsage") {
+                    outcome.input_tokens = models
+                        .values()
+                        .map(|usage| {
+                            [
+                                "inputTokens",
+                                "cacheCreationInputTokens",
+                                "cacheReadInputTokens",
+                            ]
+                            .iter()
+                            .map(|key| num_at(usage, key))
+                            .sum::<u64>()
+                        })
+                        .sum();
+                    outcome.output_tokens = models
+                        .values()
+                        .map(|usage| num_at(usage, "outputTokens"))
+                        .sum();
+                } else if let Some(usage) = value.get("usage") {
                     outcome.input_tokens = [
                         "input_tokens",
                         "cache_creation_input_tokens",
@@ -395,6 +589,9 @@ impl Parser {
                     outcome.output_tokens = num_at(usage, "output_tokens");
                 }
                 outcome.cost_usd = value.get("total_cost_usd").and_then(Value::as_f64);
+                if str_at(value, "api_error") == "usage_limit_reached" {
+                    outcome.quota.get_or_insert_with(Quota::default).rejected = true;
+                }
                 outcome.denials = value
                     .get("permission_denials")
                     .and_then(Value::as_array)
@@ -402,10 +599,24 @@ impl Parser {
                 if value.get("is_error").and_then(Value::as_bool) == Some(true)
                     || str_at(value, "subtype").starts_with("error")
                 {
-                    let message = if outcome.text.is_empty() {
-                        str_at(value, "subtype").to_string()
-                    } else {
+                    let errors = value
+                        .get("errors")
+                        .and_then(Value::as_array)
+                        .map(|list| {
+                            list.iter()
+                                .filter_map(Value::as_str)
+                                .collect::<Vec<_>>()
+                                .join("; ")
+                        })
+                        .unwrap_or_default();
+                    let message = if !outcome.text.is_empty() {
                         outcome.text.clone()
+                    } else if str_at(value, "subtype") == "error_max_budget_usd" {
+                        format!("Dừng vì chạm ngân sách ({errors})")
+                    } else if !errors.is_empty() {
+                        errors
+                    } else {
+                        str_at(value, "subtype").to_string()
                     };
                     outcome.error = Some(message.clone());
                     out.push(LogLine::Error(message));
@@ -554,7 +765,13 @@ impl Parser {
                 }
                 let status = str_at(result, "status");
                 if !status.is_empty() && status != "SUCCESS" {
-                    let message = format!("agy kết thúc với trạng thái {status}");
+                    // "Individual quota reached. ... Resets in 149h8m18s."
+                    let error = str_at(result, "error").trim();
+                    let message = if error.is_empty() {
+                        format!("agy kết thúc với trạng thái {status}")
+                    } else {
+                        format!("agy: {error}")
+                    };
                     outcome.error = Some(message.clone());
                     out.push(LogLine::Error(message));
                 }
@@ -872,6 +1089,8 @@ mod tests {
                 schema: Some(&schema),
                 schema_file: Some(Path::new("/tmp/schema.json")),
                 profile: &profile,
+                budget_usd: None,
+                extra_dirs: &[],
             };
             let args = args(cli, &request).join(" ");
             for flag in [
@@ -897,6 +1116,8 @@ mod tests {
             schema: None,
             schema_file: None,
             profile: &CliProfile::default(),
+            budget_usd: Some(1.5),
+            extra_dirs: &[],
         };
         assert_eq!(
             args(Cli::Codex, &request),
@@ -911,5 +1132,69 @@ mod tests {
         );
         let agy = args(Cli::Agy, &request);
         assert_eq!(&agy[agy.len() - 2..], ["-p", "do it"]);
+    }
+    #[test]
+    fn claude_steps_are_capped_and_counted_over_the_whole_session() {
+        let request = Request {
+            prompt: "design".into(),
+            cwd: Path::new("/repo"),
+            access: Access::ReadOnly,
+            resume: None,
+            schema: None,
+            schema_file: None,
+            profile: &CliProfile::default(),
+            budget_usd: Some(2.345),
+            extra_dirs: &[PathBuf::from("/runs/r1/context")],
+        };
+        let args = super::args(Cli::Claude, &request);
+        let at = |flag: &str| args.iter().position(|arg| arg == flag).unwrap();
+        assert_eq!(args[at("--max-budget-usd") + 1], "2.35");
+        // The tool list ends at the next flag, never swallowing the prompt.
+        assert_eq!(args[at("--disallowedTools") + 1], "Agent");
+        assert!(args[at("--disallowedTools") + CLAUDE_BLOCKED_TOOLS.len() + 1].starts_with("--"));
+        assert_eq!(args[args.len() - 2..], ["--", "design"]);
+        // Reading steps neither run commands freely nor need the git rules.
+        assert!(!args.contains(&"--allowedTools".to_string()));
+        assert!(!args.iter().any(|arg| arg.starts_with("Bash(")));
+        let write = Request {
+            access: Access::Write,
+            ..request
+        };
+        let args = super::args(Cli::Claude, &write);
+        let at = |flag: &str| args.iter().position(|arg| arg == flag).unwrap();
+        assert_eq!(args[at("--allowedTools") + 1], "Bash");
+        assert!(args.contains(&"Bash(git push:*)".to_string()));
+        assert_eq!(args[at("--permission-mode") + 1], "acceptEdits");
+
+        let mut parser = Parser::new(Cli::Claude);
+        parser.feed(
+            r#"{"type":"result","subtype":"error_max_budget_usd","is_error":true,"total_cost_usd":2.5,
+            "errors":["Reached maximum budget ($2.35)"],"usage":{"input_tokens":0,"output_tokens":0},
+            "modelUsage":{"a":{"inputTokens":10,"cacheReadInputTokens":1000,"cacheCreationInputTokens":100,"outputTokens":50},
+            "b":{"inputTokens":1,"cacheReadInputTokens":0,"cacheCreationInputTokens":0,"outputTokens":5}}}"#
+                .replace('\n', " ")
+                .as_str(),
+        );
+        let outcome = parser.finish();
+        assert_eq!((outcome.input_tokens, outcome.output_tokens), (1111, 55));
+        assert_eq!(outcome.cost_usd, Some(2.5));
+        assert!(outcome.error.unwrap().contains("ngân sách"));
+    }
+
+    #[test]
+    fn agy_out_of_quota_is_a_limit_with_its_reset() {
+        let mut parser = Parser::new(Cli::Agy);
+        parser.feed(
+            r#"{"event":"result","result":{"conversation_id":"c9","status":"ERROR","response":"","error":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 149h8m18s.","usage":{"input_tokens":0,"output_tokens":0}}}"#,
+        );
+        let outcome = parser.finish();
+        assert!(outcome
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("Individual quota reached"));
+        assert!(outcome.hit_limit());
+        assert_eq!(outcome.limit_resets_in(), Some(149 * 3600 + 8 * 60 + 18));
+        assert_eq!(outcome.session_id.as_deref(), Some("c9"));
     }
 }

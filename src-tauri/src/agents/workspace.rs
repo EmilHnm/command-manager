@@ -38,7 +38,42 @@ pub async fn detect(path: &Path) -> Result<(PathBuf, Vec<String>)> {
         ));
     }
     found.sort();
-    Ok((path.to_path_buf(), found))
+    Ok((path.to_path_buf(), distinct(path, found).await))
+}
+
+/// Drops checkouts that are linked worktrees of another repo in the list
+/// (`wt-x/` made by `git worktree add` from `fe/`): one git repository can
+/// check a branch out only once, and a run makes its branches in every repo.
+/// Main checkouts win; the order is kept.
+pub async fn distinct(base: &Path, repos: Vec<String>) -> Vec<String> {
+    let mut entries = Vec::new();
+    for repo in repos {
+        let dir = repo_dir(base, &repo);
+        let linked = dir.join(".git").is_file();
+        let common = git::common_dir(&dir).await.ok();
+        entries.push((repo, linked, common));
+    }
+    let mut owners: Vec<(PathBuf, String)> = Vec::new();
+    for linked in [false, true] {
+        for (repo, _, common) in entries.iter().filter(|entry| entry.1 == linked) {
+            if let Some(common) = common {
+                if !owners.iter().any(|(dir, _)| dir == common) {
+                    owners.push((common.clone(), repo.clone()));
+                }
+            }
+        }
+    }
+    entries
+        .into_iter()
+        .filter(|(repo, _, common)| match common {
+            Some(common) => owners
+                .iter()
+                .any(|(dir, owner)| dir == common && owner == repo),
+            // Not readable as a repo: left for the caller to report.
+            None => true,
+        })
+        .map(|(repo, _, _)| repo)
+        .collect()
 }
 
 fn scan(dir: &Path, rel: &Path, depth: usize, found: &mut Vec<String>) -> Result<()> {
@@ -136,5 +171,39 @@ mod tests {
         assert_eq!(repo_dir(Path::new("/w"), "fe"), PathBuf::from("/w/fe"));
         assert_eq!(project_path("fe", "src/a.ts"), "fe/src/a.ts");
         assert_eq!(project_path(".", "src/a.ts"), "src/a.ts");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_linked_worktree_is_not_a_repo_of_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let cluster = dir.path().join("health");
+        let fe = cluster.join("fe");
+        std::fs::create_dir_all(&fe).unwrap();
+        git::git(&fe, &["init", "-q", "-b", "main"]).await.unwrap();
+        std::fs::write(fe.join("a"), "a").unwrap();
+        git::commit_all(&fe, "init").await.unwrap();
+        git::git(&fe, &["worktree", "add", "-q", "-b", "q011", "../wt-q011"])
+            .await
+            .unwrap();
+        // Its main checkout elsewhere: then the worktree is the only copy.
+        let other = dir.path().join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        git::git(&other, &["init", "-q", "-b", "main"])
+            .await
+            .unwrap();
+        std::fs::write(other.join("b"), "b").unwrap();
+        git::commit_all(&other, "init").await.unwrap();
+        git::git(
+            &other,
+            &["worktree", "add", "-q", "-b", "x", "../health/x-wt"],
+        )
+        .await
+        .unwrap();
+
+        let (_, repos) = detect(&cluster).await.unwrap();
+        assert_eq!(repos, vec!["fe", "x-wt"]);
+        // Order is kept and the main checkout wins even when listed after.
+        let kept = distinct(&cluster, vec!["wt-q011".into(), "fe".into()]).await;
+        assert_eq!(kept, vec!["fe"]);
     }
 }

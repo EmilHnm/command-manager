@@ -2,7 +2,7 @@
 //! commits, diffs for review, merges into the integration branch.
 
 use crate::error::{Error, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 /// Commits the app makes when the repo has no identity configured.
@@ -43,6 +43,18 @@ pub async fn repo_root(path: &Path) -> Result<String> {
     git(path, &["rev-parse", "--show-toplevel"])
         .await
         .map_err(|_| Error::msg("Thư mục này không phải git repo"))
+}
+
+/// The git repository a checkout belongs to: a linked worktree shares its
+/// main checkout's.
+pub async fn common_dir(root: &Path) -> Result<PathBuf> {
+    let path = PathBuf::from(git(root, &["rev-parse", "--git-common-dir"]).await?);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    };
+    Ok(path.canonicalize().unwrap_or(path))
 }
 
 /// The checked-out branch, None when HEAD is detached.
@@ -97,6 +109,14 @@ pub async fn ensure_branch(root: &Path, branch: &str, at: &str) -> Result<()> {
     Ok(())
 }
 
+/// Points `branch` at `at`, creating it if needed. The branch must not be
+/// checked out anywhere.
+pub async fn reset_branch(root: &Path, branch: &str, at: &str) -> Result<()> {
+    let _ = git(root, &["worktree", "prune"]).await;
+    git(root, &["branch", "-f", branch, at]).await?;
+    Ok(())
+}
+
 /// A worktree for `branch` at `path`, reusing one that is already there.
 pub async fn ensure_worktree(root: &Path, path: &Path, branch: &str) -> Result<()> {
     if path.join(".git").exists() {
@@ -108,6 +128,26 @@ pub async fn ensure_worktree(root: &Path, path: &Path, branch: &str) -> Result<(
         std::fs::create_dir_all(parent)?;
     }
     git(root, &["worktree", "add", &path.to_string_lossy(), branch]).await?;
+    Ok(())
+}
+
+/// A throwaway worktree at `commit`, on no branch.
+pub async fn detached_worktree(root: &Path, path: &Path, commit: &str) -> Result<()> {
+    remove_worktree(root, path).await;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    git(
+        root,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            &path.to_string_lossy(),
+            commit,
+        ],
+    )
+    .await?;
     Ok(())
 }
 

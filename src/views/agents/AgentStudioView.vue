@@ -209,6 +209,16 @@
                   <span>Tiếp tục</span>
                 </button>
                 <button
+                  v-if="detail.run.status !== 'discarded'"
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  title="Timeout, ngân sách, model của leader và các vai (áp dụng từ bước tiếp theo)"
+                  @click="showModels = true"
+                >
+                  <Cpu :size="13" />
+                  <span>Thiết lập</span>
+                </button>
+                <button
                   v-if="detail.run.stage !== 'done' && !detail.driving"
                   type="button"
                   class="btn btn-danger-ghost btn-sm"
@@ -216,6 +226,30 @@
                 >
                   <XCircle :size="13" />
                   <span>Bỏ lượt</span>
+                </button>
+                <button
+                  v-if="
+                    !detail.driving &&
+                    (detail.run.stage === 'merge_gate' ||
+                      (detail.run.stage === 'done' && (detail.run.status === 'merged' || detail.run.status === 'kept')))
+                  "
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  title="Gắn PR bạn đã tạo bằng tay; lần làm tiếp sẽ làm trên nhánh của PR"
+                  @click="showAttachPr = true"
+                >
+                  <GitFork :size="13" />
+                  <span>{{ detail.run.pull_requests.length ? 'Đổi PR' : 'Gắn PR' }}</span>
+                </button>
+                <button
+                  v-if="detail.run.stage === 'done' && (detail.run.status === 'merged' || detail.run.status === 'kept')"
+                  type="button"
+                  class="btn btn-primary btn-sm"
+                  title="Yêu cầu tiếp cho lượt chạy này (ví dụ comment review trên PR), giữ ngữ cảnh của leader"
+                  @click="showFollowUp = true"
+                >
+                  <MessageSquarePlus :size="13" />
+                  <span>Làm tiếp</span>
                 </button>
                 <button
                   v-if="detail.run.stage === 'done'"
@@ -252,6 +286,71 @@
               <AlertTriangle v-if="detail.run.status === 'failed'" :size="13" />
               <Clock v-else :size="13" />
               <span>{{ detail.run.status_note }}</span>
+              <span v-if="detail.resume_at" class="text-muted">— tự chạy tiếp lúc {{ formatClock(detail.resume_at) }}</span>
+            </div>
+            <div v-if="detail.run.pull_requests.length" class="pr-links">
+              <GitFork :size="13" />
+              <a
+                v-for="pr in detail.run.pull_requests"
+                :key="pr.repo + pr.branch"
+                href="#"
+                class="pr-link font-mono"
+                :title="`${pr.branch} → ${pr.base}`"
+                @click.prevent="ipcClient.openUrl(pr.url)"
+              >
+                {{ pr.url.replace(/^https:\/\/github\.com\//, '') || pr.branch }}
+              </a>
+              <button
+                v-if="detail.run.stage === 'done' && !detail.driving"
+                type="button"
+                class="btn btn-secondary btn-xs"
+                :disabled="verifying"
+                title="Leader review cả PR, kiểm tra PR có đúng của lượt chạy, đọc comment review chưa xử lý; còn comment thì tự làm tiếp"
+                @click="verifyPrs"
+              >
+                <ShieldCheck :size="12" :class="{ spin: verifying }" />
+                <span>{{ verifying ? 'Đang verify…' : 'Verify PR' }}</span>
+              </button>
+            </div>
+
+            <div v-if="detail.verification" class="verify-box">
+              <div class="verify-head">
+                <ShieldCheck :size="13" />
+                <strong>Verify PR</strong>
+                <span class="text-muted">lúc {{ formatClock(Number(detail.verification.checked_at)) }}</span>
+                <span v-if="detail.verification.followed_up" class="verify-tag ok">đã tạo vòng làm tiếp từ các điểm còn mở</span>
+              </div>
+              <div v-if="detail.verification.note" class="verify-warn">{{ detail.verification.note }}</div>
+              <div v-for="pr in detail.verification.prs" :key="pr.url" class="verify-pr">
+                <div class="verify-line">
+                  <a href="#" class="pr-link font-mono" @click.prevent="ipcClient.openUrl(pr.url)">
+                    {{ pr.url.replace(/^https:\/\/github\.com\//, '') }}
+                  </a>
+                  <span v-if="pr.error" class="verify-warn-text">{{ pr.error }}</span>
+                  <template v-else>
+                    <span class="verify-tag">{{ pr.state || '?' }}{{ pr.review_decision ? ` · ${pr.review_decision}` : '' }}</span>
+                    <span class="verify-tag" :class="pr.mismatch ? 'bad' : 'ok'">
+                      {{ pr.matched }}/{{ pr.run_files }} tệp của lượt chạy có trong PR ({{ pr.pr_files }} tệp)
+                    </span>
+                  </template>
+                </div>
+                <div v-if="pr.mismatch && pr.missing.length" class="verify-detail font-mono">
+                  Thiếu: {{ pr.missing.join(', ') }}
+                </div>
+                <div v-for="(comment, index) in pr.open_comments" :key="index" class="verify-comment">
+                  <span class="font-mono">{{ comment.path ? `${comment.path}${comment.line ? `:${comment.line}` : ''}` : 'review' }}</span>
+                  — {{ comment.body.split('\n')[0] }}
+                  <a v-if="comment.url" href="#" class="pr-link" @click.prevent="ipcClient.openUrl(comment.url!)">mở</a>
+                </div>
+                <div v-if="!pr.error && !pr.open_comments.length" class="verify-detail">Không còn comment chưa xử lý.</div>
+              </div>
+              <div v-if="detail.verification.review" class="verify-review" :class="{ approved: detail.verification.review.verdict === 'approved' }">
+                <strong>Leader: {{ detail.verification.review.verdict === 'approved' ? '✓ Đạt' : '✗ Cần sửa' }}</strong>
+                — {{ detail.verification.review.summary }}
+                <div v-for="(comment, index) in detail.verification.review.comments" :key="index" class="verify-detail">
+                  [{{ comment.severity }}] {{ comment.file }}{{ comment.line ? `:${comment.line}` : '' }} — {{ comment.issue }}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -264,8 +363,19 @@
               </div>
               <div class="matrix-meta font-mono">
                 <span class="matrix-concurrency">
-                  {{ detail.run.roles.map((r) => `${r.role}→${r.cli}`).join(' · ') }}
+                  {{ detail.run.roles.map((r) => `${r.role}→${r.cli}${r.model ? `:${r.model}` : ''}`).join(' · ') }}
                 </span>
+                <button
+                  v-if="failedTasks.length > 0"
+                  type="button"
+                  class="btn btn-danger-ghost btn-xs"
+                  :disabled="!canEditTasks"
+                  :title="canEditTasks ? 'Giao các task lỗi cho một agent khác rồi chạy tiếp' : editHint"
+                  @click="showBulkReassign = true"
+                >
+                  <Users :size="12" />
+                  <span>Giao lại {{ failedTasks.length }} task lỗi</span>
+                </button>
               </div>
             </div>
 
@@ -296,6 +406,7 @@
                   >
                     <td class="col-task font-bold" :title="task.title">
                       <span class="task-key-tag">{{ task.key }}</span>
+                      <span v-if="task.batch > 0" class="task-batch" :title="detail.run.followups[task.batch - 1]?.request">tiếp #{{ task.batch }}</span>
                       <span v-if="isMultiRepo(detail.run.repos)" class="task-repos">{{ task.repos.join(', ') }}</span>
                     </td>
                     <td class="col-role">
@@ -333,7 +444,7 @@
                   <SearchCode :size="16" class="text-primary" />
                 </div>
                 <h3 class="inspector-title">Task Inspector: {{ selectedTask.key }}</h3>
-                <span class="inspector-badge font-mono">Agent: {{ selectedTask.cli }}</span>
+                <span class="inspector-badge font-mono">Agent: {{ selectedTask.cli }}{{ taskModel(selectedTask) ? ` · ${taskModel(selectedTask)}` : '' }}</span>
                 <span v-if="selectedTask.branch" class="inspector-badge font-mono">{{ selectedTask.branch }}</span>
                 <span class="inspector-badge warning font-mono">{{ roundText(selectedTask) }}</span>
               </div>
@@ -389,6 +500,11 @@
               </div>
             </div>
 
+            <div v-if="selectedTask.handoff" class="handoff-box">
+              <strong>Ghi chú bàn giao</strong> <span class="text-muted">(đưa cho các task sau)</span>
+              <pre class="handoff-text">{{ selectedTask.handoff }}</pre>
+            </div>
+
             <!-- Automated Verification Guard Strip -->
             <div v-if="(selectedTask.checks && selectedTask.checks.length) || selectedTask.out_of_scope.length" class="guard-strip font-mono">
               <div
@@ -411,18 +527,52 @@
             <!-- Workflow Controls -->
             <div class="inspector-footer">
               <div class="footer-left">
-                <select
-                  class="btn btn-secondary btn-sm reassign-select"
-                  :disabled="!canEditTasks || selectedTask.status === 'merged'"
-                  :title="canEditTasks ? 'Giao task cho CLI khác (phiên mới, cùng worktree)' : editHint"
-                  :value="''"
-                  @change="reassign($event)"
+                <label
+                  class="timeout-field"
+                  title="Timeout riêng của agent cho task này (từ lượt chạy tới); để trống = timeout của lượt chạy"
                 >
-                  <option value="" disabled>Giao lại cho agent khác ▾</option>
-                  <option v-for="cli in AGENT_CLIS" :key="cli" :value="cli" :disabled="cli === selectedTask.cli || !installed(cli)">
-                    {{ cli }}
-                  </option>
-                </select>
+                  <span>Timeout</span>
+                  <input
+                    type="number"
+                    min="1"
+                    :max="MAX_TIMEOUT_MINUTES"
+                    step="5"
+                    class="reassign-input timeout-input font-mono"
+                    v-model.number="timeoutDraft"
+                    :placeholder="String(detail.run.limits.timeout_minutes)"
+                    @focus="timeoutEditing = true"
+                    @blur="commitTimeout"
+                    @keydown.enter="($event.target as HTMLInputElement).blur()"
+                    @keydown.esc="cancelTimeout($event)"
+                  />
+                  <span>phút</span>
+                </label>
+                <div
+                  class="reassign-group"
+                  :title="canEditTasks ? 'Giao task cho agent khác (phiên mới, cùng worktree); model để trống = mặc định' : editHint"
+                >
+                  <select v-model="reassignCli" class="reassign-input" :disabled="!canReassign">
+                    <option v-for="cli in AGENT_CLIS" :key="cli" :value="cli" :disabled="!installed(cli)">{{ cli }}</option>
+                  </select>
+                  <input
+                    v-model="reassignModel"
+                    class="reassign-input reassign-model font-mono"
+                    :list="`studio-models-${reassignCli}`"
+                    :placeholder="profileModelHint(clis.find((info) => info.cli === reassignCli)?.profile, 'work')"
+                    :disabled="!canReassign"
+                  />
+                  <datalist :id="`studio-models-${reassignCli}`">
+                    <option v-for="item in modelsOf(reassignCli)" :key="item.id" :value="item.id">{{ item.label }}</option>
+                  </datalist>
+                  <button
+                    type="button"
+                    class="btn btn-secondary btn-sm"
+                    :disabled="!canReassign || (reassignCli === selectedTask.cli && (reassignModel.trim() || null) === selectedTask.model)"
+                    @click="reassign"
+                  >
+                    Giao lại
+                  </button>
+                </div>
 
                 <button
                   v-if="['failed', 'conflict', 'needs_human'].includes(selectedTask.status)"
@@ -444,6 +594,21 @@
                   @click="approveTask"
                 >
                   <span>Bỏ qua review</span>
+                </button>
+
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  :disabled="!canEditTasks || !selectedTask.worktree || ['merged', 'skipped'].includes(selectedTask.status)"
+                  :title="
+                    canEditTasks
+                      ? 'Leader review lại code hiện tại của task (gồm phần bạn sửa tay), sau khi chạy lại lệnh kiểm tra'
+                      : editHint
+                  "
+                  @click="rereviewTask"
+                >
+                  <SearchCode :size="12" />
+                  <span>Review lại</span>
                 </button>
 
                 <button
@@ -471,9 +636,17 @@
           </div>
 
           <!-- Agent Activity -->
-          <div class="card pty-monitor-card">
+          <div class="card pty-monitor-card" :class="{ collapsed: activityCardCollapsed }">
             <div class="pty-header font-mono">
-              <div class="pty-title">
+              <div
+                class="pty-title"
+                :title="activityCardCollapsed ? 'Bấm để mở rộng Hoạt động agent' : 'Bấm để thu gọn Hoạt động agent'"
+                @click="activityCardCollapsed = !activityCardCollapsed"
+              >
+                <button type="button" class="card-collapse-btn" :title="activityCardCollapsed ? 'Mở rộng' : 'Thu gọn'">
+                  <ChevronRight v-if="activityCardCollapsed" :size="13" />
+                  <ChevronDown v-else :size="13" />
+                </button>
                 <span class="stream-dot" :class="{ idle: !runningInvocation }"></span>
                 <span class="font-bold text-text-primary">Hoạt động agent</span>
               </div>
@@ -483,26 +656,76 @@
                   <span>•</span>
                   <span class="text-status-running">{{ runningInvocation.cli }} đang chạy…</span>
                 </template>
+                <div v-show="!activityCardCollapsed" class="activity-toggle">
+                  <template v-if="activityView === 'terminals'">
+                    <button
+                      type="button"
+                      :class="{ active: lanesLayout === 'grid' }"
+                      title="Bố cục dạng lưới (Grid)"
+                      @click="setLanesLayout('grid')"
+                    >
+                      <LayoutGrid :size="12" /> Lưới
+                    </button>
+                    <button
+                      type="button"
+                      :class="{ active: lanesLayout === 'list' }"
+                      title="Bố cục dạng danh sách (List)"
+                      @click="setLanesLayout('list')"
+                    >
+                      <Rows3 :size="12" /> Danh sách
+                    </button>
+                    <button
+                      type="button"
+                      class="collapse-all-btn"
+                      :title="allLanesCollapsed ? 'Mở rộng tất cả agent' : 'Thu gọn tất cả agent'"
+                      @click="toggleAllLanesCollapse"
+                    >
+                      <ChevronsDownUp v-if="!allLanesCollapsed" :size="12" />
+                      <ChevronsUpDown v-else :size="12" />
+                      <span>{{ allLanesCollapsed ? 'Mở hết' : 'Thu gọn' }}</span>
+                    </button>
+                  </template>
+                  <button
+                    type="button"
+                    :class="{ active: activityView === 'list' }"
+                    title="Mọi lượt gọi theo thời gian"
+                    @click="setActivityView(activityView === 'list' ? 'terminals' : 'list')"
+                  >
+                    <ScrollText :size="12" /> {{ activityView === 'list' ? 'Terminal' : 'Nhật ký' }}
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div class="pty-viewport font-mono custom-scrollbar">
-              <div v-if="detail.invocations.length === 0" class="pty-line text-muted">Chưa có agent nào chạy.</div>
-              <button
-                v-for="inv in [...detail.invocations].reverse()"
-                :key="inv.id"
-                type="button"
-                class="pty-line activity-line"
-                :class="inv.ok === false ? 'text-warning' : inv.finished_at ? 'text-muted' : 'text-status-running'"
-                title="Mở log của lượt gọi này"
-                @click="openLog(inv)"
-              >
-                [{{ clock(inv.started_at) }}] [{{ inv.cli }}] {{ STEP_LABELS[inv.step] || inv.step }}{{ taskKeyOf(inv) ? ` · ${taskKeyOf(inv)}` : '' }}
-                <template v-if="!inv.finished_at"> — đang chạy…</template>
-                <template v-else-if="inv.ok"> — ✓ {{ formatTokens(inv.input_tokens + inv.output_tokens) }} token</template>
-                <template v-else> — ✗ {{ inv.error }}</template>
-              </button>
-            </div>
+            <template v-if="!activityCardCollapsed">
+              <AgentLanes
+                v-if="activityView === 'terminals'"
+                ref="agentLanesRef"
+                :invocations="detail.invocations"
+                :tasks="detail.tasks"
+                :leader-cli="detail.run.leader_cli"
+                :layout="lanesLayout"
+                @expand="openLog"
+                @collapse-change="allLanesCollapsed = $event"
+              />
+              <div v-else class="pty-viewport font-mono custom-scrollbar">
+                <div v-if="detail.invocations.length === 0" class="pty-line text-muted">Chưa có agent nào chạy.</div>
+                <button
+                  v-for="inv in [...detail.invocations].reverse()"
+                  :key="inv.id"
+                  type="button"
+                  class="pty-line activity-line"
+                  :class="inv.ok === false ? 'text-warning' : inv.finished_at ? 'text-muted' : 'text-status-running'"
+                  title="Mở log của lượt gọi này"
+                  @click="openLog(inv)"
+                >
+                  [{{ clock(inv.started_at) }}] [{{ inv.cli }}] {{ STEP_LABELS[inv.step] || inv.step }}{{ taskKeyOf(inv) ? ` · ${taskKeyOf(inv)}` : '' }}
+                  <template v-if="!inv.finished_at"> — đang chạy…</template>
+                  <template v-else-if="inv.ok"> — ✓ {{ formatTokens(inv.input_tokens + inv.output_tokens) }} token</template>
+                  <template v-else> — ✗ {{ inv.error }}</template>
+                </button>
+              </div>
+            </template>
           </div>
         </template>
       </main>
@@ -514,13 +737,20 @@
         <span class="metric-pill">
           Chi phí lượt này:
           <strong>
-            {{ formatTokens(detail.usage.input_tokens + detail.usage.output_tokens) }} token{{ detail.usage.cost_usd > 0 ? ` (~$${detail.usage.cost_usd.toFixed(2)})` : '' }}
+            {{ formatTokens(detail.usage.input_tokens + detail.usage.output_tokens) }} token{{ ` (~$${detail.usage.cost_usd.toFixed(2)} / $${detail.run.limits.max_cost_usd})` }}
           </strong>
         </span>
         <span class="metric-separator">•</span>
         <span class="metric-pill">Agent đang chạy: <strong>{{ runningInvocation ? 1 : 0 }}</strong></span>
         <span class="metric-separator">•</span>
         <span class="metric-pill">Đã gọi: <strong>{{ detail.usage.invocations }}/{{ detail.run.limits.max_invocations }} lượt</strong></span>
+        <span class="metric-separator">•</span>
+        <template v-for="item in quotaPills" :key="item.cli">
+          <span class="metric-separator">•</span>
+          <span class="metric-pill" :class="{ 'quota-hot': item.hot }" :title="item.title">
+            Hạn mức {{ item.cli }}: <strong>{{ item.text }}</strong>
+          </span>
+        </template>
         <span class="metric-separator">•</span>
         <span class="metric-pill text-muted">Base: {{ detail.run.base_commit.slice(0, 8) }}</span>
       </div>
@@ -541,6 +771,46 @@
       @close="showNewRunModal = false"
     />
 
+    <AttachPrModal
+      :visible="showAttachPr"
+      :run="detail?.run ?? null"
+      @attached="(run) => notify(`Đã gắn PR: ${run.pull_requests.map((pr) => pr.url).join(' · ')}`, 'info')"
+      @close="showAttachPr = false"
+    />
+
+    <OpenPrModal
+      :visible="showOpenPr"
+      :run-id="detail?.run.id ?? null"
+      :run-title="detail?.run.title ?? ''"
+      @opened="(urls: string[]) => notify(`Đã mở PR: ${urls.join(' · ')}`, 'info')"
+      @close="showOpenPr = false"
+    />
+
+    <BulkReassignModal
+      :visible="showBulkReassign"
+      :tasks="failedTasks"
+      :clis="clis"
+      :submit="bulkReassign"
+      @close="showBulkReassign = false"
+    />
+
+    <RunModelsModal
+      :visible="showModels"
+      :run="detail?.run ?? null"
+      :clis="clis"
+      :driving="!!detail?.driving"
+      :save="saveModels"
+      @close="showModels = false"
+    />
+
+    <FollowUpModal
+      :visible="showFollowUp"
+      :subtitle="detail?.run.title ?? ''"
+      :merged="detail?.run.status === 'merged'"
+      :submit="followUp"
+      @close="showFollowUp = false"
+    />
+
     <PlanGateModal
       :visible="showPlanGateModal"
       :detail="detail"
@@ -556,6 +826,14 @@
       :detail="detail"
       :merge="mergeRun"
       :keep="keepRun"
+      @open-pr="
+        showMergeGateModal = false;
+        showOpenPr = true;
+      "
+      @attach-pr="
+        showMergeGateModal = false;
+        showAttachPr = true;
+      "
       :discard="discardFromGate"
       @close="showMergeGateModal = false"
       @inspect-diff="showRunDiff"
@@ -637,6 +915,11 @@ import {
   Check,
   Layers,
   SearchCode,
+  LayoutGrid,
+  List,
+  MessageSquarePlus,
+  Cpu,
+  ShieldCheck,
   Terminal,
   FileCode,
   Folder,
@@ -649,12 +932,25 @@ import {
   XCircle,
   Trash2,
   RotateCcw,
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Rows3,
+  ScrollText,
 } from 'lucide-vue-next';
 import NewAgentRunModal from '@/components/dialogs/NewAgentRunModal.vue';
 import PlanGateModal from '@/components/dialogs/PlanGateModal.vue';
 import MergeGateModal from '@/components/dialogs/MergeGateModal.vue';
 import AgentTeamModal from '@/components/dialogs/AgentTeamModal.vue';
 import AgentDiffModal from '@/components/dialogs/AgentDiffModal.vue';
+import AgentLanes from '@/views/agents/AgentLanes.vue';
+import { useAgentModels } from '@/composables/useAgentModels';
+import FollowUpModal from '@/components/dialogs/FollowUpModal.vue';
+import RunModelsModal from '@/components/dialogs/RunModelsModal.vue';
+import BulkReassignModal from '@/components/dialogs/BulkReassignModal.vue';
+import OpenPrModal from '@/components/dialogs/OpenPrModal.vue';
+import AttachPrModal from '@/components/dialogs/AttachPrModal.vue';
 import PromptDialog from '@/components/dialogs/PromptDialog.vue';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import { ipcClient } from '@/ipc/client';
@@ -670,10 +966,15 @@ import type {
   RunDetail,
   RunStage,
   RunSummary,
+  RunLimits,
+  RoleCli,
+  CheckProposal,
   TaskDraft,
 } from '@/types/agents';
 import {
   AGENT_CLIS,
+  MAX_TIMEOUT_MINUTES,
+  profileModelHint,
   RUN_STATUS_LABELS,
   STAGE_LABELS,
   TASK_STATUS_LABELS,
@@ -698,6 +999,7 @@ const STEP_LABELS: Record<string, string> = {
   implement: 'triển khai',
   fix: 'sửa',
   review: 'review',
+  verify: 'verify PR',
 };
 
 const route = useRoute();
@@ -760,7 +1062,95 @@ const duration = (run: Pick<AgentRun, 'created_at' | 'finished_at'>) => {
 const clock = (unix: string) =>
   new Date(Number(unix) * 1000).toLocaleTimeString('vi-VN', { hour12: false });
 
+/** How agent activity is shown; remembered on this machine. */
+const ACTIVITY_VIEW_KEY = 'agent-studio.activity-view';
+const readActivityView = (): 'terminals' | 'list' => {
+  try {
+    return localStorage.getItem(ACTIVITY_VIEW_KEY) === 'list' ? 'list' : 'terminals';
+  } catch {
+    return 'terminals';
+  }
+};
+const activityView = ref(readActivityView());
+const setActivityView = (view: 'terminals' | 'list') => {
+  activityView.value = view;
+  try {
+    localStorage.setItem(ACTIVITY_VIEW_KEY, view);
+  } catch {
+    // Not remembered; the view still switches.
+  }
+};
+
+/** Terminal lanes layout mode (grid or list); remembered on this machine. */
+const LANES_LAYOUT_KEY = 'agent-studio.lanes-layout';
+const readLanesLayout = (): 'grid' | 'list' => {
+  try {
+    return localStorage.getItem(LANES_LAYOUT_KEY) === 'list' ? 'list' : 'grid';
+  } catch {
+    return 'grid';
+  }
+};
+const lanesLayout = ref<'grid' | 'list'>(readLanesLayout());
+const setLanesLayout = (layout: 'grid' | 'list') => {
+  lanesLayout.value = layout;
+  try {
+    localStorage.setItem(LANES_LAYOUT_KEY, layout);
+  } catch {
+    // ignore
+  }
+};
+
+const activityCardCollapsed = ref(false);
+const agentLanesRef = ref<InstanceType<typeof AgentLanes> | null>(null);
+const allLanesCollapsed = ref(false);
+
+const toggleAllLanesCollapse = () => {
+  allLanesCollapsed.value = !allLanesCollapsed.value;
+  agentLanesRef.value?.setAllCollapsed(allLanesCollapsed.value);
+};
+
 const formatTokens = (n: number) => (n >= 10000 ? `${Math.round(n / 1000)}k` : String(n));
+
+/** Unix seconds as a local time, with the day when it is not today. */
+const formatClock = (unix: number) => {
+  const date = new Date(unix * 1000);
+  const time = date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  return date.toDateString() === new Date().toDateString()
+    ? time
+    : `${time} ${date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}`;
+};
+
+/** Account usage of the run's CLIs, as they last reported it. */
+const quotaPills = computed(() => {
+  const run = detail.value?.run;
+  if (!run) return [];
+  const used = new Set<AgentCli>([run.leader_cli, ...run.roles.map((role) => role.cli)]);
+  const pills = [];
+  for (const cli of AGENT_CLIS) {
+    const quota = detail.value?.quotas[cli];
+    if (!quota || !used.has(cli)) continue;
+    const parts: string[] = [];
+    const titles: string[] = [];
+    let worst = 0;
+    for (const [name, window] of [
+      ['5h', quota.five_hour],
+      ['7 ngày', quota.seven_day],
+    ] as const) {
+      if (!window) continue;
+      worst = Math.max(worst, window.utilization);
+      parts.push(`${name} ${Math.round(window.utilization * 100)}%`);
+      titles.push(`${name}: reset lúc ${formatClock(window.resets_at)}`);
+    }
+    const threshold = run.limits.quota_pause_percent / 100;
+    pills.push({
+      cli,
+      text: quota.rejected ? 'đã hết' : parts.join(' · '),
+      title: titles.join('\n'),
+      hot: quota.rejected || (threshold > 0 && worst >= threshold - 0.1),
+    });
+  }
+  return pills;
+});
 
 /** Colour family of a run, for the dot and badge classes. */
 const runTone = (run: Pick<AgentRun, 'status'>) => {
@@ -1007,8 +1397,13 @@ const openGate = (stage: RunStage) => {
   if (stage === 'merge_gate') showMergeGateModal.value = true;
 };
 
-const approvePlan = async (data: { design: string; contract: string; tasks: TaskDraft[] }) => {
-  await ipcClient.agentsPlanApprove(detail.value!.run.id, data.design, data.contract, data.tasks);
+const approvePlan = async (data: {
+  design: string;
+  contract: string;
+  tasks: TaskDraft[];
+  checks: CheckProposal[];
+}) => {
+  await ipcClient.agentsPlanApprove(detail.value!.run.id, data.design, data.contract, data.tasks, data.checks);
   await reload();
 };
 
@@ -1105,12 +1500,33 @@ const stopNow = () => {
   );
 };
 
-const reassign = (event: Event) => {
-  const select = event.target as HTMLSelectElement;
-  const cli = select.value as AgentCli;
-  select.value = '';
-  if (!cli || !selectedTask.value) return;
-  void act(() => ipcClient.agentsTaskReassign(selectedTask.value!.id, cli));
+/** The model a task's worker runs with: its own, its role's, the profile's. */
+const taskModel = (task: AgentTask) => {
+  const role = detail.value?.run.roles.find((r) => r.role === task.role && r.cli === task.cli);
+  const profile = clis.value.find((info) => info.cli === task.cli)?.profile;
+  return task.model || role?.model || profile?.steps?.work?.model || profile?.model || '';
+};
+
+const { modelsOf } = useAgentModels();
+
+const reassignCli = ref<AgentCli>('claude');
+const reassignModel = ref('');
+const canReassign = computed(() => canEditTasks.value && selectedTask.value?.status !== 'merged');
+
+// The picker starts from the selected task's agent.
+watch(
+  () => selectedTask.value?.id,
+  () => {
+    reassignCli.value = selectedTask.value?.cli ?? 'claude';
+    reassignModel.value = selectedTask.value?.model ?? '';
+  },
+  { immediate: true }
+);
+
+const reassign = () => {
+  const task = selectedTask.value;
+  if (!task) return;
+  void act(() => ipcClient.agentsTaskReassign(task.id, reassignCli.value, reassignModel.value.trim() || null));
 };
 
 const approveTask = () => {
@@ -1123,6 +1539,19 @@ const approveTask = () => {
       confirmText: 'Merge task',
     },
     () => ipcClient.agentsTaskApprove(task.id)
+  );
+};
+
+const rereviewTask = () => {
+  const task = selectedTask.value;
+  if (!task) return;
+  ask(
+    {
+      title: 'Leader Review Lại',
+      message: `Leader review lại ${task.key} với code hiện tại trong worktree (phần sửa tay được commit trước), sau khi chạy lại lệnh kiểm tra. Đạt thì merge; chưa đạt thì nhận xét mới hiện ra để bạn chọn Thử lại hoặc Yêu cầu sửa.`,
+      confirmText: 'Review lại',
+    },
+    () => ipcClient.agentsTaskRereview(task.id)
   );
 };
 
@@ -1144,6 +1573,111 @@ const requestFix = (feedback: string) => {
   fixPromptVisible.value = false;
   if (!feedback || !selectedTask.value) return;
   void act(() => ipcClient.agentsTaskRequestFix(selectedTask.value!.id, feedback));
+};
+
+const showFollowUp = ref(false);
+const showModels = ref(false);
+const showBulkReassign = ref(false);
+const showOpenPr = ref(false);
+const showAttachPr = ref(false);
+const verifying = ref(false);
+
+/** Verify PR: may take a minute (fetch, leader review); may start a follow-up. */
+const verifyPrs = async () => {
+  const run = detail.value?.run;
+  if (!run || verifying.value) return;
+  verifying.value = true;
+  try {
+    const found = await ipcClient.agentsRunVerifyPrs(run.id);
+    const open = found.prs.reduce((sum, pr) => sum + pr.open_comments.length, 0);
+    notify(
+      found.followed_up
+        ? `Verify PR: còn ${open} comment / điểm cần sửa — đã tạo vòng làm tiếp`
+        : found.note ?? `Verify PR xong: ${found.review?.verdict === 'approved' ? 'leader đạt' : 'xem kết quả'}`,
+      'info'
+    );
+    await reload();
+  } catch (error) {
+    notify(errorText(error));
+  } finally {
+    verifying.value = false;
+  }
+};
+
+/** Tasks that stopped and wait for a person: failed or out of review rounds. */
+const failedTasks = computed(
+  () => detail.value?.tasks.filter((task) => task.status === 'failed' || task.status === 'needs_human') ?? []
+);
+
+/** Errors stay in the modal; the change events reload the view. */
+const bulkReassign = async (
+  taskIds: string[],
+  cli: AgentCli,
+  model: string | null,
+  effort: string | null,
+  timeoutMinutes: number | null
+) => {
+  if (detail.value) {
+    await ipcClient.agentsTasksReassign(detail.value.run.id, taskIds, cli, model, effort, timeoutMinutes);
+  }
+};
+
+const saveModels = async (
+  leader: { model: string | null; effort: string | null } | null,
+  roles: RoleCli[] | null,
+  limits: RunLimits
+) => {
+  const run = detail.value?.run;
+  if (!run) return;
+  await ipcClient.agentsRunSetLimits(run.id, limits);
+  if (leader && roles) await ipcClient.agentsRunSetModels(run.id, leader, roles);
+};
+
+/**
+ * A task's own agent timeout; empty: the run's. The field edits a draft:
+ * while a run is going the view reloads all the time and must not overwrite
+ * what is being typed.
+ */
+const timeoutDraft = ref<number | ''>('');
+const timeoutEditing = ref(false);
+
+watch(
+  () => [selectedTask.value?.id, selectedTask.value?.timeout_minutes] as const,
+  ([, saved]) => {
+    if (!timeoutEditing.value) timeoutDraft.value = saved ?? '';
+  },
+  { immediate: true }
+);
+
+const commitTimeout = async () => {
+  timeoutEditing.value = false;
+  const task = selectedTask.value;
+  if (!task) return;
+  const minutes = typeof timeoutDraft.value === 'number' && timeoutDraft.value > 0 ? timeoutDraft.value : null;
+  if (minutes === task.timeout_minutes) return;
+  try {
+    await ipcClient.agentsTaskSetTimeout(task.id, minutes);
+    notify(
+      minutes
+        ? `Timeout của ${task.key}: ${minutes} phút (từ lượt agent tới)`
+        : `${task.key} dùng timeout của lượt chạy`,
+      'info'
+    );
+    await reload();
+  } catch (error) {
+    notify(errorText(error));
+    timeoutDraft.value = task.timeout_minutes ?? '';
+  }
+};
+
+const cancelTimeout = (event: KeyboardEvent) => {
+  timeoutDraft.value = selectedTask.value?.timeout_minutes ?? '';
+  (event.target as HTMLInputElement).blur();
+};
+
+/** Errors stay in the modal; the change events reload the view. */
+const followUp = async (request: string) => {
+  if (detail.value) await ipcClient.agentsRunFollowUp(detail.value.run.id, request);
 };
 
 const openLog = async (inv: AgentInvocation) => {
@@ -1492,6 +2026,8 @@ onUnmounted(() => {
 /* Dashboard Area */
 .run-dashboard {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   padding: 14px;
   overflow-y: auto;
   display: flex;
@@ -1504,10 +2040,12 @@ onUnmounted(() => {
   border: 1px solid var(--border-subtle, #242a3e);
   border-radius: 8px;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 /* Hero card */
 .run-hero-card {
+  flex-shrink: 0;
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
@@ -1635,6 +2173,7 @@ onUnmounted(() => {
 
 /* Matrix Table Card */
 .matrix-card {
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
 }
@@ -1655,6 +2194,12 @@ onUnmounted(() => {
   font-size: 11px;
   font-weight: 700;
   color: var(--text-primary, #f1f5f9);
+}
+
+.matrix-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .matrix-concurrency {
@@ -1766,6 +2311,7 @@ onUnmounted(() => {
 
 /* Inspector Card */
 .inspector-card {
+  flex-shrink: 0;
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
@@ -1811,6 +2357,127 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.spin {
+  animation: verify-spin 1s linear infinite;
+}
+
+@keyframes verify-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.verify-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  font-size: 11px;
+  border: 1px solid var(--border-subtle, #242a3e);
+  border-radius: 6px;
+}
+
+.verify-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: #e4b5ff;
+}
+
+.verify-pr {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.verify-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.verify-tag {
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--text-secondary, #94a3b8);
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.verify-tag.ok {
+  color: #4edea3;
+}
+
+.verify-tag.bad,
+.verify-warn,
+.verify-warn-text {
+  color: var(--status-failed, #ef4444);
+}
+
+.verify-detail,
+.verify-comment {
+  color: var(--text-secondary, #94a3b8);
+}
+
+.verify-review {
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle, #242a3e);
+  color: #f87171;
+}
+
+.verify-review.approved {
+  color: #4edea3;
+}
+
+.pr-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #e4b5ff;
+}
+
+.pr-link {
+  color: #60a5fa;
+  text-decoration: none;
+}
+
+.pr-link:hover {
+  text-decoration: underline;
+}
+
+.task-batch {
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 3px;
+  color: #e4b5ff;
+  background-color: rgba(116, 71, 145, 0.25);
+}
+
+.handoff-box {
+  padding: 8px 12px;
+  font-size: 11px;
+  border: 1px solid var(--border-subtle, #242a3e);
+  border-radius: 6px;
+  background-color: rgba(96, 165, 250, 0.05);
+}
+
+.handoff-text {
+  max-height: 180px;
+  margin: 6px 0 0;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--text-secondary, #94a3b8);
 }
 
 .review-alert-box {
@@ -1923,6 +2590,8 @@ onUnmounted(() => {
 
 /* PTY Monitor */
 .pty-monitor-card {
+  /* Terminals keep their height; the dashboard scrolls. */
+  flex-shrink: 0;
   padding: 10px 14px;
   display: flex;
   flex-direction: column;
@@ -1942,6 +2611,24 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.card-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px;
+  color: var(--text-muted, #64748b);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.pty-title:hover .card-collapse-btn {
+  color: var(--text-primary, #f1f5f9);
 }
 
 .stream-dot {
@@ -1957,6 +2644,50 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 10px;
+}
+
+.activity-toggle {
+  display: flex;
+  margin-left: 6px;
+  border: 1px solid var(--border-subtle, #242a3e);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.activity-toggle button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-muted, #64748b);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.activity-toggle button:hover {
+  color: var(--text-primary, #f1f5f9);
+}
+
+.activity-toggle button.active {
+  color: var(--text-primary, #f1f5f9);
+  background-color: rgba(116, 71, 145, 0.3);
+}
+
+.collapse-all-btn {
+  border-left: 1px solid var(--border-subtle, #242a3e) !important;
+  border-right: 1px solid var(--border-subtle, #242a3e) !important;
+}
+
+.pty-monitor-card.collapsed {
+  gap: 0;
+}
+
+.pty-monitor-card.collapsed .pty-header {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
 .pty-viewport {
@@ -1987,6 +2718,10 @@ onUnmounted(() => {
 }
 
 .footer-metrics,
+.quota-hot strong {
+  color: var(--status-failed, #ef4444);
+}
+
 .footer-telemetry {
   display: flex;
   align-items: center;
@@ -2260,8 +2995,36 @@ onUnmounted(() => {
   border-color: rgba(239, 68, 68, 0.4);
 }
 
-.reassign-select {
-  appearance: none;
+.reassign-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reassign-input {
+  height: 28px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--text-primary, #f1f5f9);
+  background-color: var(--bg-app-base, #0f1117);
+  border: 1px solid var(--border-subtle, #242a3e);
+  border-radius: 4px;
+}
+
+.reassign-model {
+  width: 150px;
+}
+
+.timeout-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted, #64748b);
+}
+
+.timeout-input {
+  width: 64px;
 }
 
 .stream-dot.idle {

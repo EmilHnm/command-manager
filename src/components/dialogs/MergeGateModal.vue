@@ -167,6 +167,27 @@
             <span>Giữ nhánh, tự xử lý</span>
           </button>
 
+          <button
+            type="button"
+            class="btn btn-secondary"
+            :disabled="busy"
+            title="Push nhánh tích hợp lên origin và mở pull request bằng gh"
+            @click="emit('open-pr')"
+          >
+            <GitPullRequest :size="14" />
+            <span>Push &amp; tạo PR</span>
+          </button>
+
+          <button
+            type="button"
+            class="btn btn-ghost"
+            :disabled="busy"
+            title="Đã tạo PR bằng tay: gắn link vào lượt chạy"
+            @click="emit('attach-pr')"
+          >
+            <span>Đã có PR…</span>
+          </button>
+
           <button type="button" class="btn btn-primary btn-merge" :disabled="busy" @click="handleMerge">
             <Check :size="15" />
             <span>{{ multi ? `Merge vào nhánh gốc của ${detail.run.repos.length} repo (local)` : `Merge vào ${detail.run.base_branch} (local)` }}</span>
@@ -202,6 +223,7 @@ import {
   GitBranch,
   XCircle,
   Check,
+  GitPullRequest,
 } from 'lucide-vue-next';
 import type { AgentTask, DiffStat, RunDetail } from '@/types/agents';
 import { TASK_STATUS_LABELS, isMultiRepo } from '@/types/agents';
@@ -219,6 +241,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'inspect-diff'): void;
+  (e: 'open-pr'): void;
+  (e: 'attach-pr'): void;
   (e: 'open-terminal'): void;
 }>();
 

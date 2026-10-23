@@ -8,13 +8,17 @@
 use super::commands::{buffer_bytes, StatusEvent};
 use super::{events, AppState};
 use crate::agents::adapter::{self, Cli};
-use crate::agents::engine::{AgentEnv, Engine, NewRun, RunDetail};
+use crate::agents::engine::{
+    AgentEnv, AttachPr, Engine, NewRun, PrRequest, RunDetail, Verification,
+};
 use crate::agents::git;
 use crate::agents::log::AgentLog;
+use crate::agents::models::{self, ModelInfo};
 use crate::agents::workspace;
 use crate::clock::now_unix;
 use crate::db::repos::agents::{
-    self as repo, task_status, CliProfile, Limits, Project, ProjectSettings, Run, TaskDraft, Usage,
+    self as repo, task_status, CheckProposal, CliProfile, Limits, Project, ProjectSettings,
+    RoleCli, Run, TaskDraft, Usage,
 };
 use crate::db::Db;
 use crate::error::{Error, Result};
@@ -27,6 +31,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 pub struct AgentsState {
     pub engine: Arc<Engine>,
+    /// Model lists read from the CLIs, until asked to read them again.
+    models: tokio::sync::Mutex<std::collections::HashMap<&'static str, Vec<ModelInfo>>>,
 }
 
 impl AgentsState {
@@ -40,6 +46,7 @@ impl AgentsState {
         });
         Self {
             engine: Engine::new(Arc::new(TauriAgentEnv { app: app.clone() })),
+            models: Default::default(),
         }
     }
 }
@@ -170,6 +177,26 @@ pub async fn agents_detect(app: AppHandle) -> Result<Vec<CliInfo>> {
         });
     }
     Ok(out)
+}
+
+/// The models `cli` offers, for suggestions; read once, then from memory
+/// unless `refresh`.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_models(app: AppHandle, cli: String, refresh: bool) -> Result<Vec<ModelInfo>> {
+    let cli = Cli::parse(&cli)?;
+    let state = app.state::<AgentsState>();
+    // Held while reading: several fields asking at once read the CLI once.
+    let mut cache = state.models.lock().await;
+    if !refresh {
+        if let Some(models) = cache.get(cli.as_str()) {
+            return Ok(models.clone());
+        }
+    }
+    let program =
+        adapter::find(cli).ok_or_else(|| Error::msg(format!("Chưa cài {}", cli.as_str())))?;
+    let models = models::list(cli, &program).await?;
+    cache.insert(cli.as_str(), models.clone());
+    Ok(models)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -339,8 +366,9 @@ pub async fn agents_plan_approve(
     design: String,
     contract: String,
     tasks: Vec<TaskDraft>,
+    checks: Option<Vec<CheckProposal>>,
 ) -> Result<()> {
-    engine(&app).approve_plan(&run_id, design, contract, tasks)
+    engine(&app).approve_plan(&run_id, design, contract, tasks, checks.unwrap_or_default())
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -361,6 +389,68 @@ pub async fn agents_run_merge(app: AppHandle, run_id: String) -> Result<()> {
 #[tauri::command(rename_all = "snake_case")]
 pub async fn agents_run_keep(app: AppHandle, run_id: String) -> Result<()> {
     engine(&app).keep_branch(&run_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_run_set_models(
+    app: AppHandle,
+    run_id: String,
+    leader_model: Option<String>,
+    leader_effort: Option<String>,
+    roles: Vec<RoleCli>,
+) -> Result<()> {
+    engine(&app).set_models(&run_id, leader_model, leader_effort, roles)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_tasks_reassign(
+    app: AppHandle,
+    run_id: String,
+    task_ids: Vec<String>,
+    cli: String,
+    model: Option<String>,
+    effort: Option<String>,
+    timeout_minutes: Option<u32>,
+) -> Result<()> {
+    engine(&app).reassign_tasks(&run_id, &task_ids, &cli, model, effort, timeout_minutes)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_task_set_timeout(
+    app: AppHandle,
+    task_id: String,
+    timeout_minutes: Option<u32>,
+) -> Result<()> {
+    engine(&app).set_task_timeout(&task_id, timeout_minutes)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_run_follow_up(app: AppHandle, run_id: String, request: String) -> Result<()> {
+    engine(&app).follow_up(&run_id, request).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_pr_draft(app: AppHandle, run_id: String) -> Result<PrRequest> {
+    engine(&app).pr_draft(&run_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_run_open_prs(
+    app: AppHandle,
+    run_id: String,
+    request: PrRequest,
+) -> Result<Run> {
+    engine(&app).open_pull_requests(&run_id, request).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_run_attach_pr(app: AppHandle, run_id: String, attach: AttachPr) -> Result<Run> {
+    engine(&app).attach_pull_request(&run_id, attach).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_run_verify_prs(app: AppHandle, run_id: String) -> Result<Verification> {
+    engine(&app).verify_pull_requests(&run_id).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -408,8 +498,19 @@ pub async fn agents_task_skip(app: AppHandle, task_id: String) -> Result<()> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn agents_task_reassign(app: AppHandle, task_id: String, cli: String) -> Result<()> {
-    engine(&app).reassign_task(&task_id, &cli)
+pub async fn agents_task_rereview(app: AppHandle, task_id: String) -> Result<()> {
+    engine(&app).rereview_task(&task_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_task_reassign(
+    app: AppHandle,
+    task_id: String,
+    cli: String,
+    model: Option<String>,
+    effort: Option<String>,
+) -> Result<()> {
+    engine(&app).reassign_task(&task_id, &cli, model, effort)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -444,6 +545,10 @@ pub async fn agents_open_log(app: AppHandle, invocation_id: String) -> Result<St
     let id = invocation.terminal_id.clone();
     if state.processes.get(&id).is_some() || state.processes.finished(&id).is_some() {
         return Ok(id);
+    }
+    if invocation.finished_at.is_none() {
+        // Between the database row and its tab: the tab comes in a moment.
+        return Err(Error::msg("Agent đang khởi động"));
     }
     let cli = Cli::parse(&invocation.cli)?;
     let raw = crate::app::data_dir(&app)
