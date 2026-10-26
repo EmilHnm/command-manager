@@ -2124,7 +2124,7 @@ impl Engine {
         }
         let run = self.db().read(|c| repo::run_get(c, &task.run_id))?;
         let project = self.project(&run)?;
-        let integration = self.integration_dir(&run.id);
+        let integration = self.integration_dir(&run);
         let cwd = if integration.exists() {
             integration
         } else {
@@ -3325,7 +3325,7 @@ impl Engine {
     /// leader's worktree when there is one (its branch is checked out
     /// there), else the branch alone.
     async fn move_integration(&self, run: &Run, root: &Path, repo: &str, head: &str) -> Result<()> {
-        let dir = workspace::repo_dir(&self.integration_dir(&run.id), repo);
+        let dir = workspace::repo_dir(&self.integration_dir(run), repo);
         if dir.join(".git").exists() {
             git::reset_worktree(&dir, head).await
         } else {
