@@ -9,7 +9,7 @@ use super::commands::{buffer_bytes, StatusEvent};
 use super::{events, AppState};
 use crate::agents::adapter::{self, Cli};
 use crate::agents::engine::{
-    AgentEnv, AttachPr, Engine, NewRun, PrRequest, RunDetail, Verification,
+    AgentEnv, AiPush, AttachPr, Engine, NewRun, PendingPush, PrRequest, RunDetail, Verification,
 };
 use crate::agents::git;
 use crate::agents::log::AgentLog;
@@ -425,8 +425,15 @@ pub async fn agents_task_set_timeout(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn agents_run_follow_up(app: AppHandle, run_id: String, request: String) -> Result<()> {
-    engine(&app).follow_up(&run_id, request).await
+pub async fn agents_run_follow_up(
+    app: AppHandle,
+    run_id: String,
+    request: String,
+    push_pr: Option<bool>,
+) -> Result<()> {
+    engine(&app)
+        .follow_up(&run_id, request, push_pr.unwrap_or(false))
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -449,6 +456,70 @@ pub async fn agents_run_attach_pr(app: AppHandle, run_id: String, attach: Attach
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn agents_pr_pending(app: AppHandle, run_id: String) -> Result<Vec<PendingPush>> {
+    engine(&app).pending_pushes(&run_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_run_push_prs(app: AppHandle, run_id: String) -> Result<Run> {
+    engine(&app).push_to_pull_requests(&run_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_run_ai_push(app: AppHandle, run_id: String, request: AiPush) -> Result<()> {
+    engine(&app).ai_push(&run_id, request)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_human_submit(
+    app: AppHandle,
+    task_id: String,
+    results: Vec<repo::CaseResult>,
+    passed: bool,
+    note: String,
+    attachments: Vec<String>,
+) -> Result<()> {
+    engine(&app).submit_human_test(&task_id, results, passed, note, attachments)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_human_reprepare(app: AppHandle, task_id: String) -> Result<()> {
+    engine(&app).reprepare_human(&task_id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_human_chat(
+    app: AppHandle,
+    task_id: String,
+    message: String,
+) -> Result<repo::ChatMessage> {
+    engine(&app).human_chat(&task_id, message).await
+}
+
+/// A screenshot, as base64 (pasted or picked in the page).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_human_attach(
+    app: AppHandle,
+    task_id: String,
+    name: String,
+    data: String,
+) -> Result<String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|error| Error::msg(format!("Ảnh không đọc được: {error}")))?;
+    engine(&app).human_attach(&task_id, &name, &bytes)
+}
+
+/// A screenshot of a person's task, as base64.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_human_file(app: AppHandle, task_id: String, name: String) -> Result<String> {
+    use base64::Engine as _;
+    let bytes = engine(&app).human_file(&task_id, &name)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn agents_run_verify_prs(app: AppHandle, run_id: String) -> Result<Verification> {
     engine(&app).verify_pull_requests(&run_id).await
 }
@@ -459,8 +530,13 @@ pub async fn agents_run_discard(app: AppHandle, run_id: String) -> Result<()> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn agents_run_clean_worktrees(app: AppHandle, run_id: String) -> Result<()> {
+    engine(&app).clean_worktrees(&run_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn agents_run_delete(app: AppHandle, run_id: String) -> Result<()> {
-    engine(&app).delete(&run_id)
+    engine(&app).delete(&run_id).await
 }
 
 #[derive(Serialize)]

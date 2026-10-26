@@ -4,35 +4,30 @@
     <header class="studio-header">
       <div class="header-left">
         <div class="header-icon-box">
-          <Bot :size="18" class="header-icon" />
+          <Bot :size="16" class="header-icon text-primary" />
         </div>
-        <div class="header-texts">
-          <h1 class="page-title">Agent Studio</h1>
-          <span class="page-subtitle">
-            Điều phối đa agent phân cấp (Hierarchical Multi-Agent Orchestration • SCR-09)
-          </span>
-        </div>
-      </div>
+        <h1 class="page-title">Agent Studio</h1>
 
-      <div class="header-right">
-        <!-- Project Context Tag -->
-        <div v-if="project" class="project-pill" :title="projectTooltip">
+        <!-- Project Context Pill -->
+        <div v-if="project" class="project-pill font-mono" :title="projectTooltip">
           <FolderGit2 :size="13" class="text-primary" />
           <span class="project-path">{{ shortPath(project.path) }}</span>
           <template v-if="multiRepo">
             <span :class="projectProblems ? 'branch-dirty' : 'branch-clean'">
-              {{ project.status.length }} repo{{ projectProblems ? ` · ${projectProblems} cần chú ý` : ' ✓ sạch' }}
+              ({{ project.status.length }} repo{{ projectProblems ? ` · ${projectProblems} cần chú ý` : ' ✓ sạch' }})
             </span>
           </template>
           <template v-else-if="project.status[0]">
-            <span v-if="!project.status[0].is_repo" class="branch-dirty">không còn là git repo</span>
+            <span v-if="!project.status[0].is_repo" class="branch-dirty">(không còn là git repo)</span>
             <span v-else-if="project.status[0].dirty > 0" class="branch-dirty">
-              {{ project.status[0].branch || 'detached' }} · {{ project.status[0].dirty }} thay đổi
+              ({{ project.status[0].branch || 'detached' }} · {{ project.status[0].dirty }} thay đổi)
             </span>
-            <span v-else class="branch-clean">{{ project.status[0].branch || 'detached' }} ✓ sạch</span>
+            <span v-else class="branch-clean">({{ project.status[0].branch || 'detached' }} ✓ sạch)</span>
           </template>
         </div>
+      </div>
 
+      <div class="header-right">
         <div class="project-menu-wrap">
           <button type="button" class="btn btn-secondary btn-sm" @click.stop="projectMenuOpen = !projectMenuOpen">
             <FolderOpen :size="13" />
@@ -135,18 +130,18 @@
                 <span class="run-status-dot" :class="'dot-' + runTone(run)"></span>
                 <span>{{ run.title }}</span>
               </span>
-              <span class="run-stage-badge" :class="'badge-' + runTone(run)">
+              <span class="run-stage-badge font-mono" :class="'badge-' + runTone(run)">
                 {{ runBadge(run) }}
               </span>
             </div>
 
-            <div class="run-item-desc font-mono">
+            <p class="run-item-desc font-mono" :title="run.request">
               {{ run.request }}
-            </div>
+            </p>
 
             <div class="run-item-footer font-mono">
               <span>{{ run.leader_cli }} • {{ duration(run) }}</span>
-              <span class="run-progress-text">{{ run.tasks_done }}/{{ run.tasks_total }} tasks</span>
+              <span class="run-status-text" :class="'text-' + runTone(run)">{{ runStatusLabel(run) }}</span>
             </div>
           </div>
         </div>
@@ -252,6 +247,16 @@
                   <span>Làm tiếp</span>
                 </button>
                 <button
+                  v-if="detail.run.stage === 'done' && detail.worktrees && !detail.driving"
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  title="Xóa worktree (cả dependency đã cài) của lượt chạy để giải phóng ổ đĩa; nhánh giữ nguyên, lần làm tiếp / push sẽ tạo và cài lại"
+                  @click="cleanWorktrees"
+                >
+                  <HardDrive :size="13" />
+                  <span>Dọn worktree</span>
+                </button>
+                <button
                   v-if="detail.run.stage === 'done'"
                   type="button"
                   class="btn btn-danger-ghost btn-sm"
@@ -300,6 +305,34 @@
               >
                 {{ pr.url.replace(/^https:\/\/github\.com\//, '') || pr.branch }}
               </a>
+              <button
+                v-if="detail.run.stage === 'done' && !detail.driving && unpushed !== 0"
+                type="button"
+                class="btn btn-primary btn-xs"
+                :disabled="pushing || verifying"
+                title="Push các commit mới của lượt chạy lên nhánh PR (fast-forward, hook pre-push vẫn chạy, không tạo PR mới)"
+                @click="pushToPrs"
+              >
+                <GitFork :size="12" :class="{ spin: pushing }" />
+                <span>
+                  {{
+                    pushing
+                      ? 'Đang push…'
+                      : `${needsRebase ? 'Rebase & push' : 'Push'} lên PR${unpushed ? ` (${unpushed} commit)` : ''}`
+                  }}
+                </span>
+              </button>
+              <button
+                v-if="(detail.run.stage === 'done' || detail.run.stage === 'merge_gate') && !detail.driving"
+                type="button"
+                class="btn btn-secondary btn-xs"
+                :disabled="pushing || verifying"
+                title="Giao cho một agent rebase, gỡ xung đột, sửa lỗi kiểm tra và push lên PR"
+                @click="showAiPush = true"
+              >
+                <Sparkles :size="12" />
+                <span>Push bằng AI</span>
+              </button>
               <button
                 v-if="detail.run.stage === 'done' && !detail.driving"
                 type="button"
@@ -359,11 +392,11 @@
             <div class="matrix-header">
               <div class="matrix-title">
                 <Layers :size="15" class="text-primary" />
-                <span>MA TRẬN PHÂN CHIA VÀ THỰC THI NHIỆM VỤ (TASK ALLOCATION)</span>
+                <span>MÃ TRẬN PHÂN CHIA VÀ THỰC THI NHIỆM VỤ</span>
               </div>
               <div class="matrix-meta font-mono">
                 <span class="matrix-concurrency">
-                  {{ detail.run.roles.map((r) => `${r.role}→${r.cli}${r.model ? `:${r.model}` : ''}`).join(' · ') }}
+                  Song song tối đa: {{ detail.run.limits.concurrency }} worker
                 </span>
                 <button
                   v-if="failedTasks.length > 0"
@@ -405,7 +438,7 @@
                     @click="selectTask(task.id)"
                   >
                     <td class="col-task font-bold" :title="task.title">
-                      <span class="task-key-tag">{{ task.key }}</span>
+                      <span class="task-key-tag">{{ task.kind === 'human' ? '👤 ' : '' }}{{ task.key }}</span>
                       <span v-if="task.batch > 0" class="task-batch" :title="detail.run.followups[task.batch - 1]?.request">tiếp #{{ task.batch }}</span>
                       <span v-if="isMultiRepo(detail.run.repos)" class="task-repos">{{ task.repos.join(', ') }}</span>
                     </td>
@@ -445,7 +478,9 @@
                 </div>
                 <h3 class="inspector-title">Task Inspector: {{ selectedTask.key }}</h3>
                 <span class="inspector-badge font-mono">Agent: {{ selectedTask.cli }}{{ taskModel(selectedTask) ? ` · ${taskModel(selectedTask)}` : '' }}</span>
-                <span v-if="selectedTask.branch" class="inspector-badge font-mono">{{ selectedTask.branch }}</span>
+                <span v-if="selectedTask.worktree" class="inspector-badge font-mono" :title="selectedTask.worktree">
+                  Worktree: {{ selectedTask.worktree.split('/').slice(-2).join('/') }}
+                </span>
                 <span class="inspector-badge warning font-mono">{{ roundText(selectedTask) }}</span>
               </div>
 
@@ -453,11 +488,16 @@
                 <button
                   type="button"
                   class="btn btn-secondary btn-xs"
-                  :disabled="!latestInvocation(selectedTask.id)"
-                  @click="openLog(latestInvocation(selectedTask.id)!)"
+                  :disabled="!latestTaskLog(selectedTask.id)"
+                  :title="
+                    selectedTask.status === 'review'
+                      ? 'Terminal của reviewer'
+                      : 'Terminal của bước mới nhất (worker, chuẩn bị hoặc kiểm tra)'
+                  "
+                  @click="openTaskLog(selectedTask.id)"
                 >
                   <Terminal :size="12" />
-                  <span>Xem log trực tiếp</span>
+                  <span>{{ selectedTask.status === 'checking' ? 'Xem kiểm tra' : selectedTask.status === 'review' ? 'Xem reviewer' : 'Xem log trực tiếp' }}</span>
                 </button>
                 <button type="button" class="btn btn-secondary btn-xs" :disabled="!selectedTask.branch" @click="showTaskDiff">
                   <FileCode :size="12" />
@@ -469,12 +509,14 @@
                 </button>
                 <button type="button" class="btn btn-secondary btn-xs" :disabled="!selectedTask.worktree" @click="openWorktreeTerminal">
                   <Code2 :size="12" />
-                  <span>Terminal worktree</span>
+                  <span>Terminal tại worktree</span>
                 </button>
               </div>
             </div>
 
             <p class="task-description">{{ selectedTask.title }}<template v-if="selectedTask.description"> — {{ selectedTask.description }}</template></p>
+
+            <HumanTestPanel v-if="selectedTask.kind === 'human'" :task="selectedTask" @changed="reload" />
 
             <div v-if="selectedTask.status_note" class="review-alert-box">
               <AlertTriangle :size="15" class="alert-icon" />
@@ -520,73 +562,58 @@
               </div>
               <div v-if="selectedTask.out_of_scope.length" class="guard-item warning">
                 <AlertCircle :size="13" />
-                <span>Sửa ngoài scope: {{ selectedTask.out_of_scope.join(', ') }}</span>
+                <span>Phạm vi: ⚠ Sửa ngoài scope: {{ selectedTask.out_of_scope.join(', ') }}</span>
+              </div>
+            </div>
+
+            <!-- Diff Snippet Preview -->
+            <div v-if="diffSnippet" class="diff-preview font-mono">
+              <div class="diff-header">
+                <div class="diff-header-left">
+                  <span class="diff-file-icon">📄</span>
+                  <span class="diff-file-name">{{ diffSnippetFile }}</span>
+                </div>
+                <div class="diff-header-right">
+                  <span class="diff-status-badge">Modified</span>
+                  <button type="button" class="btn-diff-full" @click="showTaskDiff">Xem toàn bộ diff →</button>
+                </div>
+              </div>
+              <div class="diff-code custom-scrollbar">
+                <div
+                  v-for="(line, idx) in diffSnippet.split('\n')"
+                  :key="idx"
+                  class="line"
+                  :class="{
+                    'line-add': line.startsWith('+'),
+                    'line-del': line.startsWith('-'),
+                    'line-hunk': line.startsWith('@@'),
+                    'muted': !line.startsWith('+') && !line.startsWith('-') && !line.startsWith('@@')
+                  }"
+                >
+                  {{ line }}
+                </div>
               </div>
             </div>
 
             <!-- Workflow Controls -->
             <div class="inspector-footer">
               <div class="footer-left">
-                <label
-                  class="timeout-field"
-                  title="Timeout riêng của agent cho task này (từ lượt chạy tới); để trống = timeout của lượt chạy"
-                >
-                  <span>Timeout</span>
-                  <input
-                    type="number"
-                    min="1"
-                    :max="MAX_TIMEOUT_MINUTES"
-                    step="5"
-                    class="reassign-input timeout-input font-mono"
-                    v-model.number="timeoutDraft"
-                    :placeholder="String(detail.run.limits.timeout_minutes)"
-                    @focus="timeoutEditing = true"
-                    @blur="commitTimeout"
-                    @keydown.enter="($event.target as HTMLInputElement).blur()"
-                    @keydown.esc="cancelTimeout($event)"
-                  />
-                  <span>phút</span>
-                </label>
-                <div
-                  class="reassign-group"
-                  :title="canEditTasks ? 'Giao task cho agent khác (phiên mới, cùng worktree); model để trống = mặc định' : editHint"
-                >
-                  <select v-model="reassignCli" class="reassign-input" :disabled="!canReassign">
-                    <option v-for="cli in AGENT_CLIS" :key="cli" :value="cli" :disabled="!installed(cli)">{{ cli }}</option>
-                  </select>
-                  <input
-                    v-model="reassignModel"
-                    class="reassign-input reassign-model font-mono"
-                    :list="`studio-models-${reassignCli}`"
-                    :placeholder="profileModelHint(clis.find((info) => info.cli === reassignCli)?.profile, 'work')"
-                    :disabled="!canReassign"
-                  />
-                  <datalist :id="`studio-models-${reassignCli}`">
-                    <option v-for="item in modelsOf(reassignCli)" :key="item.id" :value="item.id">{{ item.label }}</option>
-                  </datalist>
-                  <button
-                    type="button"
-                    class="btn btn-secondary btn-sm"
-                    :disabled="!canReassign || (reassignCli === selectedTask.cli && (reassignModel.trim() || null) === selectedTask.model)"
-                    @click="reassign"
-                  >
-                    Giao lại
-                  </button>
-                </div>
-
+                <!-- Dropdown / Reassign Modal Button -->
                 <button
-                  v-if="['failed', 'conflict', 'needs_human'].includes(selectedTask.status)"
+                  v-if="selectedTask.kind !== 'human'"
                   type="button"
                   class="btn btn-secondary btn-sm"
-                  :disabled="!canEditTasks"
-                  :title="canEditTasks ? undefined : editHint"
-                  @click="act(() => ipcClient.agentsTaskRetry(selectedTask!.id))"
+                  :disabled="!canReassign"
+                  :title="canEditTasks ? 'Giao lại task này cho một agent khác' : editHint"
+                  @click="showReassignModal = true"
                 >
-                  <RotateCcw :size="12" />
-                  <span>Thử lại</span>
+                  <Users :size="13" />
+                  <span>Giao lại cho agent khác</span>
+                  <ChevronDown :size="12" />
                 </button>
 
                 <button
+                  v-if="selectedTask.kind !== 'human'"
                   type="button"
                   class="btn btn-secondary btn-sm"
                   :disabled="!canEditTasks || !selectedTask.worktree"
@@ -597,6 +624,7 @@
                 </button>
 
                 <button
+                  v-if="selectedTask.kind !== 'human'"
                   type="button"
                   class="btn btn-secondary btn-sm"
                   :disabled="!canEditTasks || !selectedTask.worktree || ['merged', 'skipped'].includes(selectedTask.status)"
@@ -609,6 +637,18 @@
                 >
                   <SearchCode :size="12" />
                   <span>Review lại</span>
+                </button>
+
+                <button
+                  v-if="['failed', 'conflict', 'needs_human'].includes(selectedTask.status)"
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  :disabled="!canEditTasks"
+                  :title="canEditTasks ? undefined : editHint"
+                  @click="act(() => ipcClient.agentsTaskRetry(selectedTask!.id))"
+                >
+                  <RotateCcw :size="12" />
+                  <span>Thử lại</span>
                 </button>
 
                 <button
@@ -627,10 +667,10 @@
                 class="btn btn-primary btn-sm btn-retry-agent"
                 :disabled="!canEditTasks || !selectedTask.worktree"
                 :title="canEditTasks ? undefined : editHint"
-                @click="fixPromptVisible = true"
+                @click="showFeedbackModal = true"
               >
                 <Zap :size="13" />
-                <span>Yêu cầu agent sửa lại</span>
+                <span>Yêu cầu agent sửa lại ngay</span>
               </button>
             </div>
           </div>
@@ -702,10 +742,11 @@
                 v-if="activityView === 'terminals'"
                 ref="agentLanesRef"
                 :invocations="detail.invocations"
+                :side-logs="detail.side_logs"
                 :tasks="detail.tasks"
                 :leader-cli="detail.run.leader_cli"
                 :layout="lanesLayout"
-                @expand="openLog"
+                @expand="openLaneItem"
                 @collapse-change="allLanesCollapsed = $event"
               />
               <div v-else class="pty-viewport font-mono custom-scrollbar">
@@ -771,6 +812,14 @@
       @close="showNewRunModal = false"
     />
 
+    <AiPushModal
+      :visible="showAiPush"
+      :run="detail?.run ?? null"
+      :clis="clis"
+      @started="notify('Agent đang push lên PR — theo dõi ở ô Leader trong lưới terminal', 'info')"
+      @close="showAiPush = false"
+    />
+
     <AttachPrModal
       :visible="showAttachPr"
       :run="detail?.run ?? null"
@@ -807,6 +856,7 @@
       :visible="showFollowUp"
       :subtitle="detail?.run.title ?? ''"
       :merged="detail?.run.status === 'merged'"
+      :pull-requests="detail?.run.pull_requests ?? []"
       :submit="followUp"
       @close="showFollowUp = false"
     />
@@ -873,6 +923,22 @@
       @cancel="confirmBox.visible = false"
     />
 
+    <ReassignTaskModal
+      :visible="showReassignModal"
+      :task="selectedTask"
+      :clis="clis"
+      :default-timeout="detail?.run.limits.timeout_minutes"
+      :submit="reassignSingleTask"
+      @close="showReassignModal = false"
+    />
+
+    <TaskFeedbackModal
+      :visible="showFeedbackModal"
+      :task="selectedTask"
+      :submit="requestFix"
+      @close="showFeedbackModal = false"
+    />
+
     <PromptDialog
       :visible="folderPromptVisible"
       title="Mở Thư Mục Dự Án"
@@ -882,19 +948,6 @@
       icon="edit"
       @confirm="(path: string) => { folderPromptVisible = false; openProject(path); }"
       @cancel="folderPromptVisible = false"
-    />
-
-    <PromptDialog
-      :visible="fixPromptVisible"
-      title="Yêu Cầu Agent Sửa Lại"
-      :subtitle="selectedTask ? `${selectedTask.cli} · ${selectedTask.key}` : ''"
-      label="Cần sửa gì?"
-      placeholder="Ví dụ: Thiếu kiểm tra coupon hết hạn ở apply_coupon"
-      default-value=""
-      confirm-text="Gửi cho agent"
-      icon="edit"
-      @confirm="requestFix"
-      @cancel="fixPromptVisible = false"
     />
   </div>
 </template>
@@ -920,6 +973,7 @@ import {
   MessageSquarePlus,
   Cpu,
   ShieldCheck,
+  Sparkles,
   Terminal,
   FileCode,
   Folder,
@@ -938,12 +992,15 @@ import {
   ChevronsUpDown,
   Rows3,
   ScrollText,
+  HardDrive,
 } from 'lucide-vue-next';
 import NewAgentRunModal from '@/components/dialogs/NewAgentRunModal.vue';
 import PlanGateModal from '@/components/dialogs/PlanGateModal.vue';
 import MergeGateModal from '@/components/dialogs/MergeGateModal.vue';
 import AgentTeamModal from '@/components/dialogs/AgentTeamModal.vue';
 import AgentDiffModal from '@/components/dialogs/AgentDiffModal.vue';
+import ReassignTaskModal from '@/components/dialogs/ReassignTaskModal.vue';
+import TaskFeedbackModal from '@/components/dialogs/TaskFeedbackModal.vue';
 import AgentLanes from '@/views/agents/AgentLanes.vue';
 import { useAgentModels } from '@/composables/useAgentModels';
 import FollowUpModal from '@/components/dialogs/FollowUpModal.vue';
@@ -951,6 +1008,8 @@ import RunModelsModal from '@/components/dialogs/RunModelsModal.vue';
 import BulkReassignModal from '@/components/dialogs/BulkReassignModal.vue';
 import OpenPrModal from '@/components/dialogs/OpenPrModal.vue';
 import AttachPrModal from '@/components/dialogs/AttachPrModal.vue';
+import AiPushModal from '@/components/dialogs/AiPushModal.vue';
+import HumanTestPanel from '@/views/agents/HumanTestPanel.vue';
 import PromptDialog from '@/components/dialogs/PromptDialog.vue';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import { ipcClient } from '@/ipc/client';
@@ -967,6 +1026,7 @@ import type {
   RunStage,
   RunSummary,
   RunLimits,
+  PendingPush,
   RoleCli,
   CheckProposal,
   TaskDraft,
@@ -1000,6 +1060,10 @@ const STEP_LABELS: Record<string, string> = {
   fix: 'sửa',
   review: 'review',
   verify: 'verify PR',
+  push: 'push lên PR (AI)',
+  prepare: 'chuẩn bị test',
+  triage: 'xác nhận lỗi',
+  chat: 'hỏi đáp',
 };
 
 const route = useRoute();
@@ -1021,9 +1085,10 @@ const showNewRunModal = ref(false);
 const showPlanGateModal = ref(false);
 const showMergeGateModal = ref(false);
 const showTeamModal = ref(false);
+const showReassignModal = ref(false);
+const showFeedbackModal = ref(false);
 const projectMenuOpen = ref(false);
 const folderPromptVisible = ref(false);
-const fixPromptVisible = ref(false);
 const diff = reactive({ visible: false, title: '', text: '', loading: false, error: null as string | null });
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -1061,6 +1126,16 @@ const duration = (run: Pick<AgentRun, 'created_at' | 'finished_at'>) => {
 
 const clock = (unix: string) =>
   new Date(Number(unix) * 1000).toLocaleTimeString('vi-VN', { hour12: false });
+
+const runStatusLabel = (run: RunSummary) => {
+  if (run.status === 'running') return 'Đang chạy';
+  if (run.status === 'merged') return 'Đã merge';
+  if (run.status === 'paused') return 'Tạm dừng';
+  if (run.status === 'failed') return 'Lỗi';
+  if (run.status === 'kept') return 'Giữ nhánh';
+  if (run.status === 'discarded') return 'Đã bỏ';
+  return RUN_STATUS_LABELS[run.status] || run.status;
+};
 
 /** How agent activity is shown; remembered on this machine. */
 const ACTIVITY_VIEW_KEY = 'agent-studio.activity-view';
@@ -1274,6 +1349,31 @@ const stepState = (stage: RunStage) => {
 const latestInvocation = (taskId: string) =>
   [...(detail.value?.invocations ?? [])].reverse().find((inv) => inv.task_id === taskId) ?? null;
 
+/** A task's newest step: its worker or reviewer, or its setup / checks. */
+const latestTaskLog = (taskId: string) => {
+  const inv = latestInvocation(taskId);
+  const side = [...(detail.value?.side_logs ?? [])].reverse().find((log) => log.task_id === taskId) ?? null;
+  if (side && (!inv || Number(side.started_at) >= Number(inv.started_at))) {
+    return { invocation: null, terminalId: side.id, title: side.title };
+  }
+  return inv ? { invocation: inv, terminalId: inv.terminal_id, title: '' } : null;
+};
+
+const openTaskLog = (taskId: string) => {
+  const item = latestTaskLog(taskId);
+  if (item) void openLaneItem(item);
+};
+
+/** A terminal of the lanes as a Workspace tab. */
+const openLaneItem = async (item: { invocation: AgentInvocation | null; terminalId: string; title: string }) => {
+  if (item.invocation) return openLog(item.invocation);
+  const { commandId, runEventId } = ipcClient.agentsAttachLog(item.terminalId, `🤖 ${item.title}`);
+  await router.push({
+    path: '/workspace',
+    query: { runEventId, runCommandId: String(commandId), runCommandName: `🤖 ${item.title}`, shellKind: 'agent' },
+  });
+};
+
 const taskKeyOf = (inv: AgentInvocation) =>
   inv.task_id ? detail.value?.tasks.find((t) => t.id === inv.task_id)?.key : undefined;
 
@@ -1468,13 +1568,26 @@ const discardRun = () => {
   );
 };
 
+const cleanWorktrees = () => {
+  const run = detail.value?.run;
+  if (!run) return;
+  ask(
+    {
+      title: 'Dọn Worktree',
+      message: `Xóa các worktree của "${run.title}" (worktree của leader và các task, cả dependency đã cài)? Nhánh ${run.integration_branch} và PR giữ nguyên; lần làm tiếp hay push sau sẽ tạo worktree và cài lại dependency.`,
+      confirmText: 'Dọn worktree',
+    },
+    () => ipcClient.agentsRunCleanWorktrees(run.id)
+  );
+};
+
 const deleteRun = () => {
   const run = detail.value?.run;
   if (!run) return;
   ask(
     {
       title: 'Xóa Lượt Chạy',
-      message: `Xóa "${run.title}" khỏi danh sách cùng toàn bộ log của nó? Code đã merge không bị ảnh hưởng.`,
+      message: `Xóa "${run.title}" khỏi danh sách cùng toàn bộ log và worktree của nó? Code đã merge và các nhánh không bị ảnh hưởng.`,
       confirmText: 'Xóa',
       danger: true,
     },
@@ -1507,26 +1620,22 @@ const taskModel = (task: AgentTask) => {
   return task.model || role?.model || profile?.steps?.work?.model || profile?.model || '';
 };
 
-const { modelsOf } = useAgentModels();
-
-const reassignCli = ref<AgentCli>('claude');
-const reassignModel = ref('');
 const canReassign = computed(() => canEditTasks.value && selectedTask.value?.status !== 'merged');
 
-// The picker starts from the selected task's agent.
-watch(
-  () => selectedTask.value?.id,
-  () => {
-    reassignCli.value = selectedTask.value?.cli ?? 'claude';
-    reassignModel.value = selectedTask.value?.model ?? '';
-  },
-  { immediate: true }
-);
-
-const reassign = () => {
+const reassignSingleTask = async (
+  cli: AgentCli,
+  model: string | null,
+  effort: string | null,
+  timeoutMinutes: number | null
+) => {
   const task = selectedTask.value;
   if (!task) return;
-  void act(() => ipcClient.agentsTaskReassign(task.id, reassignCli.value, reassignModel.value.trim() || null));
+  await ipcClient.agentsTaskReassign(task.id, cli, model, effort);
+  if (timeoutMinutes !== null) {
+    await ipcClient.agentsTaskSetTimeout(task.id, timeoutMinutes);
+  }
+  notify(`Đã giao lại task ${task.key} cho ${cli}`, 'info');
+  await reload();
 };
 
 const approveTask = () => {
@@ -1570,17 +1679,135 @@ const skipTask = () => {
 };
 
 const requestFix = (feedback: string) => {
-  fixPromptVisible.value = false;
+  showFeedbackModal.value = false;
   if (!feedback || !selectedTask.value) return;
   void act(() => ipcClient.agentsTaskRequestFix(selectedTask.value!.id, feedback));
 };
+
+// ---- Diff Snippet Preview for Selected Task ------------------------------
+const diffSnippet = ref<string>('');
+const diffSnippetFile = ref<string>('');
+const loadingDiffSnippet = ref(false);
+
+const loadTaskDiffSnippet = async (taskId?: string | null) => {
+  const id = taskId ?? selectedTaskId.value;
+  if (!id) {
+    diffSnippet.value = '';
+    diffSnippetFile.value = '';
+    return;
+  }
+  const task = detail.value?.tasks.find((t) => t.id === id);
+  if (!task || !task.branch || !task.worktree) {
+    diffSnippet.value = '';
+    diffSnippetFile.value = '';
+    return;
+  }
+  loadingDiffSnippet.value = true;
+  try {
+    const raw = await ipcClient.agentsTaskDiff(id);
+    if (!raw || !raw.trim()) {
+      diffSnippet.value = '';
+      diffSnippetFile.value = '';
+      return;
+    }
+    const lines = raw.split('\n');
+    let firstFile = '';
+    for (const line of lines) {
+      if (line.startsWith('diff --git')) {
+        const parts = line.split(' ');
+        firstFile = parts[parts.length - 1]?.replace(/^[ab]\//, '') || '';
+        break;
+      }
+    }
+    diffSnippetFile.value = firstFile || (task.key ? `${task.key} changes` : 'Tệp thay đổi');
+    const meaningful = lines.filter((l) => !l.startsWith('diff --git') && !l.startsWith('index ')).slice(0, 10);
+    diffSnippet.value = meaningful.join('\n');
+  } catch {
+    diffSnippet.value = '';
+    diffSnippetFile.value = '';
+  } finally {
+    loadingDiffSnippet.value = false;
+  }
+};
+
+watch(
+  () => selectedTaskId.value,
+  (id) => {
+    if (id) void loadTaskDiffSnippet(id);
+    else {
+      diffSnippet.value = '';
+      diffSnippetFile.value = '';
+    }
+  },
+  { immediate: true }
+);
 
 const showFollowUp = ref(false);
 const showModels = ref(false);
 const showBulkReassign = ref(false);
 const showOpenPr = ref(false);
 const showAttachPr = ref(false);
+const showAiPush = ref(false);
 const verifying = ref(false);
+const pushing = ref(false);
+const pending = ref<PendingPush[]>([]);
+
+/** Commits a finished run has not pushed: a number, 0, or null (unknown). */
+const unpushed = computed(() => {
+  if (!pending.value.length) return 0;
+  if (pending.value.some((item) => item.commits === null)) return null;
+  return pending.value.reduce((sum, item) => sum + (item.commits ?? 0), 0);
+});
+
+/** Pushing will rebase onto the PR's base first (and rewrite the branch). */
+const needsRebase = computed(() => pending.value.some((item) => item.needs_rebase));
+
+const loadPending = async () => {
+  const run = detail.value?.run;
+  if (!run || run.stage !== 'done' || !run.pull_requests.length) {
+    pending.value = [];
+    return;
+  }
+  pending.value = await ipcClient.agentsPrPending(run.id).catch(() => []);
+};
+
+watch(
+  () => [detail.value?.run.id, detail.value?.run.stage, detail.value?.run.updated_at] as const,
+  () => void loadPending(),
+  { immediate: true }
+);
+
+const pushToPrs = () => {
+  const run = detail.value?.run;
+  if (!run) return;
+  const targets = pending.value
+    .map((item) => `${item.branch}${item.commits ? ` (${item.commits} commit)` : ''}`)
+    .join(', ');
+  const rebaseNote = pending.value
+    .filter((item) => item.needs_rebase)
+    .map((item) => `${item.branch} → origin/${item.base}`)
+    .join(', ');
+  ask(
+    {
+      title: needsRebase.value ? 'Rebase & Push Lên PR' : 'Push Lên PR',
+      message: needsRebase.value
+        ? `Nhánh chậm so với nhánh đích hoặc có commit merge (${rebaseNote}): app rebase trong worktree tạm (làm phẳng các commit merge), rồi push lên ${targets} bằng --force-with-lease — lịch sử nhánh PR được viết lại, nhưng chỉ khi nhánh trên GitHub vẫn đúng như app vừa fetch. Xung đột thì dừng, không push gì. Hook pre-push vẫn chạy.`
+        : `Push công việc mới của lượt chạy lên ${targets}? Chỉ fast-forward, hook pre-push của dự án vẫn chạy (có thể mất vài phút); không tạo PR mới.`,
+      confirmText: needsRebase.value ? 'Rebase & push' : 'Push',
+      danger: needsRebase.value,
+    },
+    async () => {
+      pushing.value = true;
+      try {
+        await ipcClient.agentsRunPushPrs(run.id);
+        notify(`Đã push lên PR: ${run.pull_requests.map((pr) => pr.url).join(' · ')}`, 'info');
+      } finally {
+        pushing.value = false;
+        void loadPending();
+      }
+    }
+  );
+};
 
 /** Verify PR: may take a minute (fetch, leader review); may start a follow-up. */
 const verifyPrs = async () => {
@@ -1633,51 +1860,11 @@ const saveModels = async (
   if (leader && roles) await ipcClient.agentsRunSetModels(run.id, leader, roles);
 };
 
-/**
- * A task's own agent timeout; empty: the run's. The field edits a draft:
- * while a run is going the view reloads all the time and must not overwrite
- * what is being typed.
- */
-const timeoutDraft = ref<number | ''>('');
-const timeoutEditing = ref(false);
 
-watch(
-  () => [selectedTask.value?.id, selectedTask.value?.timeout_minutes] as const,
-  ([, saved]) => {
-    if (!timeoutEditing.value) timeoutDraft.value = saved ?? '';
-  },
-  { immediate: true }
-);
-
-const commitTimeout = async () => {
-  timeoutEditing.value = false;
-  const task = selectedTask.value;
-  if (!task) return;
-  const minutes = typeof timeoutDraft.value === 'number' && timeoutDraft.value > 0 ? timeoutDraft.value : null;
-  if (minutes === task.timeout_minutes) return;
-  try {
-    await ipcClient.agentsTaskSetTimeout(task.id, minutes);
-    notify(
-      minutes
-        ? `Timeout của ${task.key}: ${minutes} phút (từ lượt agent tới)`
-        : `${task.key} dùng timeout của lượt chạy`,
-      'info'
-    );
-    await reload();
-  } catch (error) {
-    notify(errorText(error));
-    timeoutDraft.value = task.timeout_minutes ?? '';
-  }
-};
-
-const cancelTimeout = (event: KeyboardEvent) => {
-  timeoutDraft.value = selectedTask.value?.timeout_minutes ?? '';
-  (event.target as HTMLInputElement).blur();
-};
 
 /** Errors stay in the modal; the change events reload the view. */
-const followUp = async (request: string) => {
-  if (detail.value) await ipcClient.agentsRunFollowUp(detail.value.run.id, request);
+const followUp = async (request: string, pushPr: boolean) => {
+  if (detail.value) await ipcClient.agentsRunFollowUp(detail.value.run.id, request, pushPr);
 };
 
 const openLog = async (inv: AgentInvocation) => {
@@ -2545,33 +2732,81 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 10px;
+  padding: 6px 12px;
   background-color: rgba(255, 255, 255, 0.03);
   border-bottom: 1px solid var(--border-subtle, #242a3e);
-  color: var(--text-muted, #64748b);
+  font-size: 11px;
+}
+
+.diff-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary, #e2e2eb);
+  font-weight: 500;
+}
+
+.diff-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diff-status-badge {
   font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background-color: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.btn-diff-full {
+  background: transparent;
+  border: none;
+  color: #38bdf8;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s;
+}
+
+.btn-diff-full:hover {
+  color: #7dd3fc;
+  text-decoration: underline;
 }
 
 .diff-code {
-  padding: 8px 10px;
+  padding: 8px 12px;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+  background-color: #0b0d13;
 }
 
 .diff-code .line {
-  line-height: 16px;
+  line-height: 18px;
+  white-space: pre;
 }
 
 .diff-code .line.muted {
   color: var(--text-muted, #64748b);
 }
 
-.diff-code .line.highlight {
-  background-color: rgba(245, 158, 11, 0.12);
-  color: #fef08a;
-  padding: 1px 4px;
-  border-left: 2px solid #f59e0b;
+.diff-code .line.line-add {
+  color: #34d399;
+  background-color: rgba(16, 185, 129, 0.08);
+}
+
+.diff-code .line.line-del {
+  color: #f87171;
+  background-color: rgba(239, 68, 68, 0.08);
+}
+
+.diff-code .line.line-hunk {
+  color: #818cf8;
 }
 
 /* Inspector Footer */

@@ -116,6 +116,10 @@ pub struct PrRequest {
     pub body: String,
     #[serde(default)]
     pub draft: bool,
+    /// Rebase onto the base before pushing (and push with a lease); None:
+    /// when the branch needs it (behind its base, or merge commits).
+    #[serde(default)]
+    pub rebase: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,6 +144,53 @@ pub struct AttachPr {
 }
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// "Push bằng AI": which agent ships the work.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiPush {
+    pub cli: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// Anything the agent should know (how to resolve a conflict...).
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// What a finished run has not pushed to one of its pull requests yet.
+#[derive(Debug, Clone, Serialize)]
+pub struct PendingPush {
+    pub repo: String,
+    pub branch: String,
+    pub url: String,
+    /// None: origin's copy of the branch is not known here.
+    pub commits: Option<u64>,
+    /// Behind the PR's base, or merge commits: pushing rebases first and
+    /// rewrites the PR branch (with a lease).
+    pub needs_rebase: bool,
+    pub base: String,
+}
+
+/// What a failed push says that matters: a hook's own lines, else the end.
+fn push_error(tail: &str) -> String {
+    let lines: Vec<&str> = tail
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let hook: Vec<&str> = lines
+        .iter()
+        .copied()
+        .filter(|line| line.starts_with("pre-push:") || line.contains("rejected"))
+        .take(3)
+        .collect();
+    if hook.is_empty() {
+        lines[lines.len().saturating_sub(4)..].join(" · ")
+    } else {
+        hook.join(" · ")
+    }
+}
 
 /// What "Verify PR" found, kept in `<run dir>/verification.json`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -181,6 +232,43 @@ const VERIFICATION_FILE: &str = "verification.json";
 /// How long a push may take: pre-push hooks run the project's checks.
 const PUSH_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const GH_TIMEOUT: Duration = Duration::from_secs(3 * 60);
+
+/// Files that pin dependencies: when none changed since a worktree's setup
+/// ran, what it installed still holds.
+const MANIFESTS: &[&str] = &[
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "package-lock.json",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+    ".npmrc",
+    ".nvmrc",
+    ".node-version",
+    "composer.json",
+    "composer.lock",
+    "Gemfile",
+    "Gemfile.lock",
+    "requirements.txt",
+    "requirements-dev.txt",
+    "pyproject.toml",
+    "poetry.lock",
+    "uv.lock",
+    "Pipfile.lock",
+    "go.mod",
+    "go.sum",
+    "Cargo.toml",
+    "Cargo.lock",
+];
+
+/// The note a worktree keeps (in its private git folder) of the setup that
+/// ran in it.
+const SETUP_MARK: &str = "cm-setup.json";
+
+/// Task worktrees are slots: a merged task's slot goes to the next task,
+/// installed dependencies included.
+const SLOT_PREFIX: &str = "slot-";
 
 /// A branch name safe to pass to git and gh as it is.
 fn valid_branch(name: &str) -> bool {
@@ -239,14 +327,36 @@ pub struct RunDetail {
     pub quotas: HashMap<String, Quota>,
     /// The last "Verify PR".
     pub verification: Option<Verification>,
+    /// Checks, setup, context and push logs of this session.
+    pub side_logs: Vec<SideLog>,
     /// Paused for a usage limit: when the run goes on by itself.
     pub resume_at: Option<i64>,
+    /// Worktrees of the run are still on disk.
+    pub worktrees: bool,
 }
 
 enum Flow {
     Continue,
     Stop,
 }
+
+/// A log tab that is not an agent: a task's setup or checks, the run's
+/// integration checks, context fetching or pushing.
+#[derive(Debug, Clone, Serialize)]
+pub struct SideLog {
+    /// The terminal id (`agent:check-...`).
+    pub id: String,
+    pub task_id: Option<String>,
+    /// setup, check, context, pr.
+    pub kind: String,
+    pub title: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub ok: Option<bool>,
+}
+
+/// Side logs kept per run.
+const SIDE_LOGS_KEPT: usize = 60;
 
 /// One check command of a repo, where and how long it runs.
 struct CheckJob {
@@ -265,6 +375,16 @@ enum StepError {
         note: String,
         resume_at: Option<i64>,
     },
+}
+
+impl StepError {
+    fn message(self) -> String {
+        match self {
+            StepError::Cancelled => "đã dừng".into(),
+            StepError::Failed(message) => message,
+            StepError::Quota { note, .. } => note,
+        }
+    }
 }
 
 impl From<Error> for StepError {
@@ -297,6 +417,10 @@ pub struct Engine {
     quotas: Mutex<HashMap<String, Quota>>,
     /// Runs paused for a usage limit, and when they go on.
     quota_waits: Mutex<HashMap<String, i64>>,
+    /// Logs of a run that are not agent invocations (checks, setup, context,
+    /// pushes), newest last, for the run's terminals. Not kept across
+    /// restarts.
+    side_logs: Mutex<HashMap<String, Vec<SideLog>>>,
 }
 
 fn short(id: &str) -> &str {
@@ -310,6 +434,7 @@ impl Engine {
             drivers: Mutex::new(HashMap::new()),
             quotas: Mutex::new(HashMap::new()),
             quota_waits: Mutex::new(HashMap::new()),
+            side_logs: Mutex::new(HashMap::new()),
         })
     }
 
@@ -334,12 +459,20 @@ impl Engine {
             ))
         })?;
         Ok(RunDetail {
+            worktrees: self.has_worktrees(run_id),
             run,
             tasks,
             invocations,
             usage,
             driving: self.is_driving(run_id),
             quotas: self.quotas.lock().expect("agent quotas").clone(),
+            side_logs: self
+                .side_logs
+                .lock()
+                .expect("agent side logs")
+                .get(run_id)
+                .cloned()
+                .unwrap_or_default(),
             verification: std::fs::read_to_string(self.run_dir(run_id).join(VERIFICATION_FILE))
                 .ok()
                 .and_then(|text| serde_json::from_str(&text).ok()),
@@ -350,6 +483,51 @@ impl Engine {
                 .get(run_id)
                 .copied(),
         })
+    }
+
+    /// Opens a log tab of `kind` and lists it with the run's terminals.
+    fn open_side_log(
+        &self,
+        run_id: &str,
+        task_id: Option<&str>,
+        kind: &str,
+        title: &str,
+    ) -> (String, Arc<AgentLog>) {
+        let id = format!("agent:{kind}-{}", uuid::Uuid::new_v4());
+        let log = self.env.open_log(&id, title);
+        {
+            let mut logs = self.side_logs.lock().expect("agent side logs");
+            let list = logs.entry(run_id.to_string()).or_default();
+            list.push(SideLog {
+                id: id.clone(),
+                task_id: task_id.map(str::to_string),
+                kind: kind.to_string(),
+                title: title.to_string(),
+                started_at: now_unix(),
+                finished_at: None,
+                ok: None,
+            });
+            if list.len() > SIDE_LOGS_KEPT {
+                list.remove(0);
+            }
+        }
+        self.env.changed(run_id);
+        (id, log)
+    }
+
+    fn close_side_log(&self, run_id: &str, id: &str, ok: bool) {
+        self.env.close_log(id, ok);
+        if let Some(entry) = self
+            .side_logs
+            .lock()
+            .expect("agent side logs")
+            .get_mut(run_id)
+            .and_then(|list| list.iter_mut().find(|entry| entry.id == id))
+        {
+            entry.finished_at = Some(now_unix());
+            entry.ok = Some(ok);
+        }
+        self.env.changed(run_id);
     }
 
     fn run_dir(&self, run_id: &str) -> PathBuf {
@@ -764,8 +942,10 @@ impl Engine {
             ))
         })?;
         let phase = match step_name {
-            "design" | "plan" => Phase::Lead,
-            "review" | "verify" => Phase::Review,
+            // Pushing (rebase, conflicts, fixing checks) takes the lead's model.
+            "design" | "plan" | "push" => Phase::Lead,
+            "review" | "verify" | "prepare" | "chat" => Phase::Review,
+            "triage" => Phase::Lead,
             _ => Phase::Work,
         };
         let mut profile = self
@@ -805,6 +985,12 @@ impl Engine {
             .filter(|dir| dir.is_dir())
             .into_iter()
             .collect();
+        // Pushing writes to the repository's own git folder too.
+        if access == Access::Push {
+            if let Ok(common) = git::common_dir(cwd).await {
+                extra_dirs.push(common);
+            }
+        }
         // Rules and skills that are not in the agent's folder.
         if let Ok(project) = self.project(run) {
             let (_, outside) = guides::block(
@@ -897,8 +1083,9 @@ impl Engine {
             match access {
                 Access::ReadOnly => "chỉ đọc",
                 Access::Write => "ghi trong worktree",
+                Access::Push => "ghi + rebase + push lên PR",
             },
-            if profile.bypass_permissions && access == Access::Write {
+            if profile.bypass_permissions && access != Access::ReadOnly {
                 " · TỰ DUYỆT MỌI THỨ"
             } else {
                 ""
@@ -1111,10 +1298,9 @@ impl Engine {
         if context::pr_links(text).is_empty() {
             return;
         }
-        let id = format!("agent:context-{}", uuid::Uuid::new_v4());
-        let log = self.env.open_log(&id, "chuẩn bị ngữ cảnh");
+        let (id, log) = self.open_side_log(&run.id, None, "context", "chuẩn bị ngữ cảnh");
         context::fetch_prs(&self.context_dir(&run.id), text, &log, refresh).await;
-        self.env.close_log(&id, true);
+        self.close_side_log(&run.id, &id, true);
     }
 
     async fn design(&self, run: &Run, control: &Control) -> Step<Flow> {
@@ -1214,6 +1400,7 @@ impl Engine {
                     scope: task.scope,
                     depends_on: task.depends_on,
                     repos: task.repos,
+                    kind: repo::task_kind::AGENT.into(),
                 })
                 .collect();
             Ok((
@@ -1371,6 +1558,9 @@ impl Engine {
                         model: None,
                         effort: None,
                         timeout_minutes: None,
+                        kind: draft.kind.clone(),
+                        human: (draft.kind == repo::task_kind::HUMAN)
+                            .then(repo::HumanTest::default),
                     },
                 )?;
             }
@@ -1482,6 +1672,7 @@ impl Engine {
             task_status::CHECKING,
             task_status::REVIEW,
             task_status::FIXING,
+            task_status::TRIAGE,
         ];
         let next = tasks
             .iter()
@@ -1512,10 +1703,20 @@ impl Engine {
                 .contains(&t.status.as_str())
             })
             .count();
-        self.wait(
-            run,
-            &format!("{blocked} task cần người xem trước khi tiếp tục"),
-        )
+        let testing: Vec<&str> = tasks
+            .iter()
+            .filter(|t| t.status == task_status::AWAITING_HUMAN)
+            .map(|t| t.key.as_str())
+            .collect();
+        let note = match (blocked, testing.is_empty()) {
+            (0, false) => format!("Chờ người test: {}", testing.join(", ")),
+            (_, false) => format!(
+                "{blocked} task cần người xem; chờ người test: {}",
+                testing.join(", ")
+            ),
+            _ => format!("{blocked} task cần người xem trước khi tiếp tục"),
+        };
+        self.wait(run, &note)
     }
 
     /// A run started before linked worktrees were told apart may list one git
@@ -1552,11 +1753,425 @@ impl Engine {
         task: &Task,
         control: &Control,
     ) -> Step<()> {
+        if task.is_human() {
+            return match task.status.as_str() {
+                task_status::TRIAGE => self.triage_human(run, integration, task, control).await,
+                _ => {
+                    self.prepare_human(run, project, integration, task, control)
+                        .await
+                }
+            };
+        }
         match task.status.as_str() {
             task_status::CHECKING => self.check_task(run, project, task, control).await,
             task_status::REVIEW => self.review_task(run, integration, task, control).await,
             _ => self.worker_turn(run, project, task, control).await,
         }
+    }
+
+    /// The tasks a person's task is about: what it depends on (the work to
+    /// test and the fixes made since), merged.
+    fn tested_tasks<'a>(tasks: &'a [Task], task: &Task) -> Vec<&'a Task> {
+        tasks
+            .iter()
+            .filter(|t| task.depends_on.contains(&t.key) && t.status == task_status::MERGED)
+            .collect()
+    }
+
+    fn human_dir(&self, run_id: &str, task: &Task) -> PathBuf {
+        self.context_dir(run_id).join("human").join(&task.key)
+    }
+
+    /// A person's task comes up: the AI prepares what its description asks
+    /// for (a test guide), then it waits for the person.
+    async fn prepare_human(
+        &self,
+        run: &Run,
+        project: &Project,
+        integration: &Path,
+        task: &Task,
+        control: &Control,
+    ) -> Step<()> {
+        let tasks = self.db().read(|c| repo::task_list(c, &run.id))?;
+        let done = Self::tested_tasks(&tasks, task);
+        let human = task.human.clone().unwrap_or_default();
+        let (guides, _) = guides::block(
+            &Self::guides(project),
+            Path::new(&project.path),
+            integration,
+            Some(&task.repos),
+            Use::Review,
+        );
+        let files = context::files(&self.context_dir(&run.id));
+        let prompt = prompts::prepare_human(run, task, &done, human.rounds.last(), &guides, &files);
+        let parse = |value: Value| -> Result<repo::TestGuide> {
+            serde_json::from_value(value)
+                .map_err(|error| Error::msg(format!("guide does not match the schema: {error}")))
+        };
+        let (guide, _) = self
+            .ask_json(
+                run,
+                Some(task),
+                "prepare",
+                &format!("{} · chuẩn bị {}", run.leader_cli, task.key),
+                integration,
+                None,
+                prompt,
+                &prompts::test_guide_schema(),
+                control,
+                parse,
+            )
+            .await?;
+        self.update_task(&task.id, |task| {
+            let human = task.human.get_or_insert_with(Default::default);
+            human.guide = Some(guide);
+            human.leader_note = None;
+            task.status = task_status::AWAITING_HUMAN.into();
+            task.status_note = Some("Chờ người test".into());
+        })?;
+        Ok(())
+    }
+
+    /// A person reported failures: the leader confirms them and makes fix
+    /// tasks; the person's task waits for them, then comes up again. No bug
+    /// found: the leader says why and the person decides.
+    async fn triage_human(
+        &self,
+        run: &Run,
+        integration: &Path,
+        task: &Task,
+        control: &Control,
+    ) -> Step<()> {
+        let tasks = self.db().read(|c| repo::task_list(c, &run.id))?;
+        let done = Self::tested_tasks(&tasks, task);
+        let human = task.human.clone().unwrap_or_default();
+        let Some(round) = human.rounds.last().cloned() else {
+            self.update_task(&task.id, |task| {
+                task.status = task_status::AWAITING_HUMAN.into()
+            })?;
+            return Ok(());
+        };
+        let dir = self.human_dir(&run.id, task);
+        let shots: Vec<String> = round
+            .attachments
+            .iter()
+            .map(|name| dir.join(name).to_string_lossy().into_owned())
+            .collect();
+        let chat = human
+            .chat
+            .iter()
+            .map(|m| {
+                format!(
+                    "{}: {}",
+                    if m.role == "user" { "Person" } else { "You" },
+                    m.text
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let keys: Vec<String> = tasks.iter().map(|t| t.key.clone()).collect();
+        let roles: Vec<String> = run.roles.iter().map(|r| r.role.clone()).collect();
+        let repos: Vec<String> = run.repos.iter().map(|r| r.path.clone()).collect();
+        let prompt = prompts::triage_human(run, task, &round, &done, &chat, &shots, &keys);
+        let parse = |value: Value| -> Result<(String, Vec<PlanTask>)> {
+            #[derive(Deserialize)]
+            struct Answer {
+                summary: String,
+                tasks: Vec<PlanTask>,
+            }
+            let answer: Answer = serde_json::from_value(value).map_err(|error| {
+                Error::msg(format!("answer does not match the schema: {error}"))
+            })?;
+            Ok((answer.summary, answer.tasks))
+        };
+        let ((summary, planned), _) = self
+            .ask_json(
+                run,
+                Some(task),
+                "triage",
+                &format!("{} · xác nhận lỗi {}", run.leader_cli, task.key),
+                integration,
+                None,
+                prompt,
+                &prompts::triage_schema(&roles, &repos),
+                control,
+                parse,
+            )
+            .await?;
+        let leader_says = repo::ChatMessage {
+            role: "leader".into(),
+            text: summary.clone(),
+            at: now_unix(),
+        };
+        if planned.is_empty() {
+            self.update_task(&task.id, |task| {
+                let human = task.human.get_or_insert_with(Default::default);
+                human.leader_note = Some(summary);
+                human.chat.push(leader_says);
+                task.status = task_status::AWAITING_HUMAN.into();
+                task.status_note = Some("Leader không thấy lỗi; xem ghi chú rồi quyết định".into());
+            })?;
+            return Ok(());
+        }
+        // New keys, the fixes first in order, the test after them.
+        let mut used = keys;
+        let mut drafts = Vec::new();
+        for planned in planned {
+            let mut key = planned.key.trim().to_string();
+            let base = key.clone();
+            let mut n = 2;
+            while used.contains(&key) {
+                key = format!("{base}-{n}");
+                n += 1;
+            }
+            used.push(key.clone());
+            let mut description = planned.description;
+            if !shots.is_empty() && !description.contains("human/") {
+                description.push_str(&format!(
+                    "\n\nẢnh chụp người test gửi: {}",
+                    shots.join(", ")
+                ));
+            }
+            drafts.push(TaskDraft {
+                cli: Self::role_cli(run, &planned.role),
+                key,
+                title: planned.title,
+                role: planned.role,
+                description,
+                acceptance: planned.acceptance,
+                scope: planned.scope,
+                depends_on: Vec::new(),
+                repos: planned.repos,
+                kind: repo::task_kind::AGENT.into(),
+            });
+        }
+        let drafts = Self::fill_repos(run, drafts);
+        let fix_keys: Vec<String> = drafts.iter().map(|d| d.key.clone()).collect();
+        let first = tasks.iter().map(|t| t.sort_order + 1).max().unwrap_or(0);
+        self.db().write(|c| {
+            for (index, draft) in drafts.iter().enumerate() {
+                repo::task_insert(
+                    c,
+                    &Task {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        run_id: run.id.clone(),
+                        key: draft.key.clone(),
+                        title: draft.title.trim().to_string(),
+                        role: draft.role.trim().to_lowercase(),
+                        cli: draft.cli.clone(),
+                        description: draft.description.clone(),
+                        acceptance: draft.acceptance.clone(),
+                        scope: draft.scope.clone(),
+                        depends_on: Vec::new(),
+                        repos: if draft.repos.is_empty() {
+                            task.repos.clone()
+                        } else {
+                            draft.repos.clone()
+                        },
+                        status: task_status::WAITING.into(),
+                        status_note: None,
+                        round: 0,
+                        worker_session: None,
+                        branch: None,
+                        worktree: None,
+                        checks: None,
+                        last_review: None,
+                        added: 0,
+                        removed: 0,
+                        out_of_scope: Vec::new(),
+                        sort_order: first + index as i64,
+                        batch: task.batch,
+                        handoff: None,
+                        model: None,
+                        effort: None,
+                        timeout_minutes: None,
+                        kind: repo::task_kind::AGENT.into(),
+                        human: None,
+                    },
+                )?;
+            }
+            Ok(())
+        })?;
+        self.update_task(&task.id, |task| {
+            let human = task.human.get_or_insert_with(Default::default);
+            if let Some(round) = human.rounds.last_mut() {
+                round.fix_tasks = fix_keys.clone();
+            }
+            human.chat.push(leader_says);
+            for key in &fix_keys {
+                if !task.depends_on.contains(key) {
+                    task.depends_on.push(key.clone());
+                }
+            }
+            // Tested again once the fixes are merged.
+            task.sort_order = first + fix_keys.len() as i64;
+            task.status = task_status::WAITING.into();
+            task.status_note = Some(format!("Chờ sửa: {}", fix_keys.join(", ")));
+        })?;
+        Ok(())
+    }
+
+    /// A person's result for the round. Passed: the task is done; failed:
+    /// the leader goes through it next.
+    pub fn submit_human_test(
+        self: &Arc<Self>,
+        task_id: &str,
+        results: Vec<repo::CaseResult>,
+        passed: bool,
+        note: String,
+        attachments: Vec<String>,
+    ) -> Result<()> {
+        let task = self.db().read(|c| repo::task_get(c, task_id))?;
+        if !task.is_human() || task.status != task_status::AWAITING_HUMAN {
+            return Err(Error::msg("Task này không chờ kết quả test"));
+        }
+        if !passed && note.trim().is_empty() && results.iter().all(|r| r.note.trim().is_empty()) {
+            return Err(Error::msg(
+                "Hãy ghi lại lỗi đã thấy (ở từng case hoặc nhận xét chung)",
+            ));
+        }
+        self.update_task(task_id, |task| {
+            let human = task.human.get_or_insert_with(Default::default);
+            human.rounds.push(repo::HumanRound {
+                at: now_unix(),
+                guide: human.guide.clone(),
+                results,
+                passed,
+                note: note.trim().to_string(),
+                attachments,
+                fix_tasks: Vec::new(),
+            });
+            human.leader_note = None;
+            if passed {
+                task.status = task_status::PASSED.into();
+                task.status_note = Some("Người test: đạt".into());
+            } else {
+                task.status = task_status::TRIAGE.into();
+                task.status_note = Some("Leader đang xác nhận lỗi".into());
+            }
+        })?;
+        self.continue_after_task_action(&task.run_id)
+    }
+
+    /// "Tạo lại hướng dẫn": the AI prepares the person's task again.
+    pub fn reprepare_human(self: &Arc<Self>, task_id: &str) -> Result<()> {
+        let task = self.db().read(|c| repo::task_get(c, task_id))?;
+        if !task.is_human() || task.status != task_status::AWAITING_HUMAN {
+            return Err(Error::msg("Task này không chờ người test"));
+        }
+        self.update_task(task_id, |task| {
+            task.status = task_status::WAITING.into();
+            task.status_note = None;
+        })?;
+        self.continue_after_task_action(&task.run_id)
+    }
+
+    /// The person asks the leader while testing; the conversation goes on
+    /// in one session per task.
+    pub async fn human_chat(&self, task_id: &str, message: String) -> Result<repo::ChatMessage> {
+        let message = message.trim().to_string();
+        if message.is_empty() {
+            return Err(Error::msg("Hãy nhập câu hỏi"));
+        }
+        let task = self.db().read(|c| repo::task_get(c, task_id))?;
+        if !task.is_human() {
+            return Err(Error::msg("Chỉ hỏi leader trong task người test"));
+        }
+        let run = self.db().read(|c| repo::run_get(c, &task.run_id))?;
+        let project = self.project(&run)?;
+        let integration = self.integration_dir(&run.id);
+        let cwd = if integration.exists() {
+            integration
+        } else {
+            PathBuf::from(&project.path)
+        };
+        let session = task
+            .human
+            .as_ref()
+            .and_then(|human| human.chat_session.clone());
+        let prompt = match &session {
+            Some(_) => message.clone(),
+            None => prompts::human_chat(&run, &task, &message),
+        };
+        let control = Control {
+            pause: AtomicBool::new(false),
+            stop: watch::channel(false).0,
+        };
+        let outcome = self
+            .invoke(
+                &run,
+                Some(&task),
+                &run.leader_cli,
+                "chat",
+                &format!("{} · hỏi đáp {}", run.leader_cli, task.key),
+                Access::ReadOnly,
+                &cwd,
+                session.as_deref(),
+                prompt,
+                None,
+                &control,
+            )
+            .await
+            .map_err(Error::from)?;
+        if let Some(error) = outcome.error {
+            return Err(Error::msg(format!("Leader: {error}")));
+        }
+        let answer = repo::ChatMessage {
+            role: "leader".into(),
+            text: outcome.text.trim().to_string(),
+            at: now_unix(),
+        };
+        let asked = repo::ChatMessage {
+            role: "user".into(),
+            text: message,
+            at: now_unix(),
+        };
+        let reply = answer.clone();
+        self.update_task(task_id, |task| {
+            let human = task.human.get_or_insert_with(Default::default);
+            human.chat.push(asked);
+            human.chat.push(answer);
+            if outcome.session_id.is_some() {
+                human.chat_session = outcome.session_id.clone();
+            }
+        })?;
+        Ok(reply)
+    }
+
+    /// A screenshot for a person's task, kept with the run's context so
+    /// every agent can read it. Returns its file name.
+    pub fn human_attach(&self, task_id: &str, name: &str, bytes: &[u8]) -> Result<String> {
+        const MAX_BYTES: usize = 15 * 1024 * 1024;
+        if bytes.len() > MAX_BYTES {
+            return Err(Error::msg("Ảnh quá lớn (tối đa 15 MB)"));
+        }
+        let task = self.db().read(|c| repo::task_get(c, task_id))?;
+        let dir = self.human_dir(&task.run_id, &task);
+        std::fs::create_dir_all(&dir)?;
+        let clean: String = name
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let file = format!("{}-{}", now_unix(), clean.trim_start_matches('.'));
+        std::fs::write(dir.join(&file), bytes)?;
+        Ok(file)
+    }
+
+    /// A screenshot of a person's task, to show it.
+    pub fn human_file(&self, task_id: &str, name: &str) -> Result<Vec<u8>> {
+        if name.contains('/') || name.contains('\\') || name.starts_with('.') {
+            return Err(Error::msg("Tên tệp không hợp lệ"));
+        }
+        let task = self.db().read(|c| repo::task_get(c, task_id))?;
+        Ok(std::fs::read(
+            self.human_dir(&task.run_id, &task).join(name),
+        )?)
     }
 
     async fn ensure_task_worktree(
@@ -1570,18 +2185,23 @@ impl Engine {
             .branch
             .clone()
             .unwrap_or_else(|| format!("cm/{}/{}", short(&run.id), task.key));
-        let base = task
-            .worktree
-            .clone()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| self.worktree_dir(&run.id, &task.key));
         let fresh = task.worktree.is_none();
+        let base = match &task.worktree {
+            Some(path) => PathBuf::from(path),
+            None => self.free_slot(run)?,
+        };
         // Every repo is there, so the agent can read the others too.
         for repo in &run.repos {
             let root = workspace::repo_dir(Path::new(&project.path), &repo.path);
             let start = git::commit_of(&root, &run.integration_branch).await?;
             git::ensure_branch(&root, &branch, &start).await?;
-            git::ensure_worktree(&root, &workspace::repo_dir(&base, &repo.path), &branch).await?;
+            let dir = workspace::repo_dir(&base, &repo.path);
+            if fresh && dir.join(".git").exists() {
+                // A slot an earlier task left: same folder, new branch.
+                git::switch_worktree(&dir, &branch).await?;
+            } else {
+                git::ensure_worktree(&root, &dir, &branch).await?;
+            }
         }
         let task = if fresh {
             self.update_task(&task.id, |task| {
@@ -1591,28 +2211,70 @@ impl Engine {
         } else {
             task.clone()
         };
-        if !fresh {
-            return Ok(task);
-        }
-        let setups: Vec<(String, String, Duration)> = task
-            .repos
+        self.ensure_setup(
+            &run.id,
+            Some(&task.id),
+            project,
+            &base,
+            &task.repos,
+            &format!("chuẩn bị · {}", task.key),
+            stop,
+        )
+        .await?;
+        Ok(task)
+    }
+
+    /// A task worktree folder no unfinished task holds: the first one free,
+    /// else a new one.
+    fn free_slot(&self, run: &Run) -> Result<PathBuf> {
+        let tasks = self.db().read(|c| repo::task_list(c, &run.id))?;
+        let held: Vec<PathBuf> = tasks
             .iter()
-            .filter_map(|repo| {
-                let config = project.repo(repo)?;
-                config
-                    .setup_cmd
-                    .clone()
-                    .map(|cmd| (repo.clone(), cmd, config.check_timeout()))
-            })
+            .filter_map(|task| task.worktree.as_ref().map(PathBuf::from))
             .collect();
-        if setups.is_empty() {
-            return Ok(task);
+        Ok((1..)
+            .map(|n| self.worktree_dir(&run.id, &format!("{SLOT_PREFIX}{n}")))
+            .find(|slot| !held.contains(slot))
+            .expect("a free slot"))
+    }
+
+    /// Runs the setup commands of `repos` in a workspace, unless they already
+    /// ran in that worktree and nothing pinning dependencies changed since:
+    /// a reused worktree keeps what it installed.
+    #[allow(clippy::too_many_arguments)]
+    async fn ensure_setup(
+        &self,
+        run_id: &str,
+        task_id: Option<&str>,
+        project: &Project,
+        base: &Path,
+        repos: &[String],
+        title: &str,
+        stop: watch::Receiver<bool>,
+    ) -> Step<()> {
+        let mut setups = Vec::new();
+        for repo in repos {
+            let Some(config) = project.repo(repo) else {
+                continue;
+            };
+            let Some(setup) = config
+                .setup_cmd
+                .clone()
+                .filter(|cmd| !cmd.trim().is_empty())
+            else {
+                continue;
+            };
+            let dir = workspace::repo_dir(base, repo);
+            if Self::needs_setup(&dir, &setup).await {
+                setups.push((repo.clone(), setup, config.check_timeout(), dir));
+            }
         }
-        let id = format!("agent:setup-{}", uuid::Uuid::new_v4());
-        let log = self.env.open_log(&id, &format!("chuẩn bị · {}", task.key));
-        for (repo, setup, timeout) in setups {
+        if setups.is_empty() {
+            return Ok(());
+        }
+        let (id, log) = self.open_side_log(run_id, task_id, "setup", title);
+        for (repo, setup, timeout, dir) in setups {
             log.heading(&format!("{}$ {setup}", workspace::label(&repo)));
-            let dir = workspace::repo_dir(&base, &repo);
             let result = process::run_shell(&setup, &dir, timeout, &log, stop.clone()).await;
             let ok = matches!(result, Ok((true, _, _)));
             log.result(
@@ -1624,13 +2286,13 @@ impl Engine {
                 },
             );
             match result {
-                Ok((true, _, _)) => {}
+                Ok((true, _, _)) => Self::mark_setup(&dir, &setup).await,
                 Err(RunError::Cancelled) => {
-                    self.env.close_log(&id, false);
+                    self.close_side_log(run_id, &id, false);
                     return Err(StepError::Cancelled);
                 }
                 Ok((false, code, _)) => {
-                    self.env.close_log(&id, false);
+                    self.close_side_log(run_id, &id, false);
                     return Err(StepError::Failed(format!(
                         "{}Lệnh chuẩn bị worktree \"{setup}\" thất bại (mã {})",
                         workspace::label(&repo),
@@ -1638,13 +2300,58 @@ impl Engine {
                     )));
                 }
                 Err(error) => {
-                    self.env.close_log(&id, false);
+                    self.close_side_log(run_id, &id, false);
                     return Err(StepError::Failed(error.to_string()));
                 }
             }
         }
-        self.env.close_log(&id, true);
-        Ok(task)
+        self.close_side_log(run_id, &id, true);
+        Ok(())
+    }
+
+    /// Whether `setup` has to run in a worktree: it never ran there, it
+    /// changed, or a dependency manifest changed since.
+    async fn needs_setup(dir: &Path, setup: &str) -> bool {
+        let Ok(git_dir) = git::git_dir(dir).await else {
+            return true;
+        };
+        let mark: Option<Value> = std::fs::read(git_dir.join(SETUP_MARK))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        let field = |key: &str| {
+            mark.as_ref()
+                .and_then(|mark| mark.get(key))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        let (Some(cmd), Some(commit)) = (field("cmd"), field("commit")) else {
+            return true;
+        };
+        if cmd != setup {
+            return true;
+        }
+        let Ok(head) = git::commit_of(dir, "HEAD").await else {
+            return true;
+        };
+        if head == commit {
+            return false;
+        }
+        match git::changed_between(dir, &commit, &head).await {
+            Ok(files) => files.iter().any(|file| {
+                let name = file.rsplit('/').next().unwrap_or(file);
+                MANIFESTS.contains(&name)
+            }),
+            Err(_) => true,
+        }
+    }
+
+    async fn mark_setup(dir: &Path, setup: &str) {
+        let (Ok(git_dir), Ok(head)) = (git::git_dir(dir).await, git::commit_of(dir, "HEAD").await)
+        else {
+            return;
+        };
+        let mark = serde_json::json!({ "cmd": setup, "commit": head });
+        let _ = std::fs::write(git_dir.join(SETUP_MARK), mark.to_string());
     }
 
     async fn worker_turn(
@@ -1867,6 +2574,8 @@ impl Engine {
     /// Runs `(repo, command, folder)` checks in order, in one log tab.
     async fn run_checks(
         &self,
+        run_id: &str,
+        task_id: Option<&str>,
         jobs: &[CheckJob],
         title: &str,
         control: &Control,
@@ -1874,8 +2583,7 @@ impl Engine {
         if jobs.is_empty() {
             return Ok(Vec::new());
         }
-        let id = format!("agent:check-{}", uuid::Uuid::new_v4());
-        let log = self.env.open_log(&id, title);
+        let (id, log) = self.open_side_log(run_id, task_id, "check", title);
         let mut results = Vec::new();
         for job in jobs {
             let shown = format!("{}{}", workspace::label(&job.repo), job.command);
@@ -1892,7 +2600,7 @@ impl Engine {
             let (ok, exit_code, output) = match result {
                 Ok(done) => done,
                 Err(RunError::Cancelled) => {
-                    self.env.close_log(&id, false);
+                    self.close_side_log(run_id, &id, false);
                     return Err(StepError::Cancelled);
                 }
                 Err(RunError::TimedOut) => (
@@ -1915,8 +2623,7 @@ impl Engine {
                 duration_ms: started.elapsed().as_millis() as u64,
             });
         }
-        self.env
-            .close_log(&id, results.iter().all(|check| check.ok));
+        self.close_side_log(run_id, &id, results.iter().all(|check| check.ok));
         Ok(results)
     }
 
@@ -1953,7 +2660,13 @@ impl Engine {
         }
         let jobs = Self::check_jobs(project, &repos, &base);
         let checks = self
-            .run_checks(&jobs, &format!("kiểm tra · {}", task.key), control)
+            .run_checks(
+                &run.id,
+                Some(&task.id),
+                &jobs,
+                &format!("kiểm tra · {}", task.key),
+                control,
+            )
             .await?;
         let failed = checks.iter().any(|check| !check.ok);
         self.update_task(&task.id, |task| {
@@ -2101,15 +2814,34 @@ impl Engine {
             })?;
             return Ok(());
         }
-        let project = self.project(run)?;
         if let Some(base) = &task.worktree {
-            self.remove_workspace(run, &project, Path::new(base)).await;
+            self.release_workspace(run, Path::new(base)).await?;
         }
         self.update_task(&task.id, |task| {
             task.status = task_status::MERGED.into();
             task.status_note = None;
             task.worktree = None;
         })?;
+        Ok(())
+    }
+
+    /// A task is done with its worktree: a slot stays for the next task (off
+    /// the task's branch, so that can be deleted), anything else goes.
+    async fn release_workspace(&self, run: &Run, base: &Path) -> Result<()> {
+        let slot = base
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with(SLOT_PREFIX));
+        if !slot {
+            let project = self.project(run)?;
+            self.remove_workspace(run, &project, base).await;
+            return Ok(());
+        }
+        for repo in &run.repos {
+            let dir = workspace::repo_dir(base, &repo.path);
+            if dir.join(".git").exists() {
+                git::detach(&dir).await?;
+            }
+        }
         Ok(())
     }
 
@@ -2136,13 +2868,65 @@ impl Engine {
             }
         }
         let jobs = Self::check_jobs(&project, &repos, &integration);
-        let checks = self
-            .run_checks(&jobs, "kiểm tra · tích hợp", control)
-            .await?;
+        let setup = if jobs.is_empty() {
+            Ok(())
+        } else {
+            self.ensure_setup(
+                &run.id,
+                None,
+                &project,
+                &integration,
+                &repos,
+                "chuẩn bị · tích hợp",
+                control.stop.subscribe(),
+            )
+            .await
+        };
+        let checks = match setup {
+            Ok(()) => {
+                self.run_checks(&run.id, None, &jobs, "kiểm tra · tích hợp", control)
+                    .await?
+            }
+            Err(StepError::Failed(message)) => vec![CheckResult {
+                command: "setup".into(),
+                ok: false,
+                exit_code: None,
+                output: message,
+                duration_ms: 0,
+            }],
+            Err(error) => return Err(error),
+        };
+        let checks_ok = checks.iter().all(|check| check.ok);
         self.update_run(&run.id, |run| {
             run.integration_checks = Some(checks);
             run.stage = stage::MERGE_GATE.into();
         })?;
+        // A follow-up asked to update its pull requests when done.
+        let push = run
+            .followups
+            .last()
+            .is_some_and(|followup| followup.push_pr)
+            && !run.pull_requests.is_empty();
+        if push {
+            if !checks_ok {
+                return self.wait(
+                    run,
+                    "Kiểm tra tích hợp lỗi nên chưa push lên PR; xem Cổng 2",
+                );
+            }
+            let mut draft = self.pr_draft(&run.id).await?;
+            // Only the PRs there are: no new one without the user.
+            draft
+                .repos
+                .retain(|repo| run.pull_requests.iter().any(|pr| pr.repo == repo.repo));
+            if draft.repos.is_empty() {
+                return self.wait(run, "Không có thay đổi mới để push lên PR");
+            }
+            return match self.push_pull_requests(&run.id, draft).await {
+                Ok(_) => Ok(Flow::Stop),
+                Err(error) => self.wait(run, &format!("Push lên PR thất bại: {error}")),
+            };
+        }
         if !run.merge_gate {
             if let Err(error) = self.merge_into_base(&run.id).await {
                 return self.wait(run, &error.to_string());
@@ -2269,26 +3053,24 @@ impl Engine {
         Ok(())
     }
 
+    /// Removes every worktree of the run (task slots, the integration one,
+    /// what verifying and pushing left) and the branches of merged tasks,
+    /// or of every task.
     async fn cleanup_worktrees(&self, run: &Run, delete_branches: bool) -> Result<()> {
         let project = self.project(run)?;
         let tasks = self.db().read(|c| repo::task_list(c, &run.id))?;
-        for task in &tasks {
-            if let Some(base) = &task.worktree {
-                self.remove_workspace(run, &project, Path::new(base)).await;
-            }
-            if let Some(branch) = &task.branch {
-                // Merged work lives on in the integration branch.
-                if delete_branches || task.status == task_status::MERGED {
-                    for repo in &run.repos {
-                        let root = workspace::repo_dir(Path::new(&project.path), &repo.path);
-                        git::delete_branch(&root, branch).await;
-                    }
-                }
-            }
+        let mut places: Vec<PathBuf> = tasks
+            .iter()
+            .filter_map(|task| task.worktree.as_ref().map(PathBuf::from))
+            .collect();
+        if let Ok(entries) = std::fs::read_dir(self.worktree_dir(&run.id, "")) {
+            places.extend(entries.flatten().map(|entry| entry.path()));
         }
-        self.remove_workspace(run, &project, &self.integration_dir(&run.id))
-            .await;
+        for place in &places {
+            self.remove_workspace(run, &project, place).await;
+        }
         let _ = std::fs::remove_dir(self.worktree_dir(&run.id, ""));
+        self.tidy_branches(run, &tasks, delete_branches).await;
         self.db().write(|c| {
             for mut task in tasks {
                 task.worktree = None;
@@ -2297,6 +3079,51 @@ impl Engine {
             Ok(())
         })?;
         Ok(())
+    }
+
+    /// Deletes the branches of merged tasks (their work lives on in the
+    /// integration branch), or of every task. A branch some worktree still
+    /// has checked out stays.
+    async fn tidy_branches(&self, run: &Run, tasks: &[Task], all: bool) {
+        let Ok(project) = self.project(run) else {
+            return;
+        };
+        for task in tasks {
+            let Some(branch) = &task.branch else {
+                continue;
+            };
+            if all || task.status == task_status::MERGED {
+                for repo in &run.repos {
+                    let root = workspace::repo_dir(Path::new(&project.path), &repo.path);
+                    git::delete_branch(&root, branch).await;
+                }
+            }
+        }
+    }
+
+    /// The run is delivered: worktrees stay (the leader's keeps its installed
+    /// dependencies for pushes and follow-ups), merged task branches go.
+    async fn delivered(&self, run: &Run) -> Result<()> {
+        let tasks = self.db().read(|c| repo::task_list(c, &run.id))?;
+        self.tidy_branches(run, &tasks, false).await;
+        Ok(())
+    }
+
+    /// "Dọn worktree": frees the disk a finished run holds. A follow-up
+    /// creates the worktrees again.
+    pub async fn clean_worktrees(&self, run_id: &str) -> Result<()> {
+        self.require_idle(run_id)?;
+        let run = self.db().read(|c| repo::run_get(c, run_id))?;
+        if run.stage != stage::DONE {
+            return Err(Error::msg("Chỉ dọn worktree khi lượt chạy đã kết thúc"));
+        }
+        self.cleanup_worktrees(&run, false).await
+    }
+
+    /// Whether a run still has worktrees on disk.
+    pub fn has_worktrees(&self, run_id: &str) -> bool {
+        std::fs::read_dir(self.worktree_dir(run_id, ""))
+            .is_ok_and(|mut entries| entries.next().is_some())
     }
 
     /// Gate 2: merge the integration branch into the base branch, in the
@@ -2346,7 +3173,7 @@ impl Engine {
             }
             merged.push(repo.clone());
         }
-        self.cleanup_worktrees(&run, false).await?;
+        self.delivered(&run).await?;
         self.update_run(run_id, |run| {
             run.stage = stage::DONE.into();
             run.status = run_status::MERGED.into();
@@ -2356,11 +3183,12 @@ impl Engine {
         Ok(())
     }
 
-    /// Gate 2: keep the integration branch, drop the worktrees.
+    /// Gate 2: keep the integration branch (and the worktrees, for pushes
+    /// and follow-ups).
     pub async fn keep_branch(&self, run_id: &str) -> Result<()> {
         self.require_idle(run_id)?;
         let run = self.at_stage(run_id, stage::MERGE_GATE)?;
-        self.cleanup_worktrees(&run, false).await?;
+        self.delivered(&run).await?;
         self.update_run(run_id, |run| {
             run.stage = stage::DONE.into();
             run.status = run_status::KEPT.into();
@@ -2375,7 +3203,12 @@ impl Engine {
     /// the pipeline goes again from the plan. Merged work: the integration
     /// branch restarts from the base branch as it is now; kept work: it goes
     /// on on the kept branch.
-    pub async fn follow_up(self: &Arc<Self>, run_id: &str, request: String) -> Result<()> {
+    pub async fn follow_up(
+        self: &Arc<Self>,
+        run_id: &str,
+        request: String,
+        push_pr: bool,
+    ) -> Result<()> {
         self.require_idle(run_id)?;
         let run = self.db().read(|c| repo::run_get(c, run_id))?;
         if run.stage != stage::DONE
@@ -2410,7 +3243,7 @@ impl Engine {
                 }
                 None => continue,
             };
-            git::reset_branch(&root, &run.integration_branch, &head)
+            self.move_integration(&run, &root, &repo.path, &head)
                 .await
                 .map_err(|error| Error::msg(format!("{label}{error}")))?;
             repo.base_commit = head;
@@ -2419,6 +3252,8 @@ impl Engine {
             run.followups.push(repo::FollowUp {
                 request,
                 created_at: now_unix(),
+                // Only where there is a pull request to update.
+                push_pr: push_pr && !run.pull_requests.is_empty(),
             });
             if let Some(first) = repos.first() {
                 run.base_commit = first.base_commit.clone();
@@ -2433,6 +3268,18 @@ impl Engine {
         })?;
         self.drive(run_id);
         Ok(())
+    }
+
+    /// Points the run's integration branch of a repo at `head`: in the
+    /// leader's worktree when there is one (its branch is checked out
+    /// there), else the branch alone.
+    async fn move_integration(&self, run: &Run, root: &Path, repo: &str, head: &str) -> Result<()> {
+        let dir = workspace::repo_dir(&self.integration_dir(&run.id), repo);
+        if dir.join(".git").exists() {
+            git::reset_worktree(&dir, head).await
+        } else {
+            git::reset_branch(root, &run.integration_branch, head).await
+        }
     }
 
     /// The newest commit of `branch`: origin's after fetching it, else the
@@ -2506,7 +3353,7 @@ impl Engine {
             return Err(Error::msg("Tên nhánh không hợp lệ: chỉ chữ, số và - _ . /"));
         }
         if at_gate {
-            self.cleanup_worktrees(&run, false).await?;
+            self.delivered(&run).await?;
         }
         let pr = repo::PullRequest {
             repo: attach.repo.clone(),
@@ -2798,7 +3645,8 @@ impl Engine {
                         ));
                     }
                 }
-                self.follow_up(run_id, request).await?;
+                // Gate 2 shows what was done before anything is pushed.
+                self.follow_up(run_id, request, false).await?;
                 verification.followed_up = true;
             }
         }
@@ -2811,6 +3659,238 @@ impl Engine {
         )?;
         self.env.changed(run_id);
         Ok(verification)
+    }
+
+    /// Per pull request of a finished run: the commits of its integration
+    /// branch that origin's copy of the PR branch (as last fetched) lacks;
+    /// None when that copy is not known here.
+    pub async fn pending_pushes(&self, run_id: &str) -> Result<Vec<PendingPush>> {
+        let run = self.db().read(|c| repo::run_get(c, run_id))?;
+        let project = self.project(&run)?;
+        let mut pending = Vec::new();
+        for pr in &run.pull_requests {
+            let root = workspace::repo_dir(Path::new(&project.path), &pr.repo);
+            let remote = format!("refs/remotes/origin/{}", pr.branch);
+            let commits = match git::commit_of(&root, &remote).await {
+                Ok(_) => git::ahead(&root, &remote, &run.integration_branch)
+                    .await
+                    .ok(),
+                Err(_) => None,
+            };
+            let needs_rebase = git::needs_rebase(
+                &root,
+                &format!("refs/remotes/origin/{}", pr.base),
+                &run.integration_branch,
+            )
+            .await;
+            pending.push(PendingPush {
+                repo: pr.repo.clone(),
+                branch: pr.branch.clone(),
+                url: pr.url.clone(),
+                commits,
+                needs_rebase,
+                base: pr.base.clone(),
+            });
+        }
+        Ok(pending)
+    }
+
+    /// "Push bằng AI": an agent rebases the run's work onto each PR's base,
+    /// resolves conflicts, fixes what the checks and hooks refuse, and pushes
+    /// with a lease, in a worktree of its own. Runs in the background like a
+    /// driver (it can be stopped); success is what origin shows afterwards.
+    pub fn ai_push(self: &Arc<Self>, run_id: &str, request: AiPush) -> Result<()> {
+        self.require_idle(run_id)?;
+        Cli::parse(&request.cli)?;
+        let run = self.db().read(|c| repo::run_get(c, run_id))?;
+        if run.pull_requests.is_empty() {
+            return Err(Error::msg("Lượt chạy chưa có PR; hãy Gắn PR trước"));
+        }
+        let at_gate = run.stage == stage::MERGE_GATE;
+        let done = run.stage == stage::DONE
+            && (run.status == run_status::KEPT || run.status == run_status::MERGED);
+        if !at_gate && !done {
+            return Err(Error::msg(
+                "Push bằng AI ở Cổng 2 hoặc khi lượt chạy đã kết thúc",
+            ));
+        }
+        let control = {
+            let mut drivers = self.drivers.lock().expect("agent drivers");
+            if drivers.contains_key(run_id) {
+                return Err(Error::msg("Lượt chạy đang chạy"));
+            }
+            let control = Arc::new(Control {
+                pause: AtomicBool::new(false),
+                stop: watch::channel(false).0,
+            });
+            drivers.insert(run_id.to_string(), Arc::clone(&control));
+            control
+        };
+        let _ = self.update_run(run_id, |run| {
+            run.status_note = Some(format!("{} đang push lên PR…", request.cli));
+        });
+        let engine = Arc::clone(self);
+        let run_id = run_id.to_string();
+        tokio::spawn(async move {
+            let result = engine.ai_push_inner(&run_id, &request, &control).await;
+            engine
+                .drivers
+                .lock()
+                .expect("agent drivers")
+                .remove(&run_id);
+            let _ = engine.update_run(&run_id, |run| match &result {
+                Ok(urls) => {
+                    run.status_note = Some(format!("AI đã push lên PR: {}", urls.join(" · ")));
+                    if run.stage == stage::MERGE_GATE {
+                        run.stage = stage::DONE.into();
+                        run.status = run_status::KEPT.into();
+                        run.finished_at = Some(now_unix());
+                    }
+                }
+                Err(error) => run.status_note = Some(format!("Push bằng AI chưa xong: {error}")),
+            });
+        });
+        Ok(())
+    }
+
+    async fn ai_push_inner(
+        &self,
+        run_id: &str,
+        request: &AiPush,
+        control: &Control,
+    ) -> Result<Vec<String>> {
+        let run = self.db().read(|c| repo::run_get(c, run_id))?;
+        let project = self.project(&run)?;
+        let tasks = self.db().read(|c| repo::task_list(c, run_id))?;
+        // The agent's model and effort for this step.
+        let shipping = Run {
+            leader_model: clean(request.model.clone()).or(run.leader_model.clone()),
+            leader_effort: clean(request.effort.clone()).or(run.leader_effort.clone()),
+            ..run.clone()
+        };
+        // The leader's worktree, on the integration branch: dependencies
+        // are installed there once and stay for the next push.
+        let dir = self.ensure_integration(&run, &project).await?;
+        let mut pushed: Vec<String> = Vec::new();
+        let mut outcome: Result<()> = Ok(());
+        for pr in &run.pull_requests {
+            let root = workspace::repo_dir(Path::new(&project.path), &pr.repo);
+            let label = workspace::label(&pr.repo);
+            let _ = git::git(&root, &["fetch", "origin", &pr.base]).await;
+            let _ = git::git(&root, &["fetch", "origin", &pr.branch]).await;
+            let place = workspace::repo_dir(&dir, &pr.repo);
+            git::abort_in_progress(&place).await;
+            if let Err(error) = self
+                .ensure_setup(
+                    &run.id,
+                    None,
+                    &project,
+                    &dir,
+                    std::slice::from_ref(&pr.repo),
+                    "chuẩn bị · push",
+                    control.stop.subscribe(),
+                )
+                .await
+            {
+                outcome = Err(Error::msg(error.message()));
+                break;
+            }
+            let (guides, _) = guides::block(
+                &Self::guides(&project),
+                Path::new(&project.path),
+                &dir,
+                Some(std::slice::from_ref(&pr.repo)),
+                Use::Work,
+            );
+            let done: Vec<&Task> = tasks
+                .iter()
+                .filter(|t| t.status == task_status::MERGED && t.repos.contains(&pr.repo))
+                .collect();
+            let prompt = prompts::ai_push(
+                &run,
+                &run.integration_branch,
+                &pr.branch,
+                &pr.base,
+                &pr.url,
+                &done,
+                request.note.as_deref().unwrap_or(""),
+                &guides,
+            );
+            let answer = self
+                .invoke(
+                    &shipping,
+                    None,
+                    &request.cli,
+                    "push",
+                    &format!("{} · push PR {}", request.cli, pr.branch),
+                    Access::Push,
+                    &place,
+                    None,
+                    prompt,
+                    None,
+                    control,
+                )
+                .await;
+            // A rebase or merge the agent left half done.
+            git::abort_in_progress(&place).await;
+            let head = git::commit_of(&place, "HEAD").await.ok();
+            let reply = match answer {
+                Ok(outcome) => match outcome.error {
+                    Some(error) => Err(error),
+                    None => Ok(outcome.text),
+                },
+                Err(StepError::Cancelled) => Err("đã dừng".into()),
+                Err(StepError::Failed(message)) => Err(message),
+                Err(StepError::Quota { note, .. }) => Err(note),
+            };
+            // What counts is what origin has now.
+            let _ = git::git(&root, &["fetch", "origin", &pr.branch]).await;
+            let remote = git::commit_of(&root, &format!("refs/remotes/origin/{}", pr.branch))
+                .await
+                .ok();
+            match (reply, head) {
+                (Ok(_), Some(head)) if remote.as_deref() == Some(head.as_str()) => {
+                    pushed.push(pr.url.clone());
+                }
+                (Ok(reply), _) => {
+                    outcome = Err(Error::msg(format!(
+                        "{label}nhánh {} trên origin chưa phải bản agent làm ra. Agent trả lời: {}",
+                        pr.branch,
+                        adapter::shorten(reply.trim(), 300)
+                    )));
+                }
+                (Err(error), _) => outcome = Err(Error::msg(format!("{label}{error}"))),
+            }
+            if outcome.is_err() {
+                break;
+            }
+        }
+        if run.stage == stage::MERGE_GATE && outcome.is_ok() {
+            self.delivered(&run).await?;
+        }
+        // The integration branch is what the agent pushed: the run goes on
+        // from there.
+        outcome?;
+        Ok(pushed)
+    }
+
+    /// "Push lên PR" on a finished run: its integration branch onto the
+    /// branch of each pull request it has (fast-forward, hooks run, no new
+    /// PR). The run stays finished.
+    pub async fn push_to_pull_requests(&self, run_id: &str) -> Result<Run> {
+        self.require_idle(run_id)?;
+        let run = self.db().read(|c| repo::run_get(c, run_id))?;
+        if run.pull_requests.is_empty() {
+            return Err(Error::msg("Lượt chạy chưa có PR; hãy Gắn PR trước"));
+        }
+        let mut draft = self.pr_draft(run_id).await?;
+        draft
+            .repos
+            .retain(|repo| run.pull_requests.iter().any(|pr| pr.repo == repo.repo));
+        if draft.repos.is_empty() {
+            return Err(Error::msg("Không có thay đổi nào để push lên PR"));
+        }
+        self.push_pull_requests(run_id, draft).await
     }
 
     /// What gate 2 proposes to push: the repos the run changed, under the
@@ -2866,6 +3946,7 @@ impl Engine {
             title: run.title.clone(),
             body,
             draft: false,
+            rebase: None,
         })
     }
 
@@ -2875,7 +3956,17 @@ impl Engine {
     /// run ends as "kept", its PRs remembered for follow-ups.
     pub async fn open_pull_requests(&self, run_id: &str, request: PrRequest) -> Result<Run> {
         self.require_idle(run_id)?;
-        let run = self.at_stage(run_id, stage::MERGE_GATE)?;
+        self.push_pull_requests(run_id, request).await
+    }
+
+    /// `open_pull_requests` for the user or for the driver itself.
+    async fn push_pull_requests(&self, run_id: &str, request: PrRequest) -> Result<Run> {
+        let run = self.db().read(|c| repo::run_get(c, run_id))?;
+        let delivered = run.stage == stage::DONE
+            && (run.status == run_status::KEPT || run.status == run_status::MERGED);
+        if run.stage != stage::MERGE_GATE && !delivered {
+            return Err(Error::msg("Lượt chạy không ở bước này nữa"));
+        }
         let title = request.title.trim().to_string();
         if title.is_empty() {
             return Err(Error::msg("Hãy nhập tiêu đề PR"));
@@ -2903,43 +3994,121 @@ impl Engine {
         let body_file = dir.join("pr-body.md");
         std::fs::write(&body_file, &request.body)?;
 
-        let id = format!("agent:pr-{}", uuid::Uuid::new_v4());
-        let log = self.env.open_log(&id, "push & tạo PR");
+        let (id, log) = self.open_side_log(run_id, None, "pr", "push & tạo PR");
         // Kept alive: the tab's own stop button still cancels.
         let (_stop, stop) = watch::channel(false);
         let mut opened = run.pull_requests.clone();
         let mut outcome: Result<()> = Ok(());
+        // Pushed from the leader's worktree: dependencies installed there,
+        // the pre-push hook checks the very code that goes out, and a rebase
+        // moves the integration branch along.
+        let integration = match self.ensure_integration(&run, &project).await {
+            Ok(dir) => dir,
+            Err(error) => {
+                self.close_side_log(run_id, &id, false);
+                return Err(error);
+            }
+        };
         for pr in &request.repos {
             let (branch, base) = (pr.branch.trim(), pr.base.trim());
             let label = workspace::label(&pr.repo);
             let root = workspace::repo_dir(Path::new(&project.path), &pr.repo);
-            let refspec = format!("{}:refs/heads/{branch}", run.integration_branch);
-            log.heading(&format!("{label}git push origin {refspec}"));
+            // Where origin stands: the base to sit on, the branch to lease.
+            let _ = git::git(&root, &["fetch", "origin", base]).await;
+            let _ = git::git(&root, &["fetch", "origin", branch]).await;
+            let base_ref = format!("refs/remotes/origin/{base}");
+            let remote_head = git::commit_of(&root, &format!("refs/remotes/origin/{branch}"))
+                .await
+                .ok();
+            let rebase = match request.rebase {
+                Some(rebase) => rebase,
+                None => git::needs_rebase(&root, &base_ref, &run.integration_branch).await,
+            };
+            let place = workspace::repo_dir(&integration, &pr.repo);
+            if let Err(error) = self
+                .ensure_setup(
+                    run_id,
+                    None,
+                    &project,
+                    &integration,
+                    std::slice::from_ref(&pr.repo),
+                    "chuẩn bị · push",
+                    stop.clone(),
+                )
+                .await
+            {
+                let message = error.message();
+                log.result(false, &message);
+                outcome = Err(Error::msg(message));
+                break;
+            }
+            let before = git::commit_of(&place, "HEAD").await.unwrap_or_default();
+            if rebase {
+                log.heading(&format!("{label}git rebase origin/{base}"));
+                let rebased = match git::rebase(&place, &base_ref).await {
+                    Ok(()) => Ok(()),
+                    Err(MergeError::Conflict(files)) => Err(format!(
+                        "Rebase lên origin/{base} bị xung đột, chưa push gì: {}. Hãy dùng \
+                         \"Push bằng AI\" hoặc rebase tay rồi Gắn PR / push lại",
+                        files.join(", ")
+                    )),
+                    Err(MergeError::Failed(message)) => Err(format!("Rebase lỗi: {message}")),
+                };
+                match rebased {
+                    Ok(()) => log.result(true, &format!("Đã rebase lên origin/{base}")),
+                    Err(message) => {
+                        log.result(false, &message);
+                        outcome = Err(Error::msg(format!("{label}{message}")));
+                        break;
+                    }
+                }
+            }
+            let refspec = format!("HEAD:refs/heads/{branch}");
+            let mut args: Vec<String> = vec!["push".into()];
+            if rebase {
+                // Rewrites the PR branch, but only the commit we saw there.
+                args.push(format!(
+                    "--force-with-lease=refs/heads/{branch}:{}",
+                    remote_head.clone().unwrap_or_default()
+                ));
+            }
+            args.push("origin".into());
+            args.push(refspec);
+            log.heading(&format!("{label}git {}", args.join(" ")));
             let pushed = process::run_program(
                 Path::new("git"),
-                &["push".into(), "origin".into(), refspec],
-                &root,
+                &args,
+                &place,
                 PUSH_TIMEOUT,
                 &log,
                 stop.clone(),
             )
             .await;
-            match pushed {
-                Ok((true, _, _)) => log.result(true, "Đã push"),
+            let failure = match pushed {
+                Ok((true, _, _)) => {
+                    log.result(true, "Đã push");
+                    None
+                }
                 Ok((false, code, tail)) => {
-                    let last = tail.lines().last().unwrap_or_default().to_string();
                     log.result(false, "git push thất bại");
-                    outcome = Err(Error::msg(format!(
-                        "{label}git push thất bại (mã {}): {last}",
-                        code.map_or("?".into(), |c| c.to_string())
-                    )));
-                    break;
+                    Some(format!(
+                        "{label}git push thất bại (mã {}): {}",
+                        code.map_or("?".into(), |c| c.to_string()),
+                        push_error(&tail)
+                    ))
                 }
                 Err(error) => {
                     log.result(false, &error.to_string());
-                    outcome = Err(Error::msg(format!("{label}git push: {error}")));
-                    break;
+                    Some(format!("{label}git push: {error}"))
                 }
+            };
+            if let Some(failure) = failure {
+                // Nothing went out: the integration branch is as it was.
+                if rebase && !before.is_empty() {
+                    let _ = git::reset_worktree(&place, &before).await;
+                }
+                outcome = Err(Error::msg(failure));
+                break;
             }
             if let Some(earlier) = opened
                 .iter()
@@ -2990,26 +4159,30 @@ impl Engine {
                 url,
             });
         }
-        self.env.close_log(&id, outcome.is_ok());
+        self.close_side_log(run_id, &id, outcome.is_ok());
         // What was opened is kept even when a later repo failed.
         let saved = opened.clone();
         if let Err(error) = outcome {
             self.update_run(run_id, |run| run.pull_requests = saved)?;
             return Err(error);
         }
-        self.cleanup_worktrees(&run, false).await?;
+        self.delivered(&run).await?;
         let note = opened
             .iter()
             .map(|pr| pr.url.clone())
             .filter(|url| !url.is_empty())
             .collect::<Vec<_>>()
             .join(" · ");
+        let at_gate = run.stage == stage::MERGE_GATE;
         self.update_run(run_id, |run| {
             run.pull_requests = opened;
-            run.stage = stage::DONE.into();
-            run.status = run_status::KEPT.into();
             run.status_note = Some(format!("PR: {note}"));
-            run.finished_at = Some(now_unix());
+            // A finished run stays as it ended (merged or kept).
+            if at_gate {
+                run.stage = stage::DONE.into();
+                run.status = run_status::KEPT.into();
+                run.finished_at = Some(now_unix());
+            }
         })
     }
 
@@ -3040,12 +4213,14 @@ impl Engine {
     }
 
     /// Forgets a finished run (its logs too).
-    pub fn delete(&self, run_id: &str) -> Result<()> {
+    pub async fn delete(&self, run_id: &str) -> Result<()> {
         self.require_idle(run_id)?;
         let run = self.db().read(|c| repo::run_get(c, run_id))?;
         if run.stage != stage::DONE {
             return Err(Error::msg("Hãy bỏ lượt chạy trước khi xóa"));
         }
+        // Worktrees a delivered run kept; the branches stay.
+        let _ = self.cleanup_worktrees(&run, false).await;
         self.db().write(|c| repo::run_delete(c, run_id))?;
         let _ = std::fs::remove_dir_all(self.run_dir(run_id));
         Ok(())
@@ -3448,5 +4623,18 @@ impl Engine {
             total = (total.0 + files, total.1 + added, total.2 + removed);
         }
         Ok(total)
+    }
+}
+
+#[cfg(test)]
+mod push_tests {
+    #[test]
+    fn push_error_shows_the_hook() {
+        let tail = "Enumerating objects\n\npre-push: x is behind origin/develop. Rebase before pushing\n  git rebase origin/develop\nerror: failed to push some refs to 'origin'";
+        assert_eq!(
+            super::push_error(tail),
+            "pre-push: x is behind origin/develop. Rebase before pushing"
+        );
+        assert_eq!(super::push_error("a\nb\nc\nd\ne"), "b · c · d · e");
     }
 }

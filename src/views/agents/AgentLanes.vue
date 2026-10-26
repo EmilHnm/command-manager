@@ -37,16 +37,16 @@
           <span class="lane-state">{{ lane.state }}</span>
           <span class="lane-spacer" />
           <select
-            v-if="lane.invocations.length > 1"
+            v-if="lane.items.length > 1"
             class="lane-select font-mono"
             :value="pinned[lane.key] ?? ''"
-            title="Lượt gọi đang xem"
+            title="Bước đang xem"
             @click.stop
             @change="pin(lane.key, ($event.target as HTMLSelectElement).value)"
           >
             <option value="">Mới nhất</option>
-            <option v-for="(inv, index) in lane.invocations" :key="inv.id" :value="inv.id">
-              #{{ index + 1 }} {{ stepLabel(inv) }} · {{ clock(inv.started_at) }} {{ mark(inv) }}
+            <option v-for="(item, index) in lane.items" :key="item.id" :value="item.id">
+              #{{ index + 1 }} {{ item.label }} · {{ clock(item.started_at) }} {{ mark(item) }}
             </option>
           </select>
           <button
@@ -63,7 +63,7 @@
             type="button"
             class="lane-btn"
             title="Mở thành tab trong Workspace"
-            @click.stop="emit('expand', lane.shown)"
+            @click.stop="emit('expand', { invocation: lane.shown.invocation, terminalId: lane.shown.id, title: lane.title })"
           >
             <ExternalLink :size="13" />
           </button>
@@ -92,23 +92,26 @@ import { computed, onUnmounted, reactive, ref, watch } from 'vue';
 import { ChevronDown, ChevronRight, ExternalLink, Maximize2, Minimize2 } from 'lucide-vue-next';
 import XtermPane from '@/components/terminal/XtermPane.vue';
 import { ipcClient } from '@/ipc/client';
-import type { AgentCli, AgentInvocation, AgentTask } from '@/types/agents';
+import type { AgentCli, AgentInvocation, AgentTask, SideLog } from '@/types/agents';
 import { TASK_STATUS_LABELS } from '@/types/agents';
 
 const props = withDefaults(
   defineProps<{
     invocations: AgentInvocation[];
+    /** Checks, setup, context and push logs (not agents). */
+    sideLogs?: SideLog[];
     tasks: AgentTask[];
     leaderCli: AgentCli;
     layout?: 'grid' | 'list';
   }>(),
   {
+    sideLogs: () => [],
     layout: 'grid',
   }
 );
 
 const emit = defineEmits<{
-  (e: 'expand', invocation: AgentInvocation): void;
+  (e: 'expand', item: { invocation: AgentInvocation | null; terminalId: string; title: string }): void;
   (e: 'collapse-change', allCollapsed: boolean): void;
 }>();
 
@@ -119,16 +122,38 @@ const STEP_LABELS: Record<string, string> = {
   fix: 'sửa',
   review: 'review',
   verify: 'verify PR',
+  push: 'push lên PR (AI)',
+  prepare: 'chuẩn bị test',
+  triage: 'xác nhận lỗi',
+  chat: 'hỏi đáp',
 };
+
+const SIDE_LABELS: Record<string, string> = {
+  check: 'kiểm tra',
+  setup: 'chuẩn bị',
+  context: 'ngữ cảnh',
+  pr: 'push & PR',
+};
+
+/** One step in a lane: an agent's invocation or a side log (checks...). */
+interface LaneItem {
+  /** Invocation id, or the side log's terminal id. */
+  id: string;
+  started_at: string;
+  finished_at: string | null;
+  ok: boolean | null;
+  label: string;
+  invocation: AgentInvocation | null;
+}
 
 interface Lane {
   key: string;
   title: string;
   cli: string;
   state: string;
-  invocations: AgentInvocation[];
-  /** The invocation in the terminal. */
-  shown: AgentInvocation;
+  items: LaneItem[];
+  /** The step in the terminal. */
+  shown: LaneItem;
   running: boolean;
   failed: boolean;
 }
@@ -177,38 +202,65 @@ const stepLabel = (inv: AgentInvocation) => {
 const clock = (unix: string) =>
   new Date(Number(unix) * 1000).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
-const mark = (inv: AgentInvocation) => (!inv.finished_at ? '…' : inv.ok ? '✓' : '✗');
+const mark = (item: { finished_at: string | null; ok: boolean | null }) =>
+  !item.finished_at ? '…' : item.ok ? '✓' : '✗';
 
-/** The leader designs, plans and reviews; each task has its worker. */
+/**
+ * The leader designs, plans and reviews; each task has its worker, and its
+ * setup and checks. Run-wide logs (integration checks, context, pushes) go
+ * with the leader.
+ */
 const laneKey = (inv: AgentInvocation) =>
-  inv.step === 'review' || !inv.task_id ? 'leader' : `task:${inv.task_id}`;
+  inv.step === 'review' || inv.step === 'verify' || !inv.task_id ? 'leader' : `task:${inv.task_id}`;
 
 const lanes = computed<Lane[]>(() => {
-  const groups = new Map<string, AgentInvocation[]>();
-  for (const inv of props.invocations) {
-    const key = laneKey(inv);
+  const groups = new Map<string, LaneItem[]>();
+  const add = (key: string, item: LaneItem) => {
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(inv);
+    groups.get(key)!.push(item);
+  };
+  for (const inv of props.invocations) {
+    add(laneKey(inv), {
+      id: inv.id,
+      started_at: inv.started_at,
+      finished_at: inv.finished_at,
+      ok: inv.ok,
+      label: stepLabel(inv),
+      invocation: inv,
+    });
+  }
+  for (const log of props.sideLogs) {
+    add(log.task_id ? `task:${log.task_id}` : 'leader', {
+      id: log.id,
+      started_at: log.started_at,
+      finished_at: log.finished_at,
+      ok: log.ok,
+      label: log.task_id ? (SIDE_LABELS[log.kind] ?? log.kind) : log.title,
+      invocation: null,
+    });
+  }
+  for (const items of groups.values()) {
+    items.sort((a, b) => Number(a.started_at) - Number(b.started_at));
   }
   const order = (key: string) =>
     key === 'leader' ? -1 : (taskOf(key.slice('task:'.length))?.sort_order ?? Number.MAX_SAFE_INTEGER);
   return [...groups.entries()]
     .sort(([a], [b]) => order(a) - order(b))
-    .map(([key, invocations]) => {
-      const latest = invocations[invocations.length - 1];
-      const shown = invocations.find((inv) => inv.id === pinned[key]) ?? latest;
+    .map(([key, items]) => {
+      const latest = items[items.length - 1];
+      const shown = items.find((item) => item.id === pinned[key]) ?? latest;
       const task = key === 'leader' ? undefined : taskOf(key.slice('task:'.length));
       const running = !latest.finished_at;
       return {
         key,
         title: task ? `${task.key} · ${task.title}` : 'Leader',
-        cli: task ? `${task.role} · ${latest.cli}` : props.leaderCli,
+        cli: task ? `${task.role} · ${task.cli}` : props.leaderCli,
         state: running
-          ? `đang ${stepLabel(latest)}…`
+          ? `đang ${latest.label}…`
           : task
             ? TASK_STATUS_LABELS[task.status]
-            : `${stepLabel(latest)} ${mark(latest)}`,
-        invocations,
+            : `${latest.label} ${mark(latest)}`,
+        items,
         shown,
         running,
         failed: latest.ok === false,
@@ -227,21 +279,24 @@ let retry: number | undefined;
 
 const ensureTerminals = async () => {
   for (const lane of lanes.value) {
-    const inv = lane.shown;
-    if (terminals[inv.id] || opening.has(inv.id)) continue;
-    opening.add(inv.id);
+    const item = lane.shown;
+    if (terminals[item.id] || opening.has(item.id)) continue;
+    opening.add(item.id);
+    const title = `🤖 ${lane.cli} · ${lane.title}`;
     try {
-      terminals[inv.id] = await ipcClient.agentsOpenLog(inv.id, `🤖 ${lane.cli} · ${lane.title}`);
-      delete errors[inv.id];
+      terminals[item.id] = item.invocation
+        ? await ipcClient.agentsOpenLog(item.id, title)
+        : ipcClient.agentsAttachLog(item.id, `${title} · ${item.label}`);
+      delete errors[item.id];
     } catch (error) {
-      errors[inv.id] = error instanceof Error ? error.message : String(error);
+      errors[item.id] = error instanceof Error ? error.message : String(error);
       // A process just starting has no tab yet: try again shortly.
-      if (!inv.finished_at) {
+      if (!item.finished_at) {
         window.clearTimeout(retry);
         retry = window.setTimeout(() => void ensureTerminals(), 500);
       }
     } finally {
-      opening.delete(inv.id);
+      opening.delete(item.id);
     }
   }
 };

@@ -103,10 +103,21 @@
               <span>Danh sách Task Triển Khai ({{ tasks.length }})</span>
               <span class="tasks-badge">Cô lập git worktree</span>
             </div>
-            <button type="button" class="btn btn-xs btn-ghost text-primary" @click="addTask">
-              <Plus :size="12" />
-              <span>Thêm task</span>
-            </button>
+            <div class="tasks-add">
+              <button type="button" class="btn btn-xs btn-ghost text-primary" @click="addTask">
+                <Plus :size="12" />
+                <span>Thêm task</span>
+              </button>
+              <button
+                type="button"
+                class="btn btn-xs btn-ghost text-primary"
+                title="Một người làm (vd. test UI): AI chuẩn bị theo mô tả, người test báo kết quả, lỗi thành task sửa"
+                @click="addHumanTask"
+              >
+                <UserCheck :size="12" />
+                <span>Thêm task test thủ công</span>
+              </button>
+            </div>
           </div>
 
           <div class="tasks-list custom-scrollbar">
@@ -124,9 +135,10 @@
               <div class="task-info">
                 <div class="task-top-row">
                   <span class="task-key font-mono">{{ task.key }}</span>
-                  <span class="task-role-badge" :class="'role-' + task.role">{{ task.role }}</span>
+                  <span v-if="task.kind === 'human'" class="task-human-badge">👤 người test</span>
+                  <span v-else class="task-role-badge" :class="'role-' + task.role">{{ task.role }}</span>
                   <span v-if="multi" class="task-repo-badge font-mono">{{ task.repos.join(', ') || '— chưa chọn repo' }}</span>
-                  <div class="task-cli-picker" @click.stop>
+                  <div v-if="task.kind !== 'human'" class="task-cli-picker" @click.stop>
                     <select v-model="task.cli" class="task-cli-select font-mono">
                       <option v-for="cli in AGENT_CLIS" :key="cli" :value="cli" :disabled="!installed(cli)">
                         {{ cli }}{{ installed(cli) ? '' : ' (chưa cài)' }}
@@ -151,8 +163,10 @@
                   <input v-model="task.key" class="edit-input font-mono" @input="selectedTaskKey = task.key" />
                   <label class="edit-label">Tiêu đề</label>
                   <input v-model="task.title" class="edit-input" />
-                  <label class="edit-label">Vai</label>
-                  <input v-model="task.role" class="edit-input font-mono" />
+                  <template v-if="task.kind !== 'human'">
+                    <label class="edit-label">Vai</label>
+                    <input v-model="task.role" class="edit-input font-mono" />
+                  </template>
                   <template v-if="multi">
                     <label class="edit-label">Repo task thay đổi</label>
                     <div class="repo-checks">
@@ -166,6 +180,27 @@
                       </label>
                     </div>
                   </template>
+                  <template v-if="task.kind === 'human'">
+                    <label class="edit-label">Mô tả cho AI: cần test gì, AI phải đưa ra gì trước</label>
+                    <textarea
+                      v-model="task.description"
+                      rows="5"
+                      class="edit-input edit-textarea"
+                      placeholder="Ví dụ: Viết hướng dẫn test màn C-004 (đổi mật khẩu) trên desktop và mobile: các case validate, lỗi API, thông báo thành công."
+                    ></textarea>
+                    <label class="edit-label">Test sau các task (đến lượt khi chúng đã merge)</label>
+                    <div class="repo-checks">
+                      <label v-for="other in tasks.filter((t) => t.key !== task.key)" :key="other.key" class="repo-check font-mono">
+                        <input
+                          type="checkbox"
+                          :checked="task.depends_on.includes(other.key)"
+                          @change="toggleDep(task, other.key, ($event.target as HTMLInputElement).checked)"
+                        />
+                        {{ other.key }}
+                      </label>
+                    </div>
+                  </template>
+                  <template v-else>
                   <label class="edit-label">Mô tả</label>
                   <textarea v-model="task.description" rows="3" class="edit-input edit-textarea"></textarea>
                   <label class="edit-label">Tiêu chí chấp nhận (mỗi dòng một ý)</label>
@@ -183,8 +218,10 @@
                     class="edit-input font-mono"
                     @change="task.scope = commaList($event)"
                   />
-                  <label class="edit-label">Phụ thuộc (key, cách nhau bởi dấu phẩy)</label>
+                  </template>
+                  <label v-if="task.kind !== 'human'" class="edit-label">Phụ thuộc (key, cách nhau bởi dấu phẩy)</label>
                   <input
+                    v-if="task.kind !== 'human'"
                     :value="task.depends_on.join(', ')"
                     class="edit-input font-mono"
                     @change="task.depends_on = commaList($event)"
@@ -282,6 +319,7 @@ import {
   RotateCcw,
   Check,
   ShieldCheck,
+  UserCheck,
 } from 'lucide-vue-next';
 import type { AgentCli, CheckProposal, CliInfo, RunDetail, TaskDraft } from '@/types/agents';
 import { AGENT_CLIS, isMultiRepo } from '@/types/agents';
@@ -363,6 +401,7 @@ watch(
       scope: [...task.scope],
       depends_on: [...task.depends_on],
       repos: [...task.repos],
+      kind: task.kind,
     }));
     selectedTaskKey.value = '';
     feedbackText.value = '';
@@ -390,6 +429,7 @@ const taskErrors = computed(() =>
     if (!/^[A-Za-z0-9_-]{1,40}$/.test(task.key)) return 'Key chỉ gồm chữ, số, - và _';
     if (tasks.value.findIndex((other) => other.key === task.key) !== index) return 'Key bị trùng';
     if (!task.title.trim()) return 'Chưa có tiêu đề';
+    if (task.kind === 'human' && !task.description.trim()) return 'Cần mô tả cho AI (cần test gì)';
     if (!installed(task.cli)) return `${task.cli} chưa cài`;
     if (task.repos.length === 0) return 'Chưa chọn repo';
     const unknown = task.repos.filter((repo) => !runRepos.value.includes(repo));
@@ -416,6 +456,30 @@ const planError = computed(() => {
   return '';
 });
 
+/** A person's task, tested after every agent task by default. */
+function addHumanTask() {
+  let n = 1;
+  while (tasks.value.some((task) => task.key === `test-${n}`)) n += 1;
+  const key = `test-${n}`;
+  tasks.value.push({
+    key,
+    title: 'Test thủ công',
+    role: 'human',
+    cli: props.detail?.run.leader_cli ?? 'claude',
+    description: '',
+    acceptance: [],
+    scope: [],
+    depends_on: tasks.value.filter((task) => task.kind !== 'human').map((task) => task.key),
+    repos: [...runRepos.value],
+    kind: 'human',
+  });
+  selectedTaskKey.value = key;
+}
+
+function toggleDep(task: TaskDraft, key: string, on: boolean) {
+  task.depends_on = on ? [...new Set([...task.depends_on, key])] : task.depends_on.filter((dep) => dep !== key);
+}
+
 function addTask() {
   let n = tasks.value.length + 1;
   while (tasks.value.some((task) => task.key === `task-${n}`)) n += 1;
@@ -430,6 +494,7 @@ function addTask() {
     scope: [],
     depends_on: [],
     repos: runRepos.value.slice(0, 1),
+    kind: 'agent',
   });
   selectedTaskKey.value = `task-${n}`;
 }
@@ -700,6 +765,19 @@ async function discardConfirmed() {
   flex-direction: column;
   min-height: 0;
   background-color: var(--surface-container-low, #141721);
+}
+
+.tasks-add {
+  display: flex;
+  gap: 4px;
+}
+
+.task-human-badge {
+  padding: 1px 6px;
+  font-size: 10px;
+  border-radius: 4px;
+  color: #fbbf24;
+  background-color: rgba(251, 191, 36, 0.12);
 }
 
 .tasks-header {

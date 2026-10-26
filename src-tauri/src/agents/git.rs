@@ -165,6 +165,54 @@ pub async fn remove_worktree(root: &Path, path: &Path) {
     let _ = git(root, &["worktree", "prune"]).await;
 }
 
+/// The private git folder of a worktree (`.git/worktrees/<name>` for a
+/// linked one): a place for notes that go away with it.
+pub async fn git_dir(worktree: &Path) -> Result<PathBuf> {
+    Ok(PathBuf::from(
+        git(worktree, &["rev-parse", "--absolute-git-dir"]).await?,
+    ))
+}
+
+/// Puts an existing worktree on `branch`, dropping what it had: tracked
+/// changes and untracked files, but not ignored ones (installed
+/// dependencies, build caches).
+pub async fn switch_worktree(worktree: &Path, branch: &str) -> Result<()> {
+    abort_in_progress(worktree).await;
+    git(worktree, &["checkout", "-q", "--force", branch]).await?;
+    git(worktree, &["clean", "-fdq"]).await?;
+    Ok(())
+}
+
+/// Moves the branch a worktree has checked out to `at`, the same way.
+pub async fn reset_worktree(worktree: &Path, at: &str) -> Result<()> {
+    abort_in_progress(worktree).await;
+    git(worktree, &["reset", "-q", "--hard", at]).await?;
+    git(worktree, &["clean", "-fdq"]).await?;
+    Ok(())
+}
+
+/// Leaves the worktree's branch (so it can be moved or deleted elsewhere)
+/// and keeps the files.
+pub async fn detach(worktree: &Path) -> Result<()> {
+    git(worktree, &["checkout", "-q", "--detach"]).await?;
+    Ok(())
+}
+
+/// Aborts a rebase or merge an agent left half done.
+pub async fn abort_in_progress(worktree: &Path) {
+    let _ = output(worktree, &["rebase", "--abort"]).await;
+    let _ = output(worktree, &["merge", "--abort"]).await;
+}
+
+/// Files that differ between two commits.
+pub async fn changed_between(cwd: &Path, from: &str, to: &str) -> Result<Vec<String>> {
+    Ok(git(cwd, &["diff", "--name-only", from, to])
+        .await?
+        .lines()
+        .map(str::to_string)
+        .collect())
+}
+
 pub async fn delete_branch(root: &Path, branch: &str) {
     let _ = git(root, &["branch", "-D", branch]).await;
 }
@@ -186,6 +234,44 @@ async fn commit(cwd: &Path, args: &[&str]) -> Result<String> {
         full.extend_from_slice(args);
         git(cwd, &full).await
     }
+}
+
+/// Rebases the worktree's HEAD onto `upstream` (merge commits are
+/// flattened away). On conflict the rebase is aborted and the conflicting
+/// files are returned.
+pub async fn rebase(worktree: &Path, upstream: &str) -> std::result::Result<(), MergeError> {
+    match commit(worktree, &["rebase", "--no-verify", "-q", upstream]).await {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            let files: Vec<String> = git(worktree, &["diff", "--name-only", "--diff-filter=U"])
+                .await
+                .map(|out| out.lines().map(str::to_string).collect())
+                .unwrap_or_default();
+            let _ = git(worktree, &["rebase", "--abort"]).await;
+            Err(if files.is_empty() {
+                MergeError::Failed(error.to_string())
+            } else {
+                MergeError::Conflict(files)
+            })
+        }
+    }
+}
+
+/// Whether `head` has to be rebased before it may go on top of `base`:
+/// `base` is not in its history, or it carries merge commits `base` lacks
+/// (repos whose hooks refuse both). False when `base` is unknown.
+pub async fn needs_rebase(cwd: &Path, base: &str, head: &str) -> bool {
+    if commit_of(cwd, base).await.is_err() {
+        return false;
+    }
+    let on_top = output(cwd, &["merge-base", "--is-ancestor", base, head])
+        .await
+        .is_ok_and(|out| out.status.success());
+    let merges = git(cwd, &["rev-list", "--merges", &format!("{base}..{head}")])
+        .await
+        .map(|out| !out.trim().is_empty())
+        .unwrap_or(false);
+    !on_top || merges
 }
 
 /// Stages everything and commits. False when there was nothing to commit.

@@ -2,7 +2,7 @@
 //! design → plan → gate 1 → implement / check / review / fix → merge.
 
 use super::adapter::Cli;
-use super::engine::{AgentEnv, AttachPr, Engine, NewRun};
+use super::engine::{AgentEnv, AiPush, AttachPr, Engine, NewRun};
 use super::git;
 use super::log::AgentLog;
 use crate::db::repos::agents::{
@@ -34,6 +34,28 @@ case "$last" in
     esac
     out '{"type":"result","subtype":"success","is_error":false,"session_id":"rev","result":"","structured_output":{"verdict":"'$verdict'","summary":"s","comments":[{"file":"b.txt","line":1,"issue":"more","severity":"must"}]}}'
     ;;
+  *"PERSON will do by hand"*)
+    printf '%s\n' "$last" >> "$here/prompts-prepare"
+    out '{"type":"system","subtype":"init","session_id":"prep"}'
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"prep","result":"","structured_output":{"summary":"Test a và b","setup":["Mở /login"],"cases":[{"id":"C1","title":"Đăng nhập đúng","steps":["Nhập","Bấm"],"expected":"Vào trang chủ"},{"id":"C2","title":"Sai mật khẩu","steps":["Nhập sai"],"expected":"Báo lỗi"}],"notes":""}}'
+    ;;
+  *"by hand and reports failures"*)
+    printf '%s\n' "$last" >> "$here/prompts-triage"
+    out '{"type":"system","subtype":"init","session_id":"tri"}'
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"tri","result":"","structured_output":{"summary":"Sẽ sửa thông báo lỗi","tasks":[{"key":"fix-x","title":"Sửa thông báo","role":"backend","repos":["."],"description":"C2 không báo lỗi","acceptance":["báo lỗi"],"scope":["fix-x.txt"],"depends_on":[]}]}}'
+    ;;
+  *"is stuck. Help them"*|*"Câu hỏi 2"*)
+    printf '%s\n' "$*" >> "$here/args-chat"
+    out '{"type":"system","subtype":"init","session_id":"chat"}'
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"chat","result":"Dùng tài khoản admin"}'
+    ;;
+  *"engineer who ships"*)
+    out '{"type":"system","subtype":"init","session_id":"ship"}'
+    if [ ! -f "$here/push-lazy" ]; then
+      git fetch -q origin && git rebase -q origin/main && git push -q --force-with-lease origin HEAD:feat/manual
+    fi
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"ship","result":"rebased and pushed","total_cost_usd":0.02}'
+    ;;
   *"follow-up request"*)
     out '{"type":"system","subtype":"init","session_id":"lead"}'
     out '{"type":"result","subtype":"success","is_error":false,"session_id":"lead","result":"","structured_output":{"contract":"fn more()","tasks":[{"key":"c","title":"Task C","role":"backend","repos":'"$repos"',"description":"write c","acceptance":["c.txt"],"scope":["c.txt"],"depends_on":["a"]}]}}'
@@ -58,7 +80,7 @@ case "$last" in
     ;;
   *)
     key=""
-    case "$last" in *'Task `a`'*) key=a;; *'Task `b`'*) key=b;; *'Task `c`'*) key=c;; esac
+    case "$last" in *'Task `a`'*) key=a;; *'Task `b`'*) key=b;; *'Task `c`'*) key=c;; *'Task `fix-x`'*) key=fix-x;; esac
     if [ -z "$key" ]; then key=${resume#w-}; fi
     printf '%s\n' "$last" >> "$here/prompts-$key"
     printf '%s\n' "$*" >> "$here/args-$key"
@@ -260,6 +282,7 @@ async fn a_run_goes_from_design_to_a_merge_in_the_base_branch() {
             scope: t.scope.clone(),
             depends_on: t.depends_on.clone(),
             repos: t.repos.clone(),
+            kind: t.kind.clone(),
         })
         .collect();
     s.engine
@@ -314,15 +337,27 @@ async fn a_run_goes_from_design_to_a_merge_in_the_base_branch() {
     let detail = s.engine.detail(&run.id).unwrap();
     assert_eq!(detail.run.status, run_status::MERGED);
     assert_eq!(detail.run.stage, stage::DONE);
-    assert!(!s
-        .env
-        .data_dir()
-        .join("agents/wt")
-        .join(&run.id[..8])
-        .join("_integration")
-        .exists());
+    // The leader's worktree and the task slots stay for pushes and
+    // follow-ups; merged task branches go.
+    let wt = s.env.data_dir().join("agents/wt").join(&run.id[..8]);
+    assert!(wt.join("_integration").exists());
+    let mut kept: Vec<String> = std::fs::read_dir(&wt)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    kept.sort();
+    assert!(
+        kept.iter()
+            .all(|name| name == "_integration" || name.starts_with("slot-")),
+        "{kept:?}"
+    );
+    assert!(detail.worktrees);
     assert!(git::branch_exists(&s.repo, &run.integration_branch).await);
     assert!(!git::branch_exists(&s.repo, &format!("cm/{}/a", &run.id[..8])).await);
+    s.engine.clean_worktrees(&run.id).await.unwrap();
+    assert!(!wt.exists());
+    assert!(!s.engine.detail(&run.id).unwrap().worktrees);
+    assert!(git::branch_exists(&s.repo, &run.integration_branch).await);
     // Every process had its log.
     assert!(s.env.logs.lock().unwrap().len() >= 8);
 }
@@ -366,7 +401,7 @@ async fn a_task_without_changes_blocks_its_dependents_until_skipped() {
     assert_eq!(detail.run.status, run_status::DISCARDED);
     assert!(!git::branch_exists(&s.repo, &run.integration_branch).await);
     assert!(!git::branch_exists(&s.repo, &format!("cm/{}/a", &run.id[..8])).await);
-    s.engine.delete(&run.id).unwrap();
+    s.engine.delete(&run.id).await.unwrap();
     assert!(s.engine.detail(&run.id).is_err());
 }
 
@@ -588,6 +623,21 @@ async fn failing_checks_go_back_to_the_worker_without_a_review() {
         .collect();
     // No review of the failing round.
     assert_eq!(steps, vec!["implement", "fix", "review"]);
+    // Each check ran in a terminal of its task, listed with the run.
+    let checks: Vec<_> = detail
+        .side_logs
+        .iter()
+        .filter(|log| log.kind == "check" && log.task_id.as_deref() == Some(a.id.as_str()))
+        .collect();
+    assert_eq!(checks.len(), 2, "{:?}", detail.side_logs);
+    assert_eq!((checks[0].ok, checks[1].ok), (Some(false), Some(true)));
+    assert!(checks
+        .iter()
+        .all(|log| log.id.starts_with("agent:check-") && log.finished_at.is_some()));
+    assert!(detail
+        .side_logs
+        .iter()
+        .any(|log| log.kind == "check" && log.task_id.is_none()));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -698,7 +748,11 @@ async fn later_tasks_get_handoffs_and_a_delivered_run_takes_a_follow_up() {
         .is_err());
 
     // Only delivered runs go on.
-    assert!(s.engine.follow_up(&run.id, "x".into()).await.is_err());
+    assert!(s
+        .engine
+        .follow_up(&run.id, "x".into(), false)
+        .await
+        .is_err());
     s.engine.merge_into_base(&run.id).await.unwrap();
     // Someone commits on the base branch after the merge.
     std::fs::write(s.repo.join("later.txt"), "x\n").unwrap();
@@ -706,7 +760,7 @@ async fn later_tasks_get_handoffs_and_a_delivered_run_takes_a_follow_up() {
     let head = git::commit_of(&s.repo, "main").await.unwrap();
 
     s.engine
-        .follow_up(&run.id, "Reviewer: thêm c".into())
+        .follow_up(&run.id, "Reviewer: thêm c".into(), false)
         .await
         .unwrap();
     idle(&s.engine, &run.id).await;
@@ -905,6 +959,7 @@ async fn project_skills_reach_the_agents_and_proposed_checks_wait_for_the_gate()
             scope: t.scope.clone(),
             depends_on: t.depends_on.clone(),
             repos: t.repos.clone(),
+            kind: t.kind.clone(),
         })
         .collect();
     s.engine
@@ -1027,7 +1082,7 @@ async fn gate_two_pushes_and_opens_a_pull_request_once() {
 
     // A follow-up pushes to the same branch and does not open another PR.
     s.engine
-        .follow_up(&run.id, "Reviewer: thêm c".into())
+        .follow_up(&run.id, "Reviewer: thêm c".into(), false)
         .await
         .unwrap();
     idle(&s.engine, &run.id).await;
@@ -1211,23 +1266,23 @@ async fn a_pr_opened_by_hand_is_attached_and_followed_up_on_its_branch() {
     assert_eq!(done.pull_requests[0].branch, "feat/manual");
     assert_eq!(done.pull_requests[0].url, "https://github.com/o/r/pull/9");
 
-    // The follow-up starts from the PR's branch and pushes onto it.
+    // The follow-up starts from the PR's branch and, when asked, pushes onto
+    // it by itself once its work passes.
     s.engine
-        .follow_up(&run.id, "Reviewer: thêm c".into())
+        .follow_up(&run.id, "Reviewer: thêm c".into(), true)
         .await
         .unwrap();
     idle(&s.engine, &run.id).await;
     let detail = s.engine.detail(&run.id).unwrap();
     assert_eq!(
-        detail.run.stage,
-        stage::MERGE_GATE,
+        (detail.run.stage.as_str(), detail.run.status.as_str()),
+        (stage::DONE, run_status::KEPT),
         "{:?}",
         detail.run.status_note
     );
+    assert!(detail.run.followups[0].push_pr);
     assert_eq!(detail.run.repos[0].base_commit, manual);
-    let draft = s.engine.pr_draft(&run.id).await.unwrap();
-    assert_eq!(draft.repos[0].branch, "feat/manual");
-    s.engine.open_pull_requests(&run.id, draft).await.unwrap();
+    assert_eq!(detail.run.pull_requests.len(), 1);
     let pushed = git::git(&remote, &["log", "--oneline", "feat/manual"])
         .await
         .unwrap();
@@ -1359,4 +1414,532 @@ async fn verify_pr_checks_it_is_the_runs_and_follows_up_open_comments() {
         .join(&run.id[..8])
         .join("_verify")
         .exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_kept_run_pushes_what_its_pr_lacks() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup(&[]).await;
+    let remote = s.cli_dir.join("remote.git");
+    git::git(&s.cli_dir, &["init", "-q", "--bare", "remote.git"])
+        .await
+        .unwrap();
+    git::git(
+        &s.repo,
+        &["remote", "add", "origin", &remote.to_string_lossy()],
+    )
+    .await
+    .unwrap();
+    let gh = s.cli_dir.join("gh");
+    std::fs::write(&gh, FAKE_GH).unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    git::git(
+        &s.repo,
+        &[
+            "push",
+            "-q",
+            "origin",
+            &format!("{}:refs/heads/feat/manual", run.integration_branch),
+        ],
+    )
+    .await
+    .unwrap();
+    s.engine
+        .attach_pull_request(
+            &run.id,
+            AttachPr {
+                repo: ".".into(),
+                url: "https://github.com/o/r/pull/9".into(),
+                branch: None,
+                base: None,
+            },
+        )
+        .await
+        .unwrap();
+    // A follow-up reviewed at gate 2, then kept instead of pushed.
+    s.engine
+        .follow_up(&run.id, "Reviewer: thêm c".into(), false)
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    s.engine.keep_branch(&run.id).await.unwrap();
+
+    let pending = s.engine.pending_pushes(&run.id).await.unwrap();
+    assert_eq!(pending[0].branch, "feat/manual");
+    assert_eq!(pending[0].commits, Some(2));
+    let done = s.engine.push_to_pull_requests(&run.id).await.unwrap();
+    assert_eq!(
+        (done.stage.as_str(), done.status.as_str()),
+        (stage::DONE, run_status::KEPT)
+    );
+    let pushed = git::git(&remote, &["log", "--oneline", "feat/manual"])
+        .await
+        .unwrap();
+    assert!(pushed.contains("merge c"), "{pushed}");
+    assert_eq!(
+        s.engine.pending_pushes(&run.id).await.unwrap()[0].commits,
+        Some(0)
+    );
+    // Nothing new: pushing again is harmless.
+    s.engine.push_to_pull_requests(&run.id).await.unwrap();
+    let args = std::fs::read_to_string(s.cli_dir.join("gh-args")).unwrap();
+    assert!(!args.contains("pr create"), "{args}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pr_branch_behind_its_base_is_rebased_and_pushed_with_a_lease() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup(&[]).await;
+    let remote = s.cli_dir.join("remote.git");
+    git::git(&s.cli_dir, &["init", "-q", "--bare", "remote.git"])
+        .await
+        .unwrap();
+    git::git(
+        &s.repo,
+        &["remote", "add", "origin", &remote.to_string_lossy()],
+    )
+    .await
+    .unwrap();
+    git::git(&s.repo, &["push", "-q", "origin", "main"])
+        .await
+        .unwrap();
+    let gh = s.cli_dir.join("gh");
+    std::fs::write(&gh, FAKE_GH).unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    git::git(
+        &s.repo,
+        &[
+            "push",
+            "-q",
+            "origin",
+            &format!("{}:refs/heads/feat/manual", run.integration_branch),
+        ],
+    )
+    .await
+    .unwrap();
+    s.engine
+        .attach_pull_request(
+            &run.id,
+            AttachPr {
+                repo: ".".into(),
+                url: "https://github.com/o/r/pull/9".into(),
+                branch: None,
+                base: None,
+            },
+        )
+        .await
+        .unwrap();
+    // The base moves on, and the repo's hook now refuses branches that are
+    // behind it or carry merge commits (the run merges its tasks with them).
+    std::fs::write(s.repo.join("later.txt"), "x\n").unwrap();
+    git::commit_all(&s.repo, "later on main").await.unwrap();
+    git::git(&s.repo, &["push", "-q", "origin", "main"])
+        .await
+        .unwrap();
+    let hook = s.repo.join(".git/hooks/pre-push");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nbase=$(git rev-parse refs/remotes/origin/main)\nwhile read l lsha r rsha; do\n  git merge-base --is-ancestor $base $lsha || { echo \"pre-push: behind origin/main\"; exit 1; }\n  [ -z \"$(git rev-list --merges $base..$lsha)\" ] || { echo \"pre-push: merge commit\"; exit 1; }\ndone\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let pending = s.engine.pending_pushes(&run.id).await.unwrap();
+    assert!(pending[0].needs_rebase, "{pending:?}");
+    let done = s.engine.push_to_pull_requests(&run.id).await.unwrap();
+    assert_eq!(done.status, run_status::KEPT);
+    // The PR branch is now linear on top of the new base, with the work.
+    let tip = git::commit_of(&remote, "feat/manual").await.unwrap();
+    let main = git::commit_of(&remote, "main").await.unwrap();
+    assert!(
+        git::git(&remote, &["merge-base", "--is-ancestor", &main, &tip])
+            .await
+            .is_ok()
+    );
+    let merges = git::git(
+        &remote,
+        &["rev-list", "--merges", &format!("{main}..{tip}")],
+    )
+    .await
+    .unwrap();
+    assert!(merges.is_empty(), "{merges}");
+    let files = git::git(&remote, &["ls-tree", "--name-only", &tip])
+        .await
+        .unwrap();
+    assert!(files.contains("a.txt") && files.contains("b.txt") && files.contains("later.txt"));
+    // The run goes on from what the PR has now.
+    assert_eq!(
+        git::commit_of(&s.repo, &run.integration_branch)
+            .await
+            .unwrap(),
+        tip
+    );
+    let pending = s.engine.pending_pushes(&run.id).await.unwrap();
+    assert_eq!(
+        (pending[0].commits, pending[0].needs_rebase),
+        (Some(0), false)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ai_push_counts_only_what_origin_shows() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup(&[]).await;
+    let remote = s.cli_dir.join("remote.git");
+    git::git(&s.cli_dir, &["init", "-q", "--bare", "remote.git"])
+        .await
+        .unwrap();
+    git::git(
+        &s.repo,
+        &["remote", "add", "origin", &remote.to_string_lossy()],
+    )
+    .await
+    .unwrap();
+    git::git(&s.repo, &["push", "-q", "origin", "main"])
+        .await
+        .unwrap();
+    let gh = s.cli_dir.join("gh");
+    std::fs::write(&gh, FAKE_GH).unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    git::git(
+        &s.repo,
+        // The PR on origin lacks the run's new work.
+        &["push", "-q", "origin", "main:refs/heads/feat/manual"],
+    )
+    .await
+    .unwrap();
+    s.engine
+        .attach_pull_request(
+            &run.id,
+            AttachPr {
+                repo: ".".into(),
+                url: "https://github.com/o/r/pull/9".into(),
+                branch: None,
+                base: None,
+            },
+        )
+        .await
+        .unwrap();
+    // The base moves on; the hook wants a rebased, linear branch.
+    std::fs::write(s.repo.join("later.txt"), "x\n").unwrap();
+    git::commit_all(&s.repo, "later on main").await.unwrap();
+    git::git(&s.repo, &["push", "-q", "origin", "main"])
+        .await
+        .unwrap();
+    let hook = s.repo.join(".git/hooks/pre-push");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nbase=$(git rev-parse refs/remotes/origin/main)\nwhile read l lsha r rsha; do\n  git merge-base --is-ancestor $base $lsha || { echo \"pre-push: behind\"; exit 1; }\n  [ -z \"$(git rev-list --merges $base..$lsha)\" ] || { echo \"pre-push: merge\"; exit 1; }\ndone\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let request = AiPush {
+        cli: "claude".into(),
+        model: Some("ship-model".into()),
+        effort: None,
+        note: None,
+    };
+
+    // An agent that says it pushed but did not: not taken for done.
+    std::fs::write(s.cli_dir.join("push-lazy"), "").unwrap();
+    s.engine.ai_push(&run.id, request.clone()).unwrap();
+    idle(&s.engine, &run.id).await;
+    let note = s.engine.detail(&run.id).unwrap().run.status_note.unwrap();
+    assert!(note.contains("chưa phải bản agent làm ra"), "{note}");
+
+    std::fs::remove_file(s.cli_dir.join("push-lazy")).unwrap();
+    s.engine.ai_push(&run.id, request).unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    let note = detail.run.status_note.clone().unwrap();
+    assert!(note.starts_with("AI đã push lên PR"), "{note}");
+    let tip = git::commit_of(&remote, "feat/manual").await.unwrap();
+    let main = git::commit_of(&remote, "main").await.unwrap();
+    assert!(
+        git::git(&remote, &["merge-base", "--is-ancestor", &main, &tip])
+            .await
+            .is_ok()
+    );
+    assert_eq!(
+        git::commit_of(&s.repo, &run.integration_branch)
+            .await
+            .unwrap(),
+        tip
+    );
+    // The agent ran with push rights, the chosen model, and no push block.
+    let push = detail
+        .invocations
+        .iter()
+        .rfind(|i| i.step == "push")
+        .unwrap();
+    assert_eq!(push.ok, Some(true));
+    assert!(!git::branch_exists(&s.repo, &format!("cm/{}/ai-push", &run.id[..8])).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_person_tests_by_hand_and_failures_become_fixes() {
+    let s = setup(&[]).await;
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, true))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    let mut drafts: Vec<TaskDraft> = detail
+        .tasks
+        .iter()
+        .map(|t| TaskDraft {
+            key: t.key.clone(),
+            title: t.title.clone(),
+            role: t.role.clone(),
+            cli: t.cli.clone(),
+            description: t.description.clone(),
+            acceptance: t.acceptance.clone(),
+            scope: t.scope.clone(),
+            depends_on: t.depends_on.clone(),
+            repos: t.repos.clone(),
+            kind: t.kind.clone(),
+        })
+        .collect();
+    // Added by hand at gate 1: a person tests a and b on the UI.
+    let mut qa = TaskDraft {
+        key: "qa".into(),
+        title: "Test giao diện".into(),
+        role: "human".into(),
+        cli: "claude".into(),
+        description: String::new(),
+        acceptance: Vec::new(),
+        scope: Vec::new(),
+        depends_on: vec!["a".into(), "b".into()],
+        repos: vec![".".into()],
+        kind: repo::task_kind::HUMAN.into(),
+    };
+    drafts.push(qa.clone());
+    // A person's task needs its description.
+    assert!(s
+        .engine
+        .approve_plan(
+            &run.id,
+            "D".into(),
+            "fn work()".into(),
+            drafts.clone(),
+            Vec::new()
+        )
+        .is_err());
+    qa.description = "Hướng dẫn test đăng nhập trên UI".into();
+    drafts.pop();
+    drafts.push(qa);
+    s.engine
+        .approve_plan(&run.id, "D".into(), "fn work()".into(), drafts, Vec::new())
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+
+    // The agents' work is merged; the AI prepared the guide; the run waits.
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(detail.run.status, run_status::WAITING);
+    assert!(detail
+        .run
+        .status_note
+        .as_deref()
+        .unwrap()
+        .contains("Chờ người test: qa"));
+    let qa = detail.tasks.iter().find(|t| t.key == "qa").unwrap().clone();
+    assert_eq!(qa.status, task_status::AWAITING_HUMAN);
+    let guide = qa.human.as_ref().unwrap().guide.clone().unwrap();
+    assert_eq!(guide.cases.len(), 2);
+    let prepared = std::fs::read_to_string(s.cli_dir.join("prompts-prepare")).unwrap();
+    assert!(prepared.contains("Hướng dẫn test đăng nhập trên UI"));
+    assert!(prepared.contains("### `a` — Task A"), "{prepared}");
+
+    // Stuck while testing: the leader answers, the second time in its session.
+    let answer = s
+        .engine
+        .human_chat(&qa.id, "Đăng nhập bằng gì?".into())
+        .await
+        .unwrap();
+    assert_eq!(answer.text, "Dùng tài khoản admin");
+    s.engine
+        .human_chat(&qa.id, "Câu hỏi 2".into())
+        .await
+        .unwrap();
+    let chat_args = std::fs::read_to_string(s.cli_dir.join("args-chat")).unwrap();
+    assert!(
+        chat_args.lines().last().unwrap().contains("--resume chat"),
+        "{chat_args}"
+    );
+
+    // C2 fails, with a screenshot.
+    let shot = s.engine.human_attach(&qa.id, "lỗi c2.png", b"PNG").unwrap();
+    assert_eq!(s.engine.human_file(&qa.id, &shot).unwrap(), b"PNG");
+    assert!(s.engine.human_file(&qa.id, "../x").is_err());
+    let results = vec![
+        repo::CaseResult {
+            case_id: "C1".into(),
+            pass: Some(true),
+            note: String::new(),
+        },
+        repo::CaseResult {
+            case_id: "C2".into(),
+            pass: Some(false),
+            note: "Không báo lỗi".into(),
+        },
+    ];
+    s.engine
+        .submit_human_test(&qa.id, results, false, "C2 hỏng".into(), vec![shot.clone()])
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+
+    // The leader made a fix task; it was done; the test came back.
+    let detail = s.engine.detail(&run.id).unwrap();
+    let fix = detail.tasks.iter().find(|t| t.key == "fix-x").unwrap();
+    assert_eq!(fix.status, task_status::MERGED);
+    assert!(fix.description.contains(&shot), "{}", fix.description);
+    let qa = detail.tasks.iter().find(|t| t.key == "qa").unwrap().clone();
+    assert_eq!(qa.status, task_status::AWAITING_HUMAN);
+    assert!(qa.depends_on.contains(&"fix-x".to_string()));
+    let human = qa.human.clone().unwrap();
+    assert_eq!(human.rounds.len(), 1);
+    assert_eq!(human.rounds[0].fix_tasks, vec!["fix-x"]);
+    assert!(human.chat.iter().any(|m| m.text == "Sẽ sửa thông báo lỗi"));
+    let triage = std::fs::read_to_string(s.cli_dir.join("prompts-triage")).unwrap();
+    assert!(
+        triage.contains("[FAIL] C2 Sai mật khẩu: Không báo lỗi"),
+        "{triage}"
+    );
+    let prepared = std::fs::read_to_string(s.cli_dir.join("prompts-prepare")).unwrap();
+    assert!(prepared.contains("This is a new round"), "{prepared}");
+
+    // Passed: the run goes on to gate 2.
+    s.engine
+        .submit_human_test(&qa.id, Vec::new(), true, String::new(), Vec::new())
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::MERGE_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+    let qa = detail.tasks.iter().find(|t| t.key == "qa").unwrap();
+    assert_eq!(qa.status, task_status::PASSED);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktrees_are_reused_and_set_up_once_pushes_included() {
+    use std::os::unix::fs::PermissionsExt;
+    // Checks and the pre-push hook need what the setup installs.
+    let s = setup(&["test -f installed"]).await;
+    std::fs::write(s.repo.join(".gitignore"), "installed\n").unwrap();
+    git::commit_all(&s.repo, "ignore").await.unwrap();
+    let setups = s.cli_dir.join("setups");
+    let project = s
+        .env
+        .db
+        .read(|c| repo::project_get(c, &s.project_id))
+        .unwrap();
+    let mut repos = project.repos.clone();
+    repos[0].setup_cmd = Some(format!(
+        "basename \"$PWD\" >> {}; touch installed",
+        setups.display()
+    ));
+    s.env
+        .db
+        .write(|c| repo::project_save(c, &project.id, &ProjectSettings { repos, notes: None }))
+        .unwrap();
+    let remote = s.cli_dir.join("remote.git");
+    git::git(&s.cli_dir, &["init", "-q", "--bare", "remote.git"])
+        .await
+        .unwrap();
+    git::git(
+        &s.repo,
+        &["remote", "add", "origin", &remote.to_string_lossy()],
+    )
+    .await
+    .unwrap();
+    let hook = s.repo.join(".git/hooks/pre-push");
+    std::fs::write(&hook, "#!/bin/sh\ntest -f installed\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let gh = s.cli_dir.join("gh");
+    std::fs::write(&gh, "#!/bin/sh\necho 'https://github.com/o/r/pull/7'\n").unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::MERGE_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+    // b took the slot a left, installed dependencies and all.
+    let lines = || std::fs::read_to_string(&setups).unwrap();
+    assert_eq!(lines(), "slot-1\n_integration\n");
+    assert!(detail.run.integration_checks.as_ref().unwrap()[0].ok);
+
+    let mut draft = s.engine.pr_draft(&run.id).await.unwrap();
+    draft.repos[0].branch = "feat/x".into();
+    s.engine.open_pull_requests(&run.id, draft).await.unwrap();
+    assert!(git::git(&remote, &["show-ref", "refs/heads/feat/x"])
+        .await
+        .is_ok());
+
+    // A follow-up works in the same slot and pushes from the same leader's
+    // worktree: nothing is installed again.
+    s.engine
+        .follow_up(&run.id, "Reviewer: thêm c".into(), true)
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::DONE,
+        "{:?}",
+        detail.run.status_note
+    );
+    let pushed = git::git(&remote, &["log", "--oneline", "feat/x"])
+        .await
+        .unwrap();
+    assert!(pushed.contains("merge c"), "{pushed}");
+    assert_eq!(lines(), "slot-1\n_integration\n");
+
+    // A dependency change installs again where it lands.
+    let slot = s
+        .env
+        .data_dir()
+        .join("agents/wt")
+        .join(&run.id[..8])
+        .join("slot-1");
+    let integration = slot.with_file_name("_integration");
+    std::fs::write(integration.join("package.json"), "{}\n").unwrap();
+    git::commit_all(&integration, "deps").await.unwrap();
+    s.engine.push_to_pull_requests(&run.id).await.unwrap();
+    assert_eq!(lines(), "slot-1\n_integration\n_integration\n");
 }

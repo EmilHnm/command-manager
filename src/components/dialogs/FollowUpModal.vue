@@ -26,6 +26,14 @@
           @keydown.ctrl.enter="submit"
           @keydown.meta.enter="submit"
         ></textarea>
+        <label v-if="pullRequests.length" class="push-option">
+          <input v-model="pushPr" type="checkbox" />
+          <span>
+            Xong thì tự push lên PR hiện tại
+            <span class="font-mono">({{ pullRequests.map((pr) => pr.url.replace(/^https:\/\/github\.com\//, '')).join(', ') }})</span>
+            khi mọi task đã merge và kiểm tra tích hợp qua; không dừng ở Cổng 2. Bỏ chọn để duyệt ở Cổng 2 trước khi push.
+          </span>
+        </label>
         <div v-if="error" class="error">{{ error }}</div>
       </div>
       <div class="modal-foot">
@@ -41,12 +49,14 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue';
 import { MessageSquarePlus, Play, X } from 'lucide-vue-next';
+import type { PullRequest } from '@/types/agents';
 
 const props = defineProps<{
   visible: boolean;
   subtitle: string;
   merged: boolean;
-  submit: (request: string) => Promise<void>;
+  pullRequests: PullRequest[];
+  submit: (request: string, pushPr: boolean) => Promise<void>;
 }>();
 
 const emit = defineEmits<{
@@ -56,6 +66,7 @@ const emit = defineEmits<{
 const text = ref('');
 const busy = ref(false);
 const error = ref<string | null>(null);
+const pushPr = ref(true);
 const input = ref<HTMLTextAreaElement | null>(null);
 
 watch(
@@ -64,6 +75,7 @@ watch(
     if (!visible) return;
     text.value = '';
     error.value = null;
+    pushPr.value = props.pullRequests.length > 0;
     await nextTick();
     input.value?.focus();
   }
@@ -74,7 +86,7 @@ async function submit() {
   busy.value = true;
   error.value = null;
   try {
-    await props.submit(text.value.trim());
+    await props.submit(text.value.trim(), pushPr.value && props.pullRequests.length > 0);
     emit('close');
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -164,6 +176,20 @@ async function submit() {
   background-color: var(--bg-app-base, #0f1117);
   border: 1px solid var(--border-subtle, #242a3e);
   border-radius: 6px;
+}
+
+.push-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary, #94a3b8);
+  cursor: pointer;
+}
+
+.push-option input {
+  margin-top: 3px;
 }
 
 .error {

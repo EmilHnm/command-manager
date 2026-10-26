@@ -280,11 +280,24 @@ pub mod task_status {
     pub const CONFLICT: &str = "conflict";
     pub const NEEDS_HUMAN: &str = "needs_human";
     pub const SKIPPED: &str = "skipped";
+    /// A person's task: prepared by the AI, waiting for the person.
+    pub const AWAITING_HUMAN: &str = "awaiting_human";
+    /// A person reported failures; the leader turns them into fix tasks.
+    pub const TRIAGE: &str = "triage";
+    /// A person's task done and approved.
+    pub const PASSED: &str = "passed";
 
     /// Statuses that let tasks depending on this one start.
     pub fn is_settled(status: &str) -> bool {
-        status == MERGED || status == SKIPPED
+        status == MERGED || status == SKIPPED || status == PASSED
     }
+}
+
+/// Who does a task.
+pub mod task_kind {
+    pub const AGENT: &str = "agent";
+    /// A person (a manual test); the AI prepares it and reads the result.
+    pub const HUMAN: &str = "human";
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -354,6 +367,10 @@ pub struct CheckProposal {
 pub struct FollowUp {
     pub request: String,
     pub created_at: String,
+    /// When its work passes the checks, push it to the run's pull requests
+    /// instead of stopping at gate 2.
+    #[serde(default)]
+    pub push_pr: bool,
 }
 
 impl Run {
@@ -429,6 +446,90 @@ pub struct Task {
     pub effort: Option<String>,
     /// This task's agent timeout; None: the run's.
     pub timeout_minutes: Option<u32>,
+    /// `task_kind`: an agent's, or a person's.
+    pub kind: String,
+    /// A person's task: its guide, rounds and chat.
+    pub human: Option<HumanTest>,
+}
+
+impl Task {
+    pub fn is_human(&self) -> bool {
+        self.kind == task_kind::HUMAN
+    }
+}
+
+/// A person's task: what the AI prepared for it and what the person said.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct HumanTest {
+    /// What the AI prepared for the current round.
+    #[serde(default)]
+    pub guide: Option<TestGuide>,
+    /// Earlier rounds, oldest first.
+    #[serde(default)]
+    pub rounds: Vec<HumanRound>,
+    /// The person's questions and the leader's answers.
+    #[serde(default)]
+    pub chat: Vec<ChatMessage>,
+    #[serde(default)]
+    pub chat_session: Option<String>,
+    /// The leader's word after a failed round it found no bug in.
+    #[serde(default)]
+    pub leader_note: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TestGuide {
+    pub summary: String,
+    #[serde(default)]
+    pub setup: Vec<String>,
+    #[serde(default)]
+    pub cases: Vec<TestCase>,
+    #[serde(default)]
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TestCase {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub steps: Vec<String>,
+    #[serde(default)]
+    pub expected: String,
+}
+
+/// What a person reported for one case.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct CaseResult {
+    pub case_id: String,
+    /// None: not tried.
+    pub pass: Option<bool>,
+    #[serde(default)]
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct HumanRound {
+    pub at: String,
+    pub guide: Option<TestGuide>,
+    pub results: Vec<CaseResult>,
+    pub passed: bool,
+    #[serde(default)]
+    pub note: String,
+    /// Screenshot files, in `<run>/context/human/<task key>/`.
+    #[serde(default)]
+    pub attachments: Vec<String>,
+    /// The fix tasks the leader made of a failed round.
+    #[serde(default)]
+    pub fix_tasks: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChatMessage {
+    /// "user" or "leader".
+    pub role: String,
+    pub text: String,
+    pub at: String,
 }
 
 /// A task as the plan gate (MOD-22) edits it.
@@ -448,6 +549,9 @@ pub struct TaskDraft {
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub repos: Vec<String>,
+    /// `task_kind`; an agent's when not said.
+    #[serde(default = "agent_kind")]
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -900,7 +1004,7 @@ pub fn pause_orphaned_runs(conn: &Connection, now: &str) -> Result<usize> {
 const TASK_COLUMNS: &str = "id, run_id, key, title, role, cli, description, acceptance, scope, \
      depends_on, status, status_note, round, worker_session, branch, worktree, checks, \
      last_review, added, removed, out_of_scope, sort_order, repos, batch, handoff, model, effort, \
-     timeout_minutes";
+     timeout_minutes, kind, human";
 
 fn task_row(row: &Row) -> rusqlite::Result<Task> {
     Ok(Task {
@@ -939,6 +1043,8 @@ fn task_row(row: &Row) -> rusqlite::Result<Task> {
         model: row.get(25)?,
         effort: row.get(26)?,
         timeout_minutes: row.get::<_, Option<i64>>(27)?.map(|m| m.max(1) as u32),
+        kind: row.get(28)?,
+        human: parse_opt(row.get(29)?)?,
     })
 }
 
@@ -965,7 +1071,7 @@ pub fn task_insert(conn: &Connection, task: &Task) -> Result<()> {
         &format!(
             "INSERT INTO agent_task ({TASK_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
              ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24,
-             ?25, ?26, ?27, ?28)"
+             ?25, ?26, ?27, ?28, ?29, ?30)"
         ),
         rusqlite::params![
             task.id,
@@ -996,6 +1102,8 @@ pub fn task_insert(conn: &Connection, task: &Task) -> Result<()> {
             task.model,
             task.effort,
             task.timeout_minutes,
+            task.kind,
+            task.human.as_ref().map(json),
         ],
     )?;
     Ok(())
@@ -1008,7 +1116,7 @@ pub fn task_save(conn: &Connection, task: &Task) -> Result<()> {
            round = ?11, worker_session = ?12, branch = ?13, worktree = ?14, checks = ?15,
            last_review = ?16, added = ?17, removed = ?18, out_of_scope = ?19, sort_order = ?20,
            repos = ?21, handoff = ?22, model = ?23, effort = ?24,
-           timeout_minutes = ?25
+           timeout_minutes = ?25, human = ?26
          WHERE id = ?1",
         rusqlite::params![
             task.id,
@@ -1036,6 +1144,7 @@ pub fn task_save(conn: &Connection, task: &Task) -> Result<()> {
             task.model,
             task.effort,
             task.timeout_minutes,
+            task.human.as_ref().map(json),
         ],
     )?;
     Ok(())
@@ -1053,6 +1162,10 @@ pub fn task_delete_batch(conn: &Connection, run_id: &str, batch: u32) -> Result<
 /// Checks a plan: keys unique and well formed, dependencies known and
 /// acyclic, every task has a CLI. Returns the drafts in a runnable order
 /// (dependencies first, otherwise as given).
+fn agent_kind() -> String {
+    task_kind::AGENT.into()
+}
+
 pub fn check_plan(drafts: &[TaskDraft], repos: &[String]) -> Result<Vec<TaskDraft>> {
     if drafts.is_empty() {
         return Err(Error::msg("Kế hoạch chưa có task nào"));
@@ -1078,6 +1191,15 @@ pub fn check_plan(drafts: &[TaskDraft], repos: &[String]) -> Result<Vec<TaskDraf
         }
         if draft.title.trim().is_empty() {
             return Err(Error::msg(format!("Task {} chưa có tiêu đề", draft.key)));
+        }
+        if draft.kind == task_kind::HUMAN && draft.description.trim().is_empty() {
+            return Err(Error::msg(format!(
+                "Task {} (người test) cần mô tả: cần test gì, AI phải chuẩn bị gì",
+                draft.key
+            )));
+        }
+        if draft.kind != task_kind::AGENT && draft.kind != task_kind::HUMAN {
+            return Err(Error::msg(format!("Task {}: loại không hợp lệ", draft.key)));
         }
         if !CLIS.contains(&draft.cli.as_str()) {
             return Err(Error::msg(format!(
@@ -1261,6 +1383,7 @@ mod tests {
             scope: Vec::new(),
             depends_on: deps.iter().map(|d| d.to_string()).collect(),
             repos: vec!["be".into()],
+            kind: task_kind::AGENT.into(),
         }
     }
 
@@ -1378,6 +1501,7 @@ mod tests {
         run.followups.push(FollowUp {
             request: "Sửa theo review".into(),
             created_at: "2".into(),
+            push_pr: true,
         });
         run.leader_model = None;
         run.base_commit = "def".into();
@@ -1424,6 +1548,8 @@ mod tests {
             model: None,
             effort: None,
             timeout_minutes: None,
+            kind: task_kind::AGENT.into(),
+            human: None,
         };
         task_insert(&conn, &task).expect("task");
         task.last_review = Some(Review {

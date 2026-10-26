@@ -6,7 +6,9 @@
 //! `codex --output-schema` accepts them too.
 
 use super::context::ContextFile;
-use crate::db::repos::agents::{CheckResult, Project, Review, Run, Task, ROOT_REPO};
+use crate::db::repos::agents::{
+    CaseResult, CheckResult, HumanRound, Project, Review, Run, Task, TestGuide, ROOT_REPO,
+};
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -459,6 +461,287 @@ only when nothing `must` is left. Write the summary and issues in the language o
         } else {
             ""
         },
+    )
+}
+
+/// "Push bằng AI": ship the run's work to its pull request the way the team
+/// pushes, solving what the orchestrator cannot (conflicts, failing hooks).
+#[allow(clippy::too_many_arguments)]
+pub fn ai_push(
+    run: &Run,
+    local: &str,
+    branch: &str,
+    base: &str,
+    url: &str,
+    done: &[&Task],
+    note: &str,
+    guides: &str,
+) -> String {
+    format!(
+        "You are the engineer who ships this run's work. The current directory is a git \
+worktree of the repository, on the local branch `{local}`, which holds the run's work. Bring \
+it onto the pull request branch `{branch}` on origin (PR {url}, into `{base}`).
+{guides}
+Do it the way this team pushes (its push skill and AGENTS.md win over these steps):
+1. `git fetch origin`, then rebase onto `origin/{base}`; never merge the base in. Resolve \
+conflicts keeping the intent of both sides; what this run changed is described below. \
+If `origin/{branch}` has commits this branch lacks (someone pushed), keep them: rebase onto \
+or include them as the team's rules say.
+2. Run the project's checks (the pre-push hook runs them as well) and fix what breaks with \
+minimal changes; commit the fixes with clear messages.
+3. `git push --force-with-lease origin HEAD:{branch}`. Never `--no-verify`, never plain \
+`--force`. If the hook refuses, read why, fix it and push again.
+4. Do not open pull requests and do not push any other branch.
+Dependencies are already installed in this worktree: install again only if the lockfile \
+changes. Run every command in the foreground and wait for it to finish; never poll for \
+processes with `pgrep`, `sleep` loops or the like.
+{note}{handoffs}
+Finish with a short summary: what you rebased onto, conflicts you resolved, fixes you made, \
+and the pushed commit (`git rev-parse HEAD`). Write it in the language of the request:
+<request>
+{request}
+</request>",
+        handoffs = handoffs_block(done),
+        note = if note.trim().is_empty() {
+            String::new()
+        } else {
+            format!("\nFrom the user:\n<note>\n{}\n</note>\n", note.trim())
+        },
+        request = adapter_cut(&run.request, 600),
+    )
+}
+
+fn adapter_cut(text: &str, max: usize) -> String {
+    cut_text(text.trim(), max)
+}
+
+/// The schema of what the AI prepares for a person's task.
+pub fn test_guide_schema() -> Value {
+    let strings = json!({ "type": "array", "items": { "type": "string" } });
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["summary", "setup", "cases", "notes"],
+        "properties": {
+            "summary": { "type": "string" },
+            "setup": strings,
+            "cases": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["id", "title", "steps", "expected"],
+                    "properties": {
+                        "id": { "type": "string" },
+                        "title": { "type": "string" },
+                        "steps": strings,
+                        "expected": { "type": "string" }
+                    }
+                }
+            },
+            "notes": { "type": "string" }
+        }
+    })
+}
+
+/// The leader's answer to a failed manual test: fix tasks, or none when it
+/// finds no bug (its summary then tells the person why).
+pub fn triage_schema(roles: &[String], repos: &[String]) -> Value {
+    let plan = plan_schema(roles, repos);
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["summary", "tasks"],
+        "properties": {
+            "summary": { "type": "string" },
+            "tasks": plan["properties"]["tasks"].clone()
+        }
+    })
+}
+
+fn results_block(guide: Option<&TestGuide>, results: &[CaseResult]) -> String {
+    results
+        .iter()
+        .map(|result| {
+            let title = guide
+                .and_then(|guide| guide.cases.iter().find(|case| case.id == result.case_id))
+                .map(|case| case.title.as_str())
+                .unwrap_or("");
+            format!(
+                "- [{}] {} {}{}",
+                match result.pass {
+                    Some(true) => "PASS",
+                    Some(false) => "FAIL",
+                    None => "not tried",
+                },
+                result.case_id,
+                title,
+                if result.note.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", result.note.trim())
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A person's task: prepare what it asks for (a test guide, most often),
+/// for the work it depends on; after fixes, for what changed.
+pub fn prepare_human(
+    run: &Run,
+    task: &Task,
+    done: &[&Task],
+    last: Option<&HumanRound>,
+    guides: &str,
+    files: &[ContextFile],
+) -> String {
+    let again =
+        match last {
+            Some(round) => {
+                format!(
+            "\nThis is a new round: the person tested before and reported:\n{}\nOverall: {}\n\
+The fixes made since are in the notes below. Prepare the round so the person re-checks what \
+failed and what the fixes touched first; cases that passed and are unaffected can be short.\n",
+            results_block(round.guide.as_ref(), &round.results),
+            if round.note.trim().is_empty() { "(no note)" } else { round.note.trim() }
+        )
+            }
+            None => String::new(),
+        };
+    format!(
+        "You prepare a task that a PERSON will do by hand, usually testing the product's UI. \
+The current directory holds the code as it is now (all the run's work merged). Do NOT modify \
+any file. Read the code you need to be exact (routes, labels, messages, validation rules).
+{layout}{guides}{files}
+The person's task `{key}`: {title}
+<description>
+{description}
+</description>
+
+Produce what the description asks for. When it is about testing (the usual case): `summary` \
+says what is tested and why; `setup` lists how to get there (start the app, URL or screen \
+path, account or role, data to prepare); `cases` are concrete checks, each with an id \
+(C1, C2...), the exact steps and the expected result (exact texts of messages where the \
+design gives them); cover the normal path, validation and error cases, and the edges the \
+work touched. Anything else the person should know goes to `notes`.
+{again}{handoffs}
+Write in the language of the request.",
+        layout = layout(run, "The current directory"),
+        files = files_block(files),
+        key = task.key,
+        title = task.title,
+        description = task.description,
+        handoffs = handoffs_block(done),
+    )
+}
+
+/// A person's test failed: the leader confirms the problems and splits them
+/// into fix tasks for the team.
+#[allow(clippy::too_many_arguments)]
+pub fn triage_human(
+    run: &Run,
+    task: &Task,
+    round: &HumanRound,
+    done: &[&Task],
+    chat: &str,
+    attachments: &[String],
+    keys: &[String],
+) -> String {
+    let shots = if attachments.is_empty() {
+        "(none)".to_string()
+    } else {
+        attachments
+            .iter()
+            .map(|path| format!("- `{path}`"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "You are the lead. A person tested `{key}` ({title}) by hand and reports failures. Do \
+NOT modify any file; read the code to confirm each problem.
+{layout}
+What the test was about:
+<description>
+{description}
+</description>
+
+Results, case by case:
+{results}
+
+The person's note:
+<note>
+{note}
+</note>
+
+Screenshots (open them):
+{shots}
+{chat}{handoffs}
+Confirm what is really wrong. Split the real problems into fix tasks for the team, the same \
+way as the plan: roles {roles}; keys must be new (already used: {used}); `repos`, `scope`, \
+`acceptance` as usual; put in each description what the person saw, the expected behaviour \
+and the screenshot paths that show it. When nothing is a bug (the test was misread, or it is \
+expected behaviour), reply with no tasks and explain it to the person in `summary`; \
+otherwise `summary` tells the person what will be fixed. Write in the language of the \
+request.",
+        key = task.key,
+        title = task.title,
+        layout = layout(run, "The current directory"),
+        description = task.description,
+        results = results_block(round.guide.as_ref(), &round.results),
+        note = if round.note.trim().is_empty() {
+            "(none)"
+        } else {
+            round.note.trim()
+        },
+        chat = if chat.is_empty() {
+            String::new()
+        } else {
+            format!("\nWhat the person and you said while testing:\n{chat}\n")
+        },
+        handoffs = handoffs_block(done),
+        roles = roles_line(run),
+        used = keys
+            .iter()
+            .map(|key| format!("`{key}`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+/// The first question of a person testing: who they talk to and about what.
+pub fn human_chat(run: &Run, task: &Task, message: &str) -> String {
+    let guide = task
+        .human
+        .as_ref()
+        .and_then(|human| human.guide.as_ref())
+        .map(|guide| serde_json::to_string_pretty(guide).unwrap_or_default())
+        .unwrap_or_else(|| "(not prepared yet)".into());
+    format!(
+        "You are the lead of this run. A person is testing `{key}` ({title}) by hand and is \
+stuck. Help them: answer precisely, from the code in the current directory (read it), the \
+guide below and the design. Do NOT modify any file. Keep answers short and practical.
+{layout}
+What the test is about:
+<description>
+{description}
+</description>
+
+The guide they follow:
+```json
+{guide}
+```
+
+Their question:
+<question>
+{message}
+</question>
+Answer in the language of the question.",
+        key = task.key,
+        title = task.title,
+        layout = layout(run, "The current directory"),
+        description = task.description,
     )
 }
 

@@ -73,6 +73,9 @@ pub enum Access {
     ReadOnly,
     /// Implement and fix: write inside the worktree.
     Write,
+    /// "Push bằng AI": write, run git against the repository (rebase,
+    /// commit) and reach the network to push. Never resumed.
+    Push,
 }
 
 pub struct Request<'a> {
@@ -129,7 +132,8 @@ pub fn args(cli: Cli, request: &Request) -> Vec<String> {
     let mut push = |items: &[&str]| args.extend(items.iter().map(|item| item.to_string()));
     let profile = request.profile;
     let bypass = profile.bypass_permissions;
-    let write = request.access == Access::Write;
+    let write = request.access != Access::ReadOnly;
+    let pushing = request.access == Access::Push;
     let mut prompt = request.prompt.clone();
 
     match cli {
@@ -142,7 +146,9 @@ pub fn args(cli: Cli, request: &Request) -> Vec<String> {
                 // Courtesy only: these rules match a command's start, so
                 // `git -C x push` gets through. The process environment is
                 // what actually stops pushes (see `engine::write_env`).
-                push(CLAUDE_BLOCKED_COMMANDS);
+                if !pushing {
+                    push(CLAUDE_BLOCKED_COMMANDS);
+                }
                 if !bypass {
                     // acceptEdits approves edits but asks for every command,
                     // and nobody answers a headless run: tests, typecheck and
@@ -152,8 +158,8 @@ pub fn args(cli: Cli, request: &Request) -> Vec<String> {
             }
             let mode = match (request.access, bypass) {
                 (Access::ReadOnly, _) => "plan",
-                (Access::Write, true) => "bypassPermissions",
-                (Access::Write, false) => "acceptEdits",
+                (_, true) => "bypassPermissions",
+                (_, false) => "acceptEdits",
             };
             push(&["--permission-mode", mode]);
             if let Some(session) = request.resume {
@@ -191,6 +197,14 @@ pub fn args(cli: Cli, request: &Request) -> Vec<String> {
                     "read-only"
                 };
                 push(&["-c", &format!("sandbox_mode=\"{sandbox}\"")]);
+                if pushing {
+                    // Pushing needs the network; rebasing and committing
+                    // write to the repository's git folder (outside).
+                    push(&["-c", "sandbox_workspace_write.network_access=true"]);
+                    for dir in request.extra_dirs {
+                        push(&["--add-dir", &dir.to_string_lossy()]);
+                    }
+                }
             }
             if let Some(file) = request.schema_file {
                 push(&["--output-schema", &file.to_string_lossy()]);
@@ -206,7 +220,9 @@ pub fn args(cli: Cli, request: &Request) -> Vec<String> {
             push(&["--output-format", "stream-json"]);
             match (request.access, bypass) {
                 (Access::ReadOnly, _) => push(&["--mode", "plan"]),
-                (Access::Write, true) => push(&["--dangerously-skip-permissions"]),
+                (_, true) => push(&["--dangerously-skip-permissions"]),
+                // The sandbox restricts the terminal: no push from there.
+                (Access::Push, false) => push(&["--mode", "accept-edits"]),
                 (Access::Write, false) => push(&["--mode", "accept-edits", "--sandbox"]),
             }
             if let Some(session) = request.resume {
@@ -229,7 +245,8 @@ pub fn args(cli: Cli, request: &Request) -> Vec<String> {
             // must say so, write steps get the sandbox.
             match (request.access, bypass) {
                 (Access::ReadOnly, _) => push(&["--mode", "plan"]),
-                (Access::Write, true) => push(&["--force"]),
+                (_, true) => push(&["--force"]),
+                (Access::Push, false) => push(&["--sandbox", "disabled"]),
                 (Access::Write, false) => push(&["--sandbox", "enabled"]),
             }
             if let Some(session) = request.resume {
@@ -1165,6 +1182,25 @@ mod tests {
         assert_eq!(args[at("--allowedTools") + 1], "Bash");
         assert!(args.contains(&"Bash(git push:*)".to_string()));
         assert_eq!(args[at("--permission-mode") + 1], "acceptEdits");
+        // Shipping: commands run, git is not blocked, codex reaches the
+        // network and the repository's git folder.
+        let git_dir = [PathBuf::from("/repo/.git")];
+        let shipping = Request {
+            access: Access::Push,
+            extra_dirs: &git_dir,
+            ..write
+        };
+        let claude = super::args(Cli::Claude, &shipping);
+        assert!(claude.contains(&"--allowedTools".to_string()));
+        assert!(!claude.iter().any(|arg| arg.starts_with("Bash(git")));
+        let codex = super::args(Cli::Codex, &shipping).join(" ");
+        assert!(
+            codex.contains("sandbox_workspace_write.network_access=true"),
+            "{codex}"
+        );
+        assert!(codex.contains("--add-dir /repo/.git"), "{codex}");
+        let agy = super::args(Cli::Agy, &shipping).join(" ");
+        assert!(!agy.contains("--sandbox"), "{agy}");
 
         let mut parser = Parser::new(Cli::Claude);
         parser.feed(

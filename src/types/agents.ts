@@ -126,6 +126,29 @@ export interface PrRequest {
   draft: boolean;
 }
 
+/** What a finished run has not pushed to one of its pull requests. */
+export interface PendingPush {
+  repo: string;
+  branch: string;
+  url: string;
+  /** null: origin's copy of the branch is not known here. */
+  commits: number | null;
+  /** Behind the PR's base or carrying merge commits: pushing rebases first. */
+  needs_rebase: boolean;
+  base: string;
+}
+
+/** A log tab that is not an agent (`agent:check-...`). */
+export interface SideLog {
+  id: string;
+  task_id: string | null;
+  kind: 'setup' | 'check' | 'context' | 'pr' | string;
+  title: string;
+  started_at: string;
+  finished_at: string | null;
+  ok: boolean | null;
+}
+
 export interface PrComment {
   author: string;
   path: string | null;
@@ -246,7 +269,59 @@ export type TaskStatus =
   | 'failed'
   | 'conflict'
   | 'needs_human'
-  | 'skipped';
+  | 'skipped'
+  | 'awaiting_human'
+  | 'triage'
+  | 'passed';
+
+/** Who does a task: an agent, or a person (a manual test). */
+export type TaskKind = 'agent' | 'human';
+
+export interface TestCase {
+  id: string;
+  title: string;
+  steps: string[];
+  expected: string;
+}
+
+/** What the AI prepared for a person's task. */
+export interface TestGuide {
+  summary: string;
+  setup: string[];
+  cases: TestCase[];
+  notes: string;
+}
+
+export interface CaseResult {
+  case_id: string;
+  /** null: not tried. */
+  pass: boolean | null;
+  note: string;
+}
+
+export interface HumanRound {
+  at: string;
+  guide: TestGuide | null;
+  results: CaseResult[];
+  passed: boolean;
+  note: string;
+  attachments: string[];
+  fix_tasks: string[];
+}
+
+export interface ChatMessage {
+  role: 'user' | 'leader';
+  text: string;
+  at: string;
+}
+
+export interface HumanTest {
+  guide: TestGuide | null;
+  rounds: HumanRound[];
+  chat: ChatMessage[];
+  chat_session: string | null;
+  leader_note: string | null;
+}
 
 export interface CheckResult {
   command: string;
@@ -338,6 +413,9 @@ export interface AgentTask {
   effort: string | null;
   /** This task's agent timeout; null: the run's. */
   timeout_minutes: number | null;
+  kind: TaskKind;
+  /** A person's task: guide, rounds, chat. */
+  human: HumanTest | null;
 }
 
 /** A task as gate 1 (MOD-22) edits it. */
@@ -351,6 +429,7 @@ export interface TaskDraft {
   scope: string[];
   depends_on: string[];
   repos: string[];
+  kind?: TaskKind;
 }
 
 export interface AgentInvocation {
@@ -391,6 +470,10 @@ export interface RunDetail {
   resume_at: number | null;
   /** The last "Verify PR". */
   verification: Verification | null;
+  /** Checks, setup, context and push logs of this session. */
+  side_logs: SideLog[];
+  /** Worktrees of the run are still on disk. */
+  worktrees: boolean;
 }
 
 export interface RunSummary extends AgentRun {
@@ -451,10 +534,14 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   conflict: 'Xung đột merge',
   needs_human: 'Cần người xem',
   skipped: 'Bỏ qua',
+  awaiting_human: 'Chờ người test',
+  triage: 'Leader xác nhận lỗi',
+  passed: 'Đã test ✓',
 };
 
 /** Statuses that let dependent tasks start. */
-export const isSettled = (status: TaskStatus) => status === 'merged' || status === 'skipped';
+export const isSettled = (status: TaskStatus) =>
+  status === 'merged' || status === 'skipped' || status === 'passed';
 
 /** Run statuses after which nothing more happens. */
 export const isFinished = (run: Pick<AgentRun, 'stage'>) => run.stage === 'done';

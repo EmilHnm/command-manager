@@ -169,13 +169,18 @@
 
           <button
             type="button"
-            class="btn btn-secondary"
+            class="btn"
+            :class="hasPr ? 'btn-primary' : 'btn-secondary'"
             :disabled="busy"
-            title="Push nhánh tích hợp lên origin và mở pull request bằng gh"
+            :title="
+              hasPr
+                ? 'Push công việc mới lên nhánh của PR hiện tại (cập nhật PR)'
+                : 'Push nhánh tích hợp lên origin và mở pull request bằng gh'
+            "
             @click="emit('open-pr')"
           >
             <GitPullRequest :size="14" />
-            <span>Push &amp; tạo PR</span>
+            <span>{{ hasPr ? 'Push lên PR hiện tại' : 'Push & tạo PR' }}</span>
           </button>
 
           <button
@@ -188,7 +193,13 @@
             <span>Đã có PR…</span>
           </button>
 
-          <button type="button" class="btn btn-primary btn-merge" :disabled="busy" @click="handleMerge">
+          <button
+            type="button"
+            class="btn btn-merge"
+            :class="hasPr ? 'btn-secondary' : 'btn-primary'"
+            :disabled="busy"
+            @click="handleMerge"
+          >
             <Check :size="15" />
             <span>{{ multi ? `Merge vào nhánh gốc của ${detail.run.repos.length} repo (local)` : `Merge vào ${detail.run.base_branch} (local)` }}</span>
           </button>
@@ -305,6 +316,9 @@ function handleMerge() {
 function handleKeepBranch() {
   void act(props.keep);
 }
+
+/** The run already has pull requests: updating them is the way on. */
+const hasPr = computed(() => (props.detail?.run.pull_requests.length ?? 0) > 0);
 
 const confirmDiscard = ref(false);
 

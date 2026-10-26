@@ -3,9 +3,12 @@ import type {
   AgentProject,
   AgentProjectView,
   AgentRun,
+  CaseResult,
+  ChatMessage,
   CheckProposal,
   CliInfo,
   ModelInfo,
+  PendingPush,
   PrRequest,
   Verification,
   CliProfile,
@@ -1969,6 +1972,30 @@ export const ipcClient = {
 
   agentsRunKeep: (runId: string) => invokeTauri<void>('agents_run_keep', { run_id: runId }),
 
+  agentsPrPending: (runId: string) => invokeTauri<PendingPush[]>('agents_pr_pending', { run_id: runId }),
+
+  agentsRunAiPush: (
+    runId: string,
+    request: { cli: AgentCli; model: string | null; effort: string | null; note: string | null }
+  ) => invokeTauri<void>('agents_run_ai_push', { run_id: runId, request }),
+
+  agentsHumanSubmit: (taskId: string, results: CaseResult[], passed: boolean, note: string, attachments: string[]) =>
+    invokeTauri<void>('agents_human_submit', { task_id: taskId, results, passed, note, attachments }),
+
+  agentsHumanReprepare: (taskId: string) => invokeTauri<void>('agents_human_reprepare', { task_id: taskId }),
+
+  agentsHumanChat: (taskId: string, message: string) =>
+    invokeTauri<ChatMessage>('agents_human_chat', { task_id: taskId, message }),
+
+  /** A screenshot (base64) for a person's task; returns its file name. */
+  agentsHumanAttach: (taskId: string, name: string, data: string) =>
+    invokeTauri<string>('agents_human_attach', { task_id: taskId, name, data }),
+
+  agentsHumanFile: (taskId: string, name: string) =>
+    invokeTauri<string>('agents_human_file', { task_id: taskId, name }),
+
+  agentsRunPushPrs: (runId: string) => invokeTauri<AgentRun>('agents_run_push_prs', { run_id: runId }),
+
   agentsRunVerifyPrs: (runId: string) =>
     invokeTauri<Verification>('agents_run_verify_prs', { run_id: runId }),
 
@@ -2017,10 +2044,12 @@ export const ipcClient = {
   agentsTaskSetTimeout: (taskId: string, timeoutMinutes: number | null) =>
     invokeTauri<void>('agents_task_set_timeout', { task_id: taskId, timeout_minutes: timeoutMinutes }),
 
-  agentsRunFollowUp: (runId: string, request: string) =>
-    invokeTauri<void>('agents_run_follow_up', { run_id: runId, request }),
+  agentsRunFollowUp: (runId: string, request: string, pushPr = false) =>
+    invokeTauri<void>('agents_run_follow_up', { run_id: runId, request, push_pr: pushPr }),
 
   agentsRunDiscard: (runId: string) => invokeTauri<void>('agents_run_discard', { run_id: runId }),
+  agentsRunCleanWorktrees: (runId: string) =>
+    invokeTauri<void>('agents_run_clean_worktrees', { run_id: runId }),
 
   agentsRunDelete: (runId: string) => invokeTauri<void>('agents_run_delete', { run_id: runId }),
 
@@ -2052,6 +2081,14 @@ export const ipcClient = {
    */
   agentsOpenLog: async (invocationId: string, title: string) => {
     const terminalId = await invokeTauri<string>('agents_open_log', { invocation_id: invocationId });
+    const commandId = terminalUiIdFor(terminalId);
+    terminalNames.set(commandId, title);
+    runEventToCommand.set(terminalId, commandId);
+    return { commandId, runEventId: terminalId };
+  },
+
+  /** A live (or just finished) Agent Studio log tab, by its terminal id. */
+  agentsAttachLog: (terminalId: string, title: string) => {
     const commandId = terminalUiIdFor(terminalId);
     terminalNames.set(commandId, title);
     runEventToCommand.set(terminalId, commandId);
