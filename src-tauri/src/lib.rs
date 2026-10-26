@@ -289,6 +289,8 @@ mod desktop {
                 ipc::agents::agents_task_approve,
                 ipc::agents::agents_task_diff,
                 ipc::agents::agents_open_log,
+                ipc::commands::fs_read_folder_files,
+                ipc::commands::dialog_pick_folder,
             ])
             .run(tauri::generate_context!())
             .expect("error while running Command Manager");

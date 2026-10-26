@@ -1980,3 +1980,78 @@ pub(crate) fn open_with_os(url: &str) -> Result<()> {
 
     Ok(())
 }
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn fs_read_folder_files(path: String, deep: bool) -> Result<Vec<String>> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() || !p.is_dir() {
+        return Err(Error::msg(format!("Thư mục không tồn tại: {}", path)));
+    }
+    let mut files = Vec::new();
+    if deep {
+        fn walk(
+            dir: &std::path::Path,
+            base: &std::path::Path,
+            acc: &mut Vec<String>,
+        ) -> std::io::Result<()> {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let entry_path = entry.path();
+                    if entry_path.is_file() {
+                        if let Ok(rel) = entry_path.strip_prefix(base) {
+                            acc.push(rel.to_string_lossy().replace('\\', "/"));
+                        } else {
+                            acc.push(entry_path.to_string_lossy().replace('\\', "/"));
+                        }
+                    } else if entry_path.is_dir() {
+                        let _ = walk(&entry_path, base, acc);
+                    }
+                }
+            }
+            Ok(())
+        }
+        let _ = walk(p, p, &mut files);
+    } else {
+        if let Ok(entries) = std::fs::read_dir(p) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                if entry_path.is_file() {
+                    if let Some(name) = entry_path.file_name() {
+                        files.push(name.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+#[tauri::command]
+pub fn dialog_pick_folder() -> Result<Option<String>> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let output = std::process::Command::new("powershell")
+            .creation_flags(CREATE_NO_WINDOW)
+            .args([
+                "-NoProfile",
+                "-Command",
+                r#"[System.Reflection.Assembly]::LoadWithPartialName('System.windows.forms') | Out-Null; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Chọn thư mục'; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }"#,
+            ])
+            .output()
+            .map_err(|e| Error::msg(e.to_string()))?;
+
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if path.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(path))
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(None)
+    }
+}

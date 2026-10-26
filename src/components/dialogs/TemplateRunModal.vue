@@ -97,15 +97,42 @@
             </div>
 
             <!-- Enum Select -->
-            <select
-              v-else-if="param.kind === 'enum'"
-              v-model="paramValues[param.name]"
-              class="form-input"
-            >
-              <option v-for="opt in (param.options || ['GET', 'POST', 'PUT', 'DELETE'])" :key="opt" :value="opt">
-                {{ opt }}
-              </option>
-            </select>
+            <div v-else-if="param.kind === 'enum'" class="enum-param-container">
+              <div class="select-with-refresh">
+                <select
+                  v-model="paramValues[param.name]"
+                  class="form-input"
+                  :disabled="reloadingParams[param.name]"
+                >
+                  <option
+                    v-for="opt in (dynamicOptions[param.name] || getCleanOptions(param.options))"
+                    :key="opt"
+                    :value="opt"
+                  >
+                    {{ opt }}
+                  </option>
+                </select>
+                <button
+                  v-if="folderConfigs[param.name]"
+                  type="button"
+                  class="btn-param-reload"
+                  :class="{ 'is-loading': reloadingParams[param.name] }"
+                  title="Quét lại danh sách file mới nhất từ thư mục"
+                  :disabled="reloadingParams[param.name]"
+                  @click="loadLatestFolderFiles(param.name, folderConfigs[param.name].path, folderConfigs[param.name].deep)"
+                >
+                  <RefreshCw :size="13" :class="{ spin: reloadingParams[param.name] }" />
+                </button>
+              </div>
+              <div v-if="folderConfigs[param.name]" class="folder-param-meta">
+                <span class="folder-meta-text" :title="folderConfigs[param.name].path">
+                  📁 {{ folderConfigs[param.name].path }} ({{ (dynamicOptions[param.name] || getCleanOptions(param.options)).length }} files)
+                </span>
+                <span v-if="reloadingParams[param.name]" class="reloading-text">
+                  Đang quét file...
+                </span>
+              </div>
+            </div>
 
             <!-- Secret Password Input with Eye Toggle -->
             <div v-else-if="param.is_secret" class="input-with-icon">
@@ -258,9 +285,11 @@ import {
   Copy,
   Play,
   LoaderCircle,
+  RefreshCw,
 } from 'lucide-vue-next';
 import { useTemplates } from '@/composables/useTemplates';
 import { ipcClient, isTauriRuntime } from '@/ipc/client';
+import { parseFolderConfigFromOptions } from '@/utils/templateFolder';
 import PromptDialog from '@/components/dialogs/PromptDialog.vue';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import type { CommandTemplate, TemplatePreviewPayload } from '@/types/models';
@@ -307,6 +336,31 @@ const previewError = ref('');
 const previewState = ref<'idle' | 'browser' | 'loading' | 'rust' | 'fallback'>('idle');
 const previewRequestId = ref(0);
 
+const dynamicOptions = ref<Record<string, string[]>>({});
+const folderConfigs = ref<Record<string, { path: string; deep: boolean }>>({});
+const reloadingParams = ref<Record<string, boolean>>({});
+
+const getCleanOptions = (options?: string[]): string[] => {
+  return parseFolderConfigFromOptions(options).files;
+};
+
+const loadLatestFolderFiles = async (paramName: string, folderPath: string, deep: boolean) => {
+  if (!folderPath) return;
+  reloadingParams.value[paramName] = true;
+  try {
+    const latestFiles = await ipcClient.readFolderFiles(folderPath, deep);
+    dynamicOptions.value[paramName] = latestFiles;
+    const currentVal = paramValues.value[paramName];
+    if ((!currentVal || !latestFiles.includes(currentVal)) && latestFiles.length > 0) {
+      paramValues.value[paramName] = latestFiles[0];
+    }
+  } catch (err) {
+    console.error(`Không thể quét thư mục cho param ${paramName}:`, err);
+  } finally {
+    reloadingParams.value[paramName] = false;
+  }
+};
+
 const template = computed<CommandTemplate | undefined>(() => {
   if (!props.templateId) return undefined;
   return getTemplateById(props.templateId);
@@ -325,7 +379,22 @@ watch(
       const tpl = getTemplateById(newId);
       if (tpl) {
         const initial: Record<string, string> = {};
+        dynamicOptions.value = {};
+        folderConfigs.value = {};
+        reloadingParams.value = {};
+
         tpl.params.forEach(p => {
+          if (p.kind === 'enum') {
+            const { isFolder, config, files } = parseFolderConfigFromOptions(p.options);
+            if (isFolder && config) {
+              folderConfigs.value[p.name] = config;
+              dynamicOptions.value[p.name] = files;
+              // Tự động quét lại danh sách file mới nhất khi mở modal chạy!
+              void loadLatestFolderFiles(p.name, config.path, config.deep);
+            } else {
+              dynamicOptions.value[p.name] = p.options || ['GET', 'POST', 'PUT', 'DELETE'];
+            }
+          }
           initial[p.name] = p.default_value || '';
         });
         paramValues.value = initial;
@@ -1084,5 +1153,65 @@ select.form-input option {
   to {
     transform: rotate(360deg);
   }
+}
+
+.enum-param-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.select-with-refresh {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.btn-param-reload {
+  background-color: var(--bg-surface-hover);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.btn-param-reload:hover:not(:disabled) {
+  background-color: var(--primary-subtle);
+  border-color: var(--primary);
+  color: #e4b5ff;
+}
+
+.btn-param-reload:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.folder-param-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 2px;
+}
+
+.folder-meta-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 480px;
+}
+
+.reloading-text {
+  color: #cda8ee;
+  font-style: italic;
+  font-size: 10px;
 }
 </style>

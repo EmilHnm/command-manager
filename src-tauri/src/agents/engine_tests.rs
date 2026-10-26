@@ -2,12 +2,13 @@
 //! design → plan → gate 1 → implement / check / review / fix → merge.
 
 use super::adapter::Cli;
-use super::engine::{AgentEnv, AiPush, AttachPr, Engine, NewRun};
+use super::engine::{AgentEnv, AiPush, AttachPr, Engine, NewRun, WORKTREE_DIR_SETTING};
 use super::git;
 use super::log::AgentLog;
 use crate::db::repos::agents::{
     self as repo, run_status, stage, task_status, ProjectSettings, RepoConfig, RoleCli, TaskDraft,
 };
+use crate::db::repos::settings;
 use crate::db::Db;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -403,6 +404,43 @@ async fn a_task_without_changes_blocks_its_dependents_until_skipped() {
     assert!(!git::branch_exists(&s.repo, &format!("cm/{}/a", &run.id[..8])).await);
     s.engine.delete(&run.id).await.unwrap();
     assert!(s.engine.detail(&run.id).is_err());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_run_keeps_its_worktrees_where_the_setting_said_when_it_started() {
+    let s = setup(&[]).await;
+    let root = s.env.dir.join("big-drive");
+    s.env
+        .db
+        .write(|c| settings::set(c, WORKTREE_DIR_SETTING, &root.to_string_lossy()))
+        .unwrap();
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    assert_eq!(run.worktree_root.as_deref(), Some(&*root.to_string_lossy()));
+    // A later change of the setting is for new runs only.
+    s.env
+        .db
+        .write(|c| settings::set(c, WORKTREE_DIR_SETTING, ""))
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(detail.run.stage, stage::MERGE_GATE, "{:?}", detail.run.status_note);
+    let wt = root.join(&run.id[..8]);
+    assert!(wt.join("_integration").exists());
+    assert!(!s.env.data_dir().join("agents/wt").join(&run.id[..8]).exists());
+    s.engine.discard(&run.id).await.unwrap();
+    assert!(!wt.join("_integration").exists());
+
+    s.env
+        .db
+        .write(|c| settings::set(c, WORKTREE_DIR_SETTING, "rel/wt"))
+        .unwrap();
+    let error = s.engine.start_run(new_run(&s.project_id, false)).await.unwrap_err();
+    assert!(error.to_string().contains("tuyệt đối"), "{error}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

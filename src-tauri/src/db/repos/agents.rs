@@ -341,6 +341,10 @@ pub struct Run {
     /// Requests made after the run was delivered (a human review's
     /// comments...), oldest first. Their tasks are batch 1, 2...
     pub followups: Vec<FollowUp>,
+    /// Folder of the run's worktrees, set when it starts; None: the app data
+    /// folder's `agents/wt`.
+    #[serde(default)]
+    pub worktree_root: Option<String>,
 }
 
 /// A pull request of the run's work in one repo.
@@ -842,7 +846,7 @@ const RUN_COLUMNS: &str = "id, project_id, title, request, leader_cli, roles, pl
      merge_gate, limits, stage, status, status_note, design_md, contract, leader_session, \
      pending_feedback, base_branch, base_commit, integration_branch, integration_checks, \
      created_at, updated_at, finished_at, repos, followups, leader_model, leader_effort, \
-     suggested_checks, pull_requests";
+     suggested_checks, pull_requests, worktree_root";
 
 fn run_row(row: &Row) -> rusqlite::Result<Run> {
     let mut repos: Vec<RunRepo> = parse(&row.get::<_, String>(23)?)?;
@@ -884,6 +888,7 @@ fn run_row(row: &Row) -> rusqlite::Result<Run> {
         leader_effort: row.get(26)?,
         suggested_checks: parse(&row.get::<_, String>(27)?)?,
         pull_requests: parse(&row.get::<_, String>(28)?)?,
+        worktree_root: row.get(29)?,
     })
 }
 
@@ -892,7 +897,7 @@ pub fn run_insert(conn: &Connection, run: &Run) -> Result<()> {
         &format!(
             "INSERT INTO agent_run ({RUN_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
              ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25,
-             ?26, ?27, ?28, ?29)"
+             ?26, ?27, ?28, ?29, ?30)"
         ),
         rusqlite::params![
             run.id,
@@ -924,6 +929,7 @@ pub fn run_insert(conn: &Connection, run: &Run) -> Result<()> {
             run.leader_effort,
             json(&run.suggested_checks),
             json(&run.pull_requests),
+            run.worktree_root,
         ],
     )?;
     Ok(())
@@ -1520,6 +1526,7 @@ mod tests {
             leader_effort: Some("high".into()),
             suggested_checks: Vec::new(),
             pull_requests: Vec::new(),
+            worktree_root: Some("D:\\wt".into()),
         };
         let mut run = run;
         run.repos.push(RunRepo {

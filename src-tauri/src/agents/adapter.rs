@@ -125,8 +125,15 @@ const CLAUDE_BLOCKED_TOOLS: &[&str] = &[
     "EnterWorktree",
 ];
 
+/// The CLI reads its prompt from stdin: [`args`]' last item is written there
+/// instead. cursor-agent's prompt, with the rules and context it carries, can
+/// pass Windows' 32767-character command line ("os error 206").
+pub fn prompt_on_stdin(cli: Cli) -> bool {
+    matches!(cli, Cli::Cursor)
+}
+
 /// Arguments after the program name. The prompt is always an argument of
-/// its own (never parsed by a shell).
+/// its own (never parsed by a shell), and the last one.
 pub fn args(cli: Cli, request: &Request) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
     let mut push = |items: &[&str]| args.extend(items.iter().map(|item| item.to_string()));
@@ -242,11 +249,17 @@ pub fn args(cli: Cli, request: &Request) -> Vec<String> {
             push(&["-p", "--output-format", "stream-json", "--trust"]);
             push(&["--workspace", &request.cwd.to_string_lossy()]);
             // `-p` alone may write and run shell commands: read-only steps
-            // must say so, write steps get the sandbox.
+            // must say so, write steps get the sandbox. It exists only on
+            // macOS and Linux ("Sandbox requires macOS or Linux"); without it
+            // every command is refused headless, so Windows has Cursor's
+            // classifier run the safe ones.
             match (request.access, bypass) {
                 (Access::ReadOnly, _) => push(&["--mode", "plan"]),
                 (_, true) => push(&["--force"]),
                 (Access::Push, false) => push(&["--sandbox", "disabled"]),
+                (Access::Write, false) if cfg!(windows) => {
+                    push(&["--sandbox", "disabled", "--auto-review"])
+                }
                 (Access::Write, false) => push(&["--sandbox", "enabled"]),
             }
             if let Some(session) = request.resume {
@@ -780,6 +793,10 @@ impl Parser {
                         num_at(usage, "input_tokens") + num_at(usage, "cache_read_tokens");
                     outcome.output_tokens = num_at(usage, "output_tokens");
                 }
+                outcome.denials = result
+                    .get("denied_actions")
+                    .and_then(Value::as_array)
+                    .map_or(0, |list| list.len() as u32);
                 let status = str_at(result, "status");
                 if !status.is_empty() && status != "SUCCESS" {
                     // "Individual quota reached. ... Resets in 149h8m18s."
@@ -984,9 +1001,121 @@ pub fn child_path(program: &Path) -> std::ffi::OsString {
     std::env::join_paths(dirs).unwrap_or_default()
 }
 
+/// The program and leading arguments that actually start `program`.
+/// Windows refuses a newline in a batch file's arguments ("batch file
+/// arguments are invalid") and every prompt has some, so cursor-agent's
+/// `.cmd` launcher is replaced by the `node.exe index.js` it would run.
+pub async fn launch(program: &Path) -> (PathBuf, Vec<String>) {
+    match cursor_node(program).await {
+        Some((node, script)) => (node, vec![script.to_string_lossy().into_owned()]),
+        None => (program.to_path_buf(), Vec::new()),
+    }
+}
+
+/// What `cursor-agent.ps1` does: `node.exe` next to the launcher, else the
+/// newest `versions/<YYYY.MM.DD[-HH-MM-SS]-commit>` folder.
+async fn cursor_node(program: &Path) -> Option<(PathBuf, PathBuf)> {
+    let ext = program.extension()?.to_string_lossy().to_ascii_lowercase();
+    if ext != "cmd" && ext != "bat" {
+        return None;
+    }
+    let dir = program.parent()?;
+    if dir.join("node.exe").is_file() && dir.join("index.js").is_file() {
+        return Some((dir.join("node.exe"), dir.join("index.js")));
+    }
+    let versions = dir.join("versions");
+    // The launcher first moves a downloaded update into place.
+    let promote = versions.join("promote-staged.cmd");
+    if promote.is_file() {
+        let mut cmd = tokio::process::Command::new(&promote);
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        cmd.creation_flags(crate::process::platform::CREATE_NO_WINDOW);
+        let _ = cmd.status().await;
+    }
+    let newest = std::fs::read_dir(&versions)
+        .ok()?
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            Some((cursor_version(&name)?, entry.path()))
+        })
+        .filter(|(_, path)| path.join("node.exe").is_file() && path.join("index.js").is_file())
+        .max_by(|a, b| a.0.cmp(&b.0))?
+        .1;
+    Some((newest.join("node.exe"), newest.join("index.js")))
+}
+
+/// `2026.10.22-27dcf5f` or `2026.10.22-13-05-09-27dcf5f`, ordered by date
+/// then build time.
+fn cursor_version(name: &str) -> Option<[u32; 6]> {
+    let parts: Vec<&str> = name.split('-').collect();
+    let (date, time, commit) = match parts.as_slice() {
+        [date, commit] => (*date, &[][..], *commit),
+        [date, _, _, _, commit] => (*date, &parts[1..4], *commit),
+        _ => return None,
+    };
+    if commit.is_empty() || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let date: Vec<u32> = date
+        .split('.')
+        .map(|part| part.parse().ok())
+        .collect::<Option<_>>()?;
+    let [year, month, day] = date[..] else {
+        return None;
+    };
+    let mut out = [year, month, day, 0, 0, 0];
+    for (slot, part) in out[3..].iter_mut().zip(time) {
+        *slot = part.parse().ok()?;
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_versions_order_by_date_then_build_time() {
+        assert_eq!(cursor_version("2026.10.22-27dcf5f"), Some([2026, 10, 22, 0, 0, 0]));
+        assert_eq!(
+            cursor_version("2026.1.2-13-05-09-abc123"),
+            Some([2026, 1, 2, 13, 5, 9])
+        );
+        assert_eq!(cursor_version("promote-staged.cmd"), None);
+        assert_eq!(cursor_version("2026.10.22-27dcf5f.new"), None);
+        assert_eq!(cursor_version("2026.10-27dcf5f"), None);
+    }
+
+    #[tokio::test]
+    async fn cursor_launcher_runs_the_newest_bundled_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let launcher = dir.path().join("cursor-agent.cmd");
+        std::fs::write(&launcher, "@echo off").unwrap();
+        for version in ["2026.9.30-aaa111", "2026.10.22-bbb222", "2026.10.22-01-00-00-ccc333"] {
+            let path = dir.path().join("versions").join(version);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(path.join("node.exe"), "").unwrap();
+            std::fs::write(path.join("index.js"), "").unwrap();
+        }
+        // Being updated: no node yet.
+        let versions = dir.path().join("versions");
+        std::fs::create_dir_all(versions.join("2026.11.1-ddd444")).unwrap();
+        let newest = versions.join("2026.10.22-01-00-00-ccc333");
+        assert_eq!(
+            launch(&launcher).await,
+            (
+                newest.join("node.exe"),
+                vec![newest.join("index.js").to_string_lossy().into_owned()]
+            )
+        );
+        let exe = dir.path().join("claude.exe");
+        assert_eq!(launch(&exe).await, (exe.clone(), Vec::new()));
+    }
 
     fn feed(cli: Cli, lines: &[&str]) -> (Vec<LogLine>, Outcome) {
         let mut parser = Parser::new(cli);
@@ -1062,9 +1191,10 @@ mod tests {
                 r#"{"event":"step_update","step_update":{"state":"ACTIVE","step_type":"tool","tool_name":"write_file","tool_info":{"parameters":{"Path":"/x/plan.md"}}}}"#,
                 r#"{"event":"step_update","step_update":{"state":"ACTIVE","step_type":"agent_response","text_delta":"O"}}"#,
                 r#"{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","text_delta":"K\n"}}"#,
-                r#"{"event":"result","result":{"conversation_id":"c1","status":"SUCCESS","response":"OK\n","usage":{"input_tokens":14,"output_tokens":3,"cache_read_tokens":6}}}"#,
+                r#"{"event":"result","result":{"conversation_id":"c1","status":"SUCCESS","response":"OK\n","usage":{"input_tokens":14,"output_tokens":3,"cache_read_tokens":6},"denied_actions":[{"action":"command","display_name":"RunCommand"}]}}"#,
             ],
         );
+        assert_eq!(outcome.denials, 1);
         assert_eq!(
             log[1],
             LogLine::Tool("write_file".into(), "/x/plan.md".into())

@@ -225,6 +225,30 @@
             </div>
           </div>
         </div>
+
+        <div class="setting-card">
+          <h3 class="card-title">Agent Studio</h3>
+          <div class="setting-row">
+            <div class="row-info">
+              <span class="row-label">Thư mục chứa worktree của agent</span>
+              <span class="row-desc">
+                Mỗi task có một bản sao repo riêng kèm thư mục build (node_modules, target...), có thể tốn nhiều GB.
+                Chọn một ổ còn nhiều chỗ trống. Để trống: thư mục dữ liệu ứng dụng. Chỉ áp dụng cho lượt chạy mới;
+                lượt đang có giữ nguyên chỗ cũ.
+              </span>
+            </div>
+            <div class="path-picker">
+              <input
+                v-model.trim="settings.agentsWorktreeDir"
+                type="text"
+                class="input-path font-mono"
+                placeholder="Mặc định (dữ liệu ứng dụng)"
+                spellcheck="false"
+              />
+              <button type="button" class="btn btn-secondary btn-sm" @click="pickWorktreeDir">Chọn…</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- TAB 3: TERMINAL & APPEARANCE -->
@@ -448,7 +472,13 @@ const settings = ref<SystemSettings>({
   terminalShell: '',
   ghostTextEnabled: true,
   terminalLoadProfile: true,
+  agentsWorktreeDir: '',
 });
+
+const pickWorktreeDir = async () => {
+  const picked = await ipcClient.pickFolder();
+  if (picked) settings.value.agentsWorktreeDir = picked;
+};
 
 const isExporting = ref(false);
 const exportSuccessPath = ref<string | null>(null);
@@ -1019,6 +1049,31 @@ const confirmRestoreDatabase = async () => {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.path-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.input-path {
+  width: 280px;
+  max-width: 40vw;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 6px 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input-path:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--primary-glow);
 }
 
 .input-number {

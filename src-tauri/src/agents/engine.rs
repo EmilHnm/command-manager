@@ -19,6 +19,7 @@ use crate::db::repos::agents::{
     self as repo, run_status, stage, task_status, CheckProposal, CheckResult, Limits, Phase,
     Project, ProjectSettings, Review, ReviewComment, RoleCli, Run, Task, TaskDraft,
 };
+use crate::db::repos::settings;
 use crate::db::Db;
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -229,6 +230,9 @@ pub struct PrCheck {
 }
 
 const VERIFICATION_FILE: &str = "verification.json";
+
+/// App setting: the folder new runs keep their worktrees in (empty: app data).
+pub const WORKTREE_DIR_SETTING: &str = "agents_worktree_dir";
 
 /// How long a push may take: pre-push hooks run the project's checks.
 const PUSH_TIMEOUT: Duration = Duration::from_secs(60 * 60);
@@ -535,17 +539,39 @@ impl Engine {
         self.env.data_dir().join("agents").join("runs").join(run_id)
     }
 
-    fn worktree_dir(&self, run_id: &str, name: &str) -> PathBuf {
-        self.env
-            .data_dir()
-            .join("agents")
-            .join("wt")
-            .join(short(run_id))
+    fn worktree_dir(&self, run: &Run, name: &str) -> PathBuf {
+        run.worktree_root
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.env.data_dir().join("agents").join("wt"))
+            .join(short(&run.id))
             .join(name)
     }
 
-    fn integration_dir(&self, run_id: &str) -> PathBuf {
-        self.worktree_dir(run_id, "_integration")
+    fn integration_dir(&self, run: &Run) -> PathBuf {
+        self.worktree_dir(run, "_integration")
+    }
+
+    /// The "agents_worktree_dir" setting for a new run: worktrees and their
+    /// builds can take many GB, more than the app data drive may have.
+    fn chosen_worktree_root(&self) -> Result<Option<String>> {
+        let Some(dir) = self
+            .db()
+            .read(|c| settings::get(c, WORKTREE_DIR_SETTING))?
+            .map(|dir| dir.trim().to_string())
+            .filter(|dir| !dir.is_empty())
+        else {
+            return Ok(None);
+        };
+        if !Path::new(&dir).is_absolute() {
+            return Err(Error::msg(format!(
+                "Thư mục worktree \"{dir}\" phải là đường dẫn tuyệt đối"
+            )));
+        }
+        std::fs::create_dir_all(&dir).map_err(|error| {
+            Error::msg(format!("Không tạo được thư mục worktree \"{dir}\": {error}"))
+        })?;
+        Ok(Some(dir))
     }
 
     fn update_run(&self, run_id: &str, edit: impl FnOnce(&mut Run)) -> Result<Run> {
@@ -695,6 +721,7 @@ impl Engine {
             leader_effort: clean(new.leader_effort),
             suggested_checks: Vec::new(),
             pull_requests: Vec::new(),
+            worktree_root: self.chosen_worktree_root()?,
         };
         self.db().write(|c| {
             repo::run_insert(c, &run)?;
@@ -1591,7 +1618,7 @@ impl Engine {
     /// The integration branch checked out in its own worktree.
     /// The integration branch of every repo, checked out under one folder.
     async fn ensure_integration(&self, run: &Run, project: &Project) -> Result<PathBuf> {
-        let dir = self.integration_dir(&run.id);
+        let dir = self.integration_dir(run);
         for repo in &run.repos {
             let root = workspace::repo_dir(Path::new(&project.path), &repo.path);
             git::ensure_branch(&root, &run.integration_branch, &repo.base_commit).await?;
@@ -2251,7 +2278,7 @@ impl Engine {
             .filter_map(|task| task.worktree.as_ref().map(PathBuf::from))
             .collect();
         Ok((1..)
-            .map(|n| self.worktree_dir(&run.id, &format!("{SLOT_PREFIX}{n}")))
+            .map(|n| self.worktree_dir(run, &format!("{SLOT_PREFIX}{n}")))
             .find(|slot| !held.contains(slot))
             .expect("a free slot"))
     }
@@ -3081,13 +3108,15 @@ impl Engine {
             .iter()
             .filter_map(|task| task.worktree.as_ref().map(PathBuf::from))
             .collect();
-        if let Ok(entries) = std::fs::read_dir(self.worktree_dir(&run.id, "")) {
+        if let Ok(entries) = std::fs::read_dir(self.worktree_dir(run, "")) {
             places.extend(entries.flatten().map(|entry| entry.path()));
         }
         for place in &places {
             self.remove_workspace(run, &project, place).await;
         }
-        let _ = std::fs::remove_dir(self.worktree_dir(&run.id, ""));
+        self.remove_workspace(run, &project, &self.integration_dir(run))
+            .await;
+        let _ = std::fs::remove_dir(self.worktree_dir(run, ""));
         self.tidy_branches(run, &tasks, delete_branches).await;
         self.db().write(|c| {
             for mut task in tasks {
@@ -3140,7 +3169,11 @@ impl Engine {
 
     /// Whether a run still has worktrees on disk.
     pub fn has_worktrees(&self, run_id: &str) -> bool {
-        std::fs::read_dir(self.worktree_dir(run_id, ""))
+        let run = match self.db().read(|c| repo::run_get(c, run_id)) {
+            Ok(run) => run,
+            Err(_) => return false,
+        };
+        std::fs::read_dir(self.worktree_dir(&run, ""))
             .is_ok_and(|mut entries| entries.next().is_some())
     }
 
@@ -3458,7 +3491,7 @@ impl Engine {
         })?;
         let project = self.project(&run)?;
         let tasks = self.db().read(|c| repo::task_list(c, run_id))?;
-        let verify_dir = self.worktree_dir(run_id, "_verify");
+        let verify_dir = self.worktree_dir(&run, "_verify");
         let mut checks = Vec::new();
         let mut diff = String::new();
         let mut reviewable: Vec<String> = Vec::new();

@@ -492,7 +492,10 @@
                     </td>
                     <td class="col-status">
                       <span class="status-indicator" :class="'status-' + taskTone(task)">
-                        <span v-if="task.status === 'running' || task.status === 'fixing'" class="pulse-dot-sm"></span>
+                        <span
+                          v-if="(task.status === 'running' || task.status === 'fixing') && !isInterrupted(task)"
+                          class="pulse-dot-sm"
+                        ></span>
                         <Check v-else-if="task.status === 'merged'" :size="12" />
                         <AlertCircle v-else-if="taskTone(task) === 'failed' || task.status === 'review'" :size="12" />
                         <Clock v-else :size="12" />
@@ -640,7 +643,6 @@
             <!-- Workflow Controls -->
             <div class="inspector-footer">
               <div class="footer-left">
-                <!-- Dropdown / Reassign Modal Button -->
                 <button
                   v-if="selectedTask.kind !== 'human'"
                   type="button"
@@ -682,11 +684,17 @@
                 </button>
 
                 <button
-                  v-if="['failed', 'conflict', 'needs_human'].includes(selectedTask.status)"
+                  v-if="['failed', 'conflict', 'needs_human'].includes(selectedTask.status) || isInterrupted(selectedTask)"
                   type="button"
                   class="btn btn-secondary btn-sm"
                   :disabled="!canEditTasks"
-                  :title="canEditTasks ? undefined : editHint"
+                  :title="
+                    !canEditTasks
+                      ? editHint
+                      : isInterrupted(selectedTask)
+                        ? 'Bước đang làm bị ngắt (tạm dừng hoặc ứng dụng đóng); giao lại cho agent, nối tiếp phiên bị ngắt nếu còn'
+                        : undefined
+                  "
                   @click="act(() => ipcClient.agentsTaskRetry(selectedTask!.id))"
                 >
                   <RotateCcw :size="12" />
@@ -1392,7 +1400,12 @@ const runBadge = (run: RunSummary) =>
     ? RUN_STATUS_LABELS[run.status]
     : STAGE_LABELS[run.stage];
 
+/** Left mid-step by a run that stopped (paused, or the app closed): nothing works on it. */
+const isInterrupted = (task: AgentTask) =>
+  !!detail.value && !detail.value.driving && ['running', 'checking', 'review', 'fixing'].includes(task.status);
+
 const taskTone = (task: AgentTask) => {
+  if (isInterrupted(task)) return 'waiting';
   switch (task.status) {
     case 'merged':
       return 'merged';
@@ -1419,8 +1432,11 @@ const taskStatusText = (task: AgentTask) => {
     });
     if (pending.length > 0) return `Chờ ${pending.join(', ')}`;
   }
-  if (task.status === 'review') return `Review (${task.round + 1}/${detail.value?.run.limits.max_rounds ?? 3})`;
-  return TASK_STATUS_LABELS[task.status];
+  const label =
+    task.status === 'review'
+      ? `Review (${task.round + 1}/${detail.value?.run.limits.max_rounds ?? 3})`
+      : TASK_STATUS_LABELS[task.status];
+  return isInterrupted(task) ? `${label} · bị ngắt` : label;
 };
 
 const roundText = (task: AgentTask) => {

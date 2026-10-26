@@ -445,6 +445,7 @@ let mockSettings: SystemSettings = {
   terminalShell: '',
   ghostTextEnabled: true,
   terminalLoadProfile: true,
+  agentsWorktreeDir: '',
 };
 
 // Mock terminal buffer logs
@@ -1489,6 +1490,7 @@ export const ipcClient = {
       terminalShell: values.get('terminal_shell') || '',
       ghostTextEnabled: values.get('ghost_text_enabled') !== 'false',
       terminalLoadProfile: values.get('terminal_load_profile') !== 'false',
+      agentsWorktreeDir: values.get('agents_worktree_dir') || '',
     };
   },
 
@@ -1505,6 +1507,7 @@ export const ipcClient = {
       ['terminal_shell', settings.terminalShell],
       ['ghost_text_enabled', String(settings.ghostTextEnabled)],
       ['terminal_load_profile', String(settings.terminalLoadProfile)],
+      ['agents_worktree_dir', settings.agentsWorktreeDir.trim()],
     ];
     await Promise.all(values.map(([key, value]) => invokeTauri<void>('settings_set', {
       key,
@@ -2104,6 +2107,16 @@ export const ipcClient = {
     return listen<{ run_id: string }>(IPC_EVENTS.AGENTS_CHANGED, (event) => {
       callback(event.payload.run_id);
     });
+  },
+
+  readFolderFiles: async (path: string, deep: boolean): Promise<string[]> => {
+    if (!usingNativeIpc()) return [];
+    return invokeTauri<string[]>('fs_read_folder_files', { path, deep });
+  },
+
+  pickFolder: async (): Promise<string | null> => {
+    if (!usingNativeIpc()) return null;
+    return invokeTauri<string | null>('dialog_pick_folder');
   },
 };
 

@@ -3,14 +3,14 @@
 //! a cancel (the run's "Dừng ngay" or the tab's stop), taking the CLI's
 //! child processes with it.
 
-use super::adapter::{child_path, Cli, LogLine, Outcome, Parser, Quota};
+use super::adapter::{child_path, launch, prompt_on_stdin, Cli, LogLine, Outcome, Parser, Quota};
 use super::log::AgentLog;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::watch;
 
@@ -85,8 +85,16 @@ pub async fn run(
     log: &AgentLog,
     mut stop: watch::Receiver<bool>,
 ) -> Result<Outcome, Stopped> {
-    let mut cmd = Command::new(spawn.program);
-    cmd.args(&spawn.args)
+    let (program, lead) = launch(spawn.program).await;
+    let mut args = spawn.args;
+    let input = if prompt_on_stdin(spawn.cli) {
+        args.pop()
+    } else {
+        None
+    };
+    let mut cmd = Command::new(&program);
+    cmd.args(&lead)
+        .args(&args)
         .current_dir(spawn.cwd)
         .env("PATH", child_path(spawn.program))
         .env("NO_COLOR", "1")
@@ -96,10 +104,20 @@ pub async fn run(
                 .iter()
                 .map(|(key, value)| (key.as_str(), value.as_str())),
         )
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    if program != spawn.program {
+        // The launcher's own name, as it would have set it.
+        if let Some(name) = spawn.program.file_name() {
+            cmd.env("CURSOR_INVOKED_AS", name);
+        }
+    }
     #[cfg(unix)]
     cmd.process_group(0);
     let mut child = cmd.spawn().map_err(|error| {
@@ -109,6 +127,12 @@ pub async fn run(
         )))
     })?;
     let pid = child.id();
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        // Written alongside the reads below; dropping it closes stdin.
+        tokio::spawn(async move {
+            let _ = stdin.write_all(input.as_bytes()).await;
+        });
+    }
 
     let tail: Arc<Mutex<Vec<String>>> = Arc::default();
     let stderr_task = child.stderr.take().map(|stderr| {
@@ -399,6 +423,32 @@ echo '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":1}}'"#,
                 .count(),
             3
         );
+
+        let cursor = script(
+            dir.path(),
+            r#"input=$(cat)
+if [ "$#" = 2 ] && [ "$1" = "-p" ] && [ "$input" = "$(printf 'line one\nline two')" ]; then
+  echo '{"type":"result","subtype":"success","is_error":false,"result":"read stdin","session_id":"c1"}'
+fi"#,
+        );
+        let (_tx, rx) = watch::channel(false);
+        let outcome = run(
+            Spawn {
+                cli: Cli::Cursor,
+                program: &cursor,
+                args: vec!["-p".into(), "--trust".into(), "line one\nline two".into()],
+                cwd: dir.path(),
+                timeout: Duration::from_secs(10),
+                raw_log: None,
+                quota_limit: None,
+                env: Vec::new(),
+            },
+            &log,
+            rx,
+        )
+        .await
+        .expect("ran");
+        assert_eq!(outcome.text, "read stdin");
 
         let failing = script(dir.path(), "echo 'not logged in' >&2; exit 3");
         let (_tx, rx) = watch::channel(false);

@@ -125,6 +125,8 @@ export interface SystemSettings {
   terminalShell: string;
   ghostTextEnabled: boolean;
   terminalLoadProfile: boolean;
+  /** Folder new agent runs keep their worktrees in; empty: app data. */
+  agentsWorktreeDir: string;
 }
 
 export interface BackupIntegrityResult {
