@@ -53,6 +53,7 @@ pub trait AgentEnv: Send + Sync + 'static {
 #[derive(Debug, Clone, Deserialize)]
 pub struct NewRun {
     pub project_id: String,
+    #[serde(alias = "desc", alias = "description")]
     pub request: String,
     #[serde(default)]
     pub title: Option<String>,
@@ -568,6 +569,23 @@ impl Engine {
         })?;
         self.env.changed(&task.run_id);
         Ok(task)
+    }
+
+    pub fn set_info(&self, run_id: &str, title: Option<String>, request: Option<String>) -> Result<Run> {
+        self.update_run(run_id, |run| {
+            if let Some(t) = title {
+                let trimmed = t.trim().to_string();
+                if !trimmed.is_empty() {
+                    run.title = trimmed;
+                }
+            }
+            if let Some(r) = request {
+                let trimmed = r.trim().to_string();
+                if !trimmed.is_empty() {
+                    run.request = trimmed;
+                }
+            }
+        })
     }
 
     // ---- lifecycle --------------------------------------------------------

@@ -1948,6 +1948,9 @@ export const ipcClient = {
 
   agentsRunStart: (run: NewRunInput) => invokeTauri<AgentRun>('agents_run_start', { run }),
 
+  agentsRunUpdate: (runId: string, title?: string | null, request?: string | null) =>
+    invokeTauri<AgentRun>('agents_run_update', { run_id: runId, title, request }),
+
   agentsRunPause: (runId: string) => invokeTauri<void>('agents_run_pause', { run_id: runId }),
 
   agentsRunStop: (runId: string) => invokeTauri<void>('agents_run_stop', { run_id: runId }),

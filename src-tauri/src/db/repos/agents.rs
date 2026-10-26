@@ -305,6 +305,7 @@ pub struct Run {
     pub id: String,
     pub project_id: String,
     pub title: String,
+    #[serde(alias = "desc", alias = "description")]
     pub request: String,
     pub leader_cli: String,
     /// The leader's model / effort for design and plan; None: the profile's.
@@ -931,16 +932,17 @@ pub fn run_insert(conn: &Connection, run: &Run) -> Result<()> {
 /// Writes every field the pipeline changes.
 pub fn run_save(conn: &Connection, run: &Run) -> Result<()> {
     conn.execute(
-        "UPDATE agent_run SET title = ?2, roles = ?3, limits = ?4, stage = ?5, status = ?6,
-           status_note = ?7, design_md = ?8, contract = ?9, leader_session = ?10,
-           integration_checks = ?11, updated_at = ?12, finished_at = ?13, pending_feedback = ?14,
-           repos = ?15, followups = ?16, leader_model = ?17, leader_effort = ?18,
-           base_branch = ?19, base_commit = ?20, suggested_checks = ?21,
-           pull_requests = ?22
+        "UPDATE agent_run SET title = ?2, request = ?3, roles = ?4, limits = ?5, stage = ?6, status = ?7,
+           status_note = ?8, design_md = ?9, contract = ?10, leader_session = ?11,
+           integration_checks = ?12, updated_at = ?13, finished_at = ?14, pending_feedback = ?15,
+           repos = ?16, followups = ?17, leader_model = ?18, leader_effort = ?19,
+           base_branch = ?20, base_commit = ?21, suggested_checks = ?22,
+           pull_requests = ?23
          WHERE id = ?1",
         rusqlite::params![
             run.id,
             run.title,
+            run.request,
             json(&run.roles),
             json(&run.limits),
             run.stage,
@@ -963,6 +965,37 @@ pub fn run_save(conn: &Connection, run: &Run) -> Result<()> {
             json(&run.pull_requests),
         ],
     )?;
+    Ok(())
+}
+
+pub fn run_update_info(
+    conn: &Connection,
+    id: &str,
+    title: Option<&str>,
+    request: Option<&str>,
+    updated_at: &str,
+) -> Result<()> {
+    match (title, request) {
+        (Some(t), Some(r)) => {
+            conn.execute(
+                "UPDATE agent_run SET title = ?2, request = ?3, updated_at = ?4 WHERE id = ?1",
+                rusqlite::params![id, t, r, updated_at],
+            )?;
+        }
+        (Some(t), None) => {
+            conn.execute(
+                "UPDATE agent_run SET title = ?2, updated_at = ?3 WHERE id = ?1",
+                rusqlite::params![id, t, updated_at],
+            )?;
+        }
+        (None, Some(r)) => {
+            conn.execute(
+                "UPDATE agent_run SET request = ?2, updated_at = ?3 WHERE id = ?1",
+                rusqlite::params![id, r, updated_at],
+            )?;
+        }
+        (None, None) => {}
+    }
     Ok(())
 }
 

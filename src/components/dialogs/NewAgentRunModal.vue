@@ -30,10 +30,24 @@
           <div class="warning-text">{{ error }}</div>
         </div>
 
+        <!-- Form Field: Title -->
+        <div class="form-group">
+          <label class="form-label">
+            Tiêu đề lượt chạy (Title)
+            <span class="label-hint">Tóm tắt ngắn gọn; nếu để trống sẽ tự động trích từ dòng đầu yêu cầu</span>
+          </label>
+          <input
+            v-model="form.title"
+            type="text"
+            class="form-input"
+            placeholder="Ví dụ: Thêm tính năng giỏ hàng & mã giảm giá"
+          />
+        </div>
+
         <!-- Form Field: Requirement -->
         <div class="form-group">
           <label class="form-label required">
-            Yêu cầu triển khai (Prompt nghiệp vụ)
+            Mô tả yêu cầu triển khai (Description / Prompt)
             <span class="label-hint">Mô tả tính năng, tiêu chí chấp nhận hoặc lỗi cần sửa</span>
           </label>
           <textarea
@@ -375,6 +389,7 @@ const roleDraft = (role: RoleCli): RoleDraft => ({
 });
 
 const form = reactive({
+  title: '',
   request: '',
   leader: 'claude' as AgentCli,
   leaderModel: '',
@@ -432,6 +447,7 @@ watch(
     if (!visible) return;
     error.value = null;
     saving.value = false;
+    form.title = '';
     if (props.initialPrompt) form.request = props.initialPrompt;
     // The project's last run set these; it knows how long its work takes.
     form.limits = { ...DEFAULT_LIMITS, ...(props.project?.limits ?? {}) };
@@ -481,6 +497,7 @@ async function handleSubmit() {
   error.value = null;
   try {
     await props.submit({
+      title: form.title.trim() || null,
       request: form.request.trim(),
       leader_cli: form.leader,
       leader_model: form.leaderModel.trim() || null,
@@ -492,6 +509,7 @@ async function handleSubmit() {
       merge_gate: form.merge_gate,
       limits: { ...form.limits },
     });
+    form.title = '';
     form.request = '';
     emit('close');
   } catch (e) {

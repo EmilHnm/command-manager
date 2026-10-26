@@ -250,6 +250,7 @@ mod desktop {
                 ipc::agents::agents_run_list,
                 ipc::agents::agents_run_get,
                 ipc::agents::agents_run_start,
+                ipc::agents::agents_run_update,
                 ipc::agents::agents_run_pause,
                 ipc::agents::agents_run_stop,
                 ipc::agents::agents_run_resume,

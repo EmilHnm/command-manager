@@ -360,6 +360,16 @@ pub async fn agents_run_set_limits(app: AppHandle, run_id: String, limits: Limit
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn agents_run_update(
+    app: AppHandle,
+    run_id: String,
+    title: Option<String>,
+    request: Option<String>,
+) -> Result<Run> {
+    engine(&app).set_info(&run_id, title, request)
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn agents_plan_approve(
     app: AppHandle,
     run_id: String,

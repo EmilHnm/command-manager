@@ -128,7 +128,7 @@
             <div class="run-item-top">
               <span class="run-name">
                 <span class="run-status-dot" :class="'dot-' + runTone(run)"></span>
-                <span>{{ run.title }}</span>
+                <span class="run-title-text">{{ run.title }}</span>
               </span>
               <span class="run-stage-badge font-mono" :class="'badge-' + runTone(run)">
                 {{ runBadge(run) }}
@@ -162,7 +162,15 @@
                 <div class="hero-icon-wrap">
                   <GitFork :size="16" class="text-primary" />
                 </div>
-                <h2 class="hero-title" :title="detail.run.request">{{ detail.run.title }}</h2>
+                <h2 class="hero-title" :title="detail.run.title">{{ detail.run.title }}</h2>
+                <button
+                  type="button"
+                  class="btn-edit-run"
+                  title="Sửa tiêu đề & mô tả"
+                  @click="openEditRunModal"
+                >
+                  <Pencil :size="12" />
+                </button>
                 <span class="hero-meta-badge font-mono">Leader: {{ detail.run.leader_cli }}</span>
                 <span class="hero-meta-badge font-mono" :title="runReposTooltip">
                   <template v-if="isMultiRepo(detail.run.repos)">
@@ -266,6 +274,40 @@
                   <span>Xóa</span>
                 </button>
               </div>
+            </div>
+
+            <!-- Run Description / Prompt -->
+            <div v-if="detail.run.request" class="hero-desc-row">
+              <div class="hero-desc-header">
+                <div class="hero-desc-label">
+                  <FileText :size="12" />
+                  <span>Mô tả yêu cầu</span>
+                </div>
+                <div class="hero-desc-actions">
+                  <button
+                    type="button"
+                    class="btn-edit-desc"
+                    title="Sửa tiêu đề & mô tả"
+                    @click="openEditRunModal"
+                  >
+                    <Pencil :size="11" />
+                    <span>Sửa</span>
+                  </button>
+                  <button
+                    v-if="detail.run.request.length > 140 || detail.run.request.includes('\n')"
+                    type="button"
+                    class="btn-toggle-desc"
+                    @click="isDescExpanded = !isDescExpanded"
+                  >
+                    <span>{{ isDescExpanded ? 'Thu gọn' : 'Xem toàn bộ' }}</span>
+                    <ChevronUp v-if="isDescExpanded" :size="12" />
+                    <ChevronDown v-else :size="12" />
+                  </button>
+                </div>
+              </div>
+              <p class="hero-desc-text font-mono" :class="{ 'is-collapsed': !isDescExpanded }">
+                {{ detail.run.request }}
+              </p>
             </div>
 
             <!-- Pipeline Stepper Ribbon -->
@@ -949,6 +991,63 @@
       @confirm="(path: string) => { folderPromptVisible = false; openProject(path); }"
       @cancel="folderPromptVisible = false"
     />
+
+    <!-- Edit Run Modal -->
+    <div v-if="showEditRunModal" class="modal-backdrop" @keydown.esc="showEditRunModal = false">
+      <div class="edit-run-modal" role="dialog" aria-modal="true">
+        <div class="modal-accent-bar"></div>
+        <div class="modal-header">
+          <div class="header-left">
+            <div class="icon-badge">
+              <Pencil :size="16" />
+            </div>
+            <div class="header-titles">
+              <h3 class="modal-title">Sửa Thông Tin Lượt Chạy</h3>
+              <span class="modal-subtitle">Cập nhật tiêu đề và mô tả yêu cầu cho lượt chạy</span>
+            </div>
+          </div>
+          <button class="btn btn-ghost btn-icon" title="Đóng (Esc)" @click="showEditRunModal = false">
+            <X :size="16" />
+          </button>
+        </div>
+
+        <div class="modal-body custom-scrollbar">
+          <div class="form-group">
+            <label class="form-label required">Tiêu đề lượt chạy (Title)</label>
+            <input
+              v-model="editRunForm.title"
+              type="text"
+              class="form-input"
+              placeholder="Nhập tiêu đề lượt chạy..."
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label required">Mô tả yêu cầu (Description / Prompt)</label>
+            <textarea
+              v-model="editRunForm.request"
+              rows="5"
+              class="form-textarea font-mono"
+              placeholder="Nhập mô tả yêu cầu chi tiết..."
+            ></textarea>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" @click="showEditRunModal = false">
+            Hủy
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            :disabled="savingEditRun || !editRunForm.title.trim() || !editRunForm.request.trim()"
+            @click="saveEditRun"
+          >
+            {{ savingEditRun ? 'Đang lưu...' : 'Lưu thay đổi' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -987,12 +1086,16 @@ import {
   Trash2,
   RotateCcw,
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
   Rows3,
   ScrollText,
   HardDrive,
+  FileText,
+  Pencil,
+  X,
 } from 'lucide-vue-next';
 import NewAgentRunModal from '@/components/dialogs/NewAgentRunModal.vue';
 import PlanGateModal from '@/components/dialogs/PlanGateModal.vue';
@@ -1080,6 +1183,7 @@ const detecting = ref(false);
 const folderInput = ref('');
 const now = ref(Math.floor(Date.now() / 1000));
 const notice = ref<{ kind: 'error' | 'info'; text: string } | null>(null);
+const isDescExpanded = ref(false);
 
 const showNewRunModal = ref(false);
 const showPlanGateModal = ref(false);
@@ -1090,6 +1194,45 @@ const showFeedbackModal = ref(false);
 const projectMenuOpen = ref(false);
 const folderPromptVisible = ref(false);
 const diff = reactive({ visible: false, title: '', text: '', loading: false, error: null as string | null });
+
+const showEditRunModal = ref(false);
+const savingEditRun = ref(false);
+const editRunForm = reactive({
+  title: '',
+  request: '',
+});
+
+const openEditRunModal = () => {
+  if (!detail.value) return;
+  editRunForm.title = detail.value.run.title;
+  editRunForm.request = detail.value.run.request;
+  showEditRunModal.value = true;
+};
+
+const saveEditRun = async () => {
+  if (!detail.value || savingEditRun.value) return;
+  savingEditRun.value = true;
+  try {
+    const updated = await ipcClient.agentsRunUpdate(
+      detail.value.run.id,
+      editRunForm.title.trim() || null,
+      editRunForm.request.trim() || null
+    );
+    detail.value.run.title = updated.title;
+    detail.value.run.request = updated.request;
+    const found = runs.value.find((r) => r.id === updated.id);
+    if (found) {
+      found.title = updated.title;
+      found.request = updated.request;
+    }
+    showEditRunModal.value = false;
+    notify('Đã cập nhật thông tin lượt chạy', 'info');
+  } catch (err) {
+    notify(errorText(err));
+  } finally {
+    savingEditRun.value = false;
+  }
+};
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -1461,6 +1604,7 @@ const askFolder = () => {
 const selectRun = (id: string) => {
   selectedRunId.value = id;
   selectedTaskId.value = null;
+  isDescExpanded.value = false;
   void loadDetail().catch((error) => notify(errorText(error)));
 };
 
@@ -2156,12 +2300,20 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+}
+
+.run-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .run-status-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 .dot-review {
   background-color: #f59e0b;
@@ -2178,6 +2330,7 @@ onUnmounted(() => {
   padding: 1px 5px;
   border-radius: 3px;
   font-family: var(--font-mono, monospace);
+  flex-shrink: 0;
 }
 .badge-review {
   background-color: rgba(245, 158, 11, 0.15);
@@ -2195,9 +2348,13 @@ onUnmounted(() => {
 .run-item-desc {
   font-size: 11px;
   color: var(--text-secondary, #94a3b8);
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.4;
+  margin: 2px 0 0;
+  word-break: break-word;
 }
 
 .run-item-footer {
@@ -2289,6 +2446,124 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Hero Description */
+.hero-desc-row {
+  background-color: rgba(15, 17, 23, 0.45);
+  border: 1px solid var(--border-subtle, #242a3e);
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.hero-desc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.hero-desc-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted, #64748b);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 10px;
+}
+
+.hero-desc-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary, #e2e8f0);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.hero-desc-text.is-collapsed {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.btn-edit-run {
+  background: none;
+  border: none;
+  color: var(--text-muted, #64748b);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.btn-edit-run:hover {
+  color: var(--text-primary, #e2e8f0);
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.hero-desc-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-edit-desc {
+  background: none;
+  border: none;
+  color: var(--text-muted, #64748b);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 1px 5px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: all 0.15s;
+}
+
+.btn-edit-desc:hover {
+  color: var(--color-primary, #818cf8);
+  background-color: rgba(129, 140, 248, 0.1);
+}
+
+.btn-toggle-desc {
+  background: none;
+  border: none;
+  color: var(--color-primary, #818cf8);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: opacity 0.15s;
+}
+
+.btn-toggle-desc:hover {
+  text-decoration: underline;
+  opacity: 0.85;
+}
+
+.edit-run-modal {
+  width: 100%;
+  max-width: 540px;
+  background-color: var(--surface-container-high, #1e2230);
+  border: 1px solid var(--border-subtle, #2d3348);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+  position: relative;
 }
 
 /* Pipeline Stepper */
