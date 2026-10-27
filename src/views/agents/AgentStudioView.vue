@@ -192,6 +192,11 @@
                     <span>Dừng ngay</span>
                   </button>
                 </template>
+                <template v-else-if="detail.run.stage === 'qa_gate'">
+                  <button type="button" class="btn btn-primary btn-sm" @click="showQaGate = true">
+                    <span>⛩ Mở Cổng 0 — QA</span>
+                  </button>
+                </template>
                 <template v-else-if="detail.run.stage === 'plan_gate'">
                   <button type="button" class="btn btn-primary btn-sm" @click="showPlanGateModal = true">
                     <span>⛩ Mở Cổng 1</span>
@@ -210,6 +215,26 @@
                 >
                   <Play :size="13" />
                   <span>Tiếp tục</span>
+                </button>
+                <button
+                  v-if="detail.run.research?.report && detail.run.stage !== 'qa_gate'"
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  title="Những gì leader đã tìm hiểu trước khi thiết kế, QA và câu trả lời"
+                  @click="showQaGate = true"
+                >
+                  <Search :size="13" />
+                  <span>Báo cáo tìm hiểu</span>
+                </button>
+                <button
+                  v-if="detail.run.status !== 'discarded'"
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  title="Hỏi leader trong chính phiên của nó (chỉ đọc)"
+                  @click="showLeaderChat = !showLeaderChat"
+                >
+                  <MessagesSquare :size="13" />
+                  <span>Chat với leader</span>
                 </button>
                 <button
                   v-if="detail.run.status !== 'discarded'"
@@ -312,7 +337,7 @@
 
             <!-- Pipeline Stepper Ribbon -->
             <div class="pipeline-stepper font-mono">
-              <template v-for="(step, index) in STEPS" :key="step.stage">
+              <template v-for="(step, index) in steps" :key="step.stage">
                 <span v-if="index > 0" class="step-separator">─</span>
                 <component
                   :is="step.gate ? 'button' : 'div'"
@@ -335,6 +360,12 @@
               <span>{{ detail.run.status_note }}</span>
               <span v-if="detail.resume_at" class="text-muted">— tự chạy tiếp lúc {{ formatClock(detail.resume_at) }}</span>
             </div>
+            <PushFailurePanel
+              v-if="detail.push_failure"
+              :run-id="detail.run.id"
+              :failure="detail.push_failure"
+              :driving="detail.driving"
+            />
             <div v-if="detail.run.pull_requests.length" class="pr-links">
               <GitFork :size="13" />
               <a
@@ -877,10 +908,22 @@
       @close="showAttachPr = false"
     />
 
+    <QaGateModal :visible="showQaGate" :run="detail?.run ?? null" @done="reload" @close="showQaGate = false" />
+
+    <LeaderChatPanel
+      v-if="detail"
+      :visible="showLeaderChat"
+      :run="detail.run"
+      :driving="detail.driving"
+      @close="showLeaderChat = false"
+    />
+
     <OpenPrModal
       :visible="showOpenPr"
       :run-id="detail?.run.id ?? null"
       :run-title="detail?.run.title ?? ''"
+      :side-logs="detail?.side_logs ?? []"
+      :invocations="detail?.invocations ?? []"
       @opened="(urls: string[]) => notify(`Đã mở PR: ${urls.join(' · ')}`, 'info')"
       @close="showOpenPr = false"
     />
@@ -1101,6 +1144,8 @@ import {
   Rows3,
   ScrollText,
   HardDrive,
+  MessagesSquare,
+  Search,
   FileText,
   Pencil,
   X,
@@ -1121,6 +1166,9 @@ import OpenPrModal from '@/components/dialogs/OpenPrModal.vue';
 import AttachPrModal from '@/components/dialogs/AttachPrModal.vue';
 import AiPushModal from '@/components/dialogs/AiPushModal.vue';
 import HumanTestPanel from '@/views/agents/HumanTestPanel.vue';
+import PushFailurePanel from '@/views/agents/PushFailurePanel.vue';
+import LeaderChatPanel from '@/views/agents/LeaderChatPanel.vue';
+import QaGateModal from '@/components/dialogs/QaGateModal.vue';
 import PromptDialog from '@/components/dialogs/PromptDialog.vue';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import { ipcClient } from '@/ipc/client';
@@ -1155,6 +1203,11 @@ import {
 
 const LAST_PROJECT_KEY = 'agents.lastProjectPath';
 
+const RESEARCH_STEPS: { stage: RunStage; label: string; gate?: boolean }[] = [
+  { stage: 'research', label: '⓪ Tìm hiểu' },
+  { stage: 'qa_gate', label: 'Cổng 0', gate: true },
+];
+
 const STEPS: { stage: RunStage; label: string; gate?: boolean }[] = [
   { stage: 'design', label: '① Thiết kế' },
   { stage: 'plan', label: '② Kế hoạch' },
@@ -1175,6 +1228,9 @@ const STEP_LABELS: Record<string, string> = {
   prepare: 'chuẩn bị test',
   triage: 'xác nhận lỗi',
   chat: 'hỏi đáp',
+  research: 'tìm hiểu',
+  describe: 'viết PR',
+  commit: 'commit message',
 };
 
 const route = useRoute();
@@ -1195,6 +1251,8 @@ const isDescExpanded = ref(false);
 
 const showNewRunModal = ref(false);
 const showPlanGateModal = ref(false);
+const showQaGate = ref(false);
+const showLeaderChat = ref(false);
 const showMergeGateModal = ref(false);
 const showTeamModal = ref(false);
 const showReassignModal = ref(false);
@@ -1495,12 +1553,15 @@ const editHint = computed(() =>
   detail.value?.driving ? 'Tạm dừng lượt chạy trước' : 'Chỉ dùng được ở bước triển khai'
 );
 
+/** The pipeline of the run: with research and gate 0 when it has them. */
+const steps = computed(() => (detail.value?.run.research ? [...RESEARCH_STEPS, ...STEPS] : STEPS));
+
 const stepState = (stage: RunStage) => {
   const run = detail.value?.run;
   if (!run) return 'pending';
   if (run.stage === 'done') return run.status === 'discarded' ? 'pending' : 'pass';
-  const current = STEPS.findIndex((step) => step.stage === run.stage);
-  const index = STEPS.findIndex((step) => step.stage === stage);
+  const current = steps.value.findIndex((step) => step.stage === run.stage);
+  const index = steps.value.findIndex((step) => step.stage === stage);
   if (index < current) return 'pass';
   return index === current ? 'active' : 'pending';
 };
@@ -1653,6 +1714,7 @@ const startRun = async (input: Omit<NewRunInput, 'project_id'>) => {
 };
 
 const openGate = (stage: RunStage) => {
+  if (stage === 'qa_gate') showQaGate.value = true;
   if (stage === 'plan_gate') showPlanGateModal.value = true;
   if (stage === 'merge_gate') showMergeGateModal.value = true;
 };

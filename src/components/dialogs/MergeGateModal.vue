@@ -11,22 +11,38 @@
             <span class="gate-icon">⛩</span>
           </div>
           <div class="header-titles">
-            <h3 id="merge-gate-title" class="modal-title">
+            <h3 id="merge-gate-title" class="modal-title" :title="detail.run.title">
               Cổng 2: Duyệt Merge — "{{ detail.run.title }}"
-              <span class="branch-route">
-                <code>{{ detail.run.integration_branch }}</code> →
-                <template v-if="multi">
-                  <code v-for="repo in detail.run.repos" :key="repo.path">{{ repo.path }}:{{ repo.base_branch }}</code>
-                </template>
-                <code v-else>{{ detail.run.base_branch }}</code>
-              </span>
             </h3>
+
+            <!-- Dedicated Route Row (Wraps cleanly, never pushes close button out) -->
+            <div class="branch-route-box custom-scrollbar">
+              <span class="route-source font-mono">
+                <GitBranch :size="12" />
+                <code>{{ detail.run.integration_branch }}</code>
+              </span>
+              <span class="route-arrow">→</span>
+              <div class="route-targets font-mono">
+                <template v-if="multi">
+                  <code
+                    v-for="repo in detail.run.repos"
+                    :key="repo.path"
+                    class="repo-branch-pill"
+                    :title="`${repo.path}:${repo.base_branch}`"
+                  >
+                    <span class="repo-name">{{ repo.path }}:</span><span class="branch-name">{{ repo.base_branch }}</span>
+                  </code>
+                </template>
+                <code v-else class="repo-branch-pill">{{ detail.run.base_branch }}</code>
+              </div>
+            </div>
+
             <span class="modal-subtitle">
               Các task đã xong trên nhánh tích hợp. Chọn cách đưa vào nhánh gốc cục bộ.
             </span>
           </div>
         </div>
-        <button class="btn btn-ghost btn-icon" title="Đóng (Esc)" @click="handleClose">
+        <button class="btn btn-ghost btn-icon close-btn" title="Đóng (Esc)" @click="handleClose">
           <X :size="16" />
         </button>
       </div>
@@ -162,41 +178,97 @@
         </button>
 
         <div class="right-actions">
-          <button type="button" class="btn btn-secondary" :disabled="busy" @click="handleKeepBranch">
-            <GitBranch :size="14" />
-            <span>Giữ nhánh, tự xử lý</span>
-          </button>
+          <!-- Dropdown for other actions -->
+          <div class="action-dropdown-container" ref="actionDropdownRef">
+            <button
+              type="button"
+              class="btn btn-secondary action-dropdown-trigger"
+              :disabled="busy"
+              @click.stop="toggleActionMenu"
+            >
+              <MoreHorizontal :size="15" />
+              <span>Tùy chọn khác</span>
+              <span v-if="hasPr" class="dropdown-pr-badge font-mono">PR</span>
+              <ChevronUp v-if="showActionMenu" :size="13" />
+              <ChevronDown v-else :size="13" />
+            </button>
 
+            <!-- Dropdown Menu (opens upward) -->
+            <div v-if="showActionMenu" class="action-dropdown-menu custom-scrollbar" @click.stop>
+              <!-- Push & tạo PR / Push lên PR hiện tại -->
+              <button
+                type="button"
+                class="dropdown-action-item"
+                :disabled="busy"
+                @click="handleAction(() => emit('open-pr'))"
+              >
+                <div class="item-icon-box text-primary">
+                  <GitPullRequest :size="15" />
+                </div>
+                <div class="item-content">
+                  <span class="item-title">{{ hasPr ? 'Push lên PR hiện tại' : 'Push & tạo PR' }}</span>
+                  <span class="item-desc">
+                    {{ hasPr ? 'Push các commit mới lên nhánh PR hiện tại' : 'Push nhánh tích hợp lên origin và mở PR' }}
+                  </span>
+                </div>
+              </button>
+
+              <!-- Đã có PR -->
+              <button
+                type="button"
+                class="dropdown-action-item"
+                :disabled="busy"
+                @click="handleAction(() => emit('attach-pr'))"
+              >
+                <div class="item-icon-box text-amber-400">
+                  <Link :size="15" />
+                </div>
+                <div class="item-content">
+                  <span class="item-title">Đã có PR…</span>
+                  <span class="item-desc">Gắn link PR đã tạo bằng tay vào lượt chạy</span>
+                </div>
+              </button>
+
+              <!-- Giữ nhánh -->
+              <button
+                type="button"
+                class="dropdown-action-item"
+                :disabled="busy"
+                @click="handleAction(handleKeepBranch)"
+              >
+                <div class="item-icon-box text-cyan-400">
+                  <GitBranch :size="15" />
+                </div>
+                <div class="item-content">
+                  <span class="item-title">Giữ nhánh, tự xử lý</span>
+                  <span class="item-desc">Giữ nguyên nhánh tích hợp, không merge cục bộ</span>
+                </div>
+              </button>
+
+              <div class="dropdown-sep"></div>
+
+              <!-- Bỏ lượt chạy inside dropdown as secondary option -->
+              <button
+                type="button"
+                class="dropdown-action-item item-danger"
+                :disabled="busy"
+                @click="handleAction(handleDiscard)"
+              >
+                <div class="item-icon-box text-red-400">
+                  <XCircle :size="15" />
+                </div>
+                <div class="item-content">
+                  <span class="item-title">Bỏ lượt chạy</span>
+                  <span class="item-desc">Xóa nhánh tích hợp và dọn dẹp worktree</span>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          <!-- Primary Merge Button -->
           <button
             type="button"
-            class="btn"
-            :class="hasPr ? 'btn-primary' : 'btn-secondary'"
-            :disabled="busy"
-            :title="
-              hasPr
-                ? 'Push công việc mới lên nhánh của PR hiện tại (cập nhật PR)'
-                : 'Push nhánh tích hợp lên origin và mở pull request bằng gh'
-            "
-            @click="emit('open-pr')"
-          >
-            <GitPullRequest :size="14" />
-            <span>{{ hasPr ? 'Push lên PR hiện tại' : 'Push & tạo PR' }}</span>
-          </button>
-
-          <button
-            type="button"
-            class="btn btn-ghost"
-            :disabled="busy"
-            title="Đã tạo PR bằng tay: gắn link vào lượt chạy"
-            @click="emit('attach-pr')"
-          >
-            <span>Đã có PR…</span>
-          </button>
-
-          <button
-            type="button"
-            class="btn btn-merge"
-            :class="hasPr ? 'btn-secondary' : 'btn-primary'"
+            class="btn btn-primary btn-merge"
             :disabled="busy"
             @click="handleMerge"
           >
@@ -224,7 +296,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   X,
   ShieldCheck,
@@ -235,6 +307,10 @@ import {
   XCircle,
   Check,
   GitPullRequest,
+  MoreHorizontal,
+  ChevronDown,
+  ChevronUp,
+  Link,
 } from 'lucide-vue-next';
 import type { AgentTask, DiffStat, RunDetail } from '@/types/agents';
 import { TASK_STATUS_LABELS, isMultiRepo } from '@/types/agents';
@@ -261,10 +337,40 @@ const diffstat = ref<DiffStat | null>(null);
 const busy = ref(false);
 const error = ref<string | null>(null);
 
+const showActionMenu = ref(false);
+const actionDropdownRef = ref<HTMLElement | null>(null);
+
+function toggleActionMenu() {
+  showActionMenu.value = !showActionMenu.value;
+}
+
+function handleAction(actionFn: () => void) {
+  showActionMenu.value = false;
+  actionFn();
+}
+
+function handleClickOutside(e: MouseEvent) {
+  if (actionDropdownRef.value && !actionDropdownRef.value.contains(e.target as Node)) {
+    showActionMenu.value = false;
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleClickOutside);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside);
+});
+
 watch(
   () => props.visible,
   (visible) => {
-    if (!visible || !props.detail) return;
+    if (!visible || !props.detail) {
+      showActionMenu.value = false;
+      return;
+    }
+    showActionMenu.value = false;
     error.value = null;
     diffstat.value = null;
     confirmDiscard.value = false;
@@ -392,8 +498,9 @@ function openBranchTerminal() {
 
 .modal-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 12px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-subtle, #242a3e);
   background-color: var(--surface-container-high, #23283a);
@@ -401,8 +508,10 @@ function openBranchTerminal() {
 
 .header-left {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
+  min-width: 0;
+  flex: 1;
 }
 
 .gate-badge {
@@ -414,6 +523,8 @@ function openBranchTerminal() {
   border-radius: 6px;
   background-color: rgba(16, 185, 129, 0.15);
   border: 1px solid rgba(16, 185, 129, 0.35);
+  flex-shrink: 0;
+  margin-top: 2px;
 }
 
 .gate-icon {
@@ -424,29 +535,99 @@ function openBranchTerminal() {
 .header-titles {
   display: flex;
   flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
 }
 
 .modal-title {
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
+  line-height: 1.35;
   color: var(--text-primary, #f1f5f9);
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
-.branch-route code {
+.branch-route-box {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 8px;
+  background-color: rgba(15, 17, 23, 0.6);
+  border: 1px solid var(--border-subtle, #242a3e);
+  border-radius: 5px;
+  max-width: 100%;
+  max-height: 60px;
+  overflow-y: auto;
+}
+
+.route-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #e4b5ff;
+}
+
+.route-source code {
+  font-size: 11px;
+  background-color: rgba(116, 71, 145, 0.2);
+  border: 1px solid rgba(116, 71, 145, 0.4);
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: #e4b5ff;
+  white-space: nowrap;
+}
+
+.route-arrow {
+  color: var(--text-muted, #64748b);
+  font-size: 12px;
+  user-select: none;
+}
+
+.route-targets {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.repo-branch-pill {
+  display: inline-flex;
+  align-items: center;
   font-size: 11px;
   background-color: var(--bg-app-base, #0f1117);
-  padding: 1px 5px;
-  border-radius: 3px;
   border: 1px solid var(--border-subtle, #242a3e);
-  color: #e4b5ff;
+  border-radius: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+.repo-branch-pill .repo-name {
+  color: var(--text-secondary, #94a3b8);
+  margin-right: 2px;
+}
+
+.repo-branch-pill .branch-name {
+  color: #34d399;
+  font-weight: 500;
+}
+
+.close-btn {
+  flex-shrink: 0;
+  margin-top: 2px;
 }
 
 .modal-subtitle {
   font-size: 11px;
   color: var(--text-secondary, #94a3b8);
+  line-height: 1.35;
 }
 
 .modal-body {
@@ -645,6 +826,131 @@ function openBranchTerminal() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Dropdown Container */
+.action-dropdown-container {
+  position: relative;
+}
+
+.action-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.dropdown-pr-badge {
+  font-size: 9px;
+  padding: 1px 4px;
+  background-color: rgba(76, 215, 246, 0.15);
+  border: 1px solid rgba(76, 215, 246, 0.3);
+  color: #4cd7f6;
+  border-radius: 3px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* Action Dropdown Menu - opens UPWARD from footer */
+.action-dropdown-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  min-width: 290px;
+  max-width: 360px;
+  max-height: 320px;
+  background-color: var(--surface-container-high, #1e2230);
+  border: 1px solid var(--border-subtle, #2e354a);
+  border-radius: 8px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 50;
+  animation: dropdownUp 0.15s ease-out;
+}
+
+@keyframes dropdownUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.dropdown-action-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  color: var(--text-primary, #f1f5f9);
+  transition: background-color 0.15s;
+}
+
+.dropdown-action-item:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+.dropdown-action-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.item-icon-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  background-color: rgba(255, 255, 255, 0.04);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.dropdown-action-item .item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.dropdown-action-item .item-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #f1f5f9);
+  line-height: 1.25;
+}
+
+.dropdown-action-item .item-desc {
+  font-size: 10.5px;
+  color: var(--text-secondary, #94a3b8);
+  line-height: 1.3;
+}
+
+.dropdown-sep {
+  height: 1px;
+  background-color: var(--border-subtle, #242a3e);
+  margin: 4px 6px;
+}
+
+.dropdown-action-item.item-danger:hover:not(:disabled) {
+  background-color: rgba(239, 68, 68, 0.1);
+}
+
+.dropdown-action-item.item-danger .item-title {
+  color: #ef4444;
 }
 
 .btn {

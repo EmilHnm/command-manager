@@ -70,6 +70,9 @@ pub struct NewRun {
     pub merge_gate: bool,
     #[serde(default)]
     pub limits: Option<Limits>,
+    /// The leader looks for blockers and raises QA before designing.
+    #[serde(default)]
+    pub research: bool,
 }
 
 fn yes() -> bool {
@@ -131,6 +134,31 @@ pub struct PrRepo {
     pub branch: String,
     /// What the PR merges into.
     pub base: String,
+}
+
+/// The title and description "Viết bằng AI" fills the PR form with.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrText {
+    pub title: String,
+    pub body: String,
+}
+
+/// Where repositories keep their pull request template.
+const PR_TEMPLATES: &[&str] = &[
+    ".github/pull_request_template.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "pull_request_template.md",
+    "PULL_REQUEST_TEMPLATE.md",
+    "docs/pull_request_template.md",
+    "docs/PULL_REQUEST_TEMPLATE.md",
+    ".gitlab/merge_request_templates/default.md",
+];
+
+/// A person's answer to one QA of the research.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QaAnswer {
+    pub id: String,
+    pub answer: String,
 }
 
 /// "Gắn PR": a pull request opened by hand for the run's work in a repo.
@@ -231,6 +259,86 @@ pub struct PrCheck {
 
 const VERIFICATION_FILE: &str = "verification.json";
 
+/// The last push that failed, kept in `<run dir>/push-failure.json` until a
+/// push goes through.
+const PUSH_FAILURE_FILE: &str = "push-failure.json";
+/// How much of a failed push's output the leader reads.
+const PUSH_OUTPUT_BYTES: usize = 24_000;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PushFailure {
+    pub at: String,
+    /// The repo whose push failed.
+    pub repo: String,
+    pub error: String,
+    /// The end of the push's log (the pre-push hook's checks), plain text.
+    pub output: String,
+    /// What was being pushed: pushed again after the fix.
+    pub request: PrRequest,
+    /// The leader's reading of it.
+    #[serde(default)]
+    pub diagnosis: Option<String>,
+    /// What the leader chose: retry, self, tasks, none.
+    #[serde(default)]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub fix_tasks: Vec<String>,
+    /// Fix tasks are on it: the run pushes again once they are merged.
+    #[serde(default)]
+    pub retry: bool,
+}
+
+/// The end of a terminal log as plain text: no colours or cursor moves, a
+/// line redrawn with `\r` kept as last drawn.
+fn plain_tail(bytes: &[u8], max_bytes: usize) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\u{1b}' => match chars.next() {
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    while let Some(c) = chars.next() {
+                        if c == '\u{7}' {
+                            break;
+                        }
+                        if c == '\u{1b}' {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            '\r' if chars.peek() == Some(&'\n') => {}
+            '\r' => {
+                let start = out.rfind('\n').map_or(0, |at| at + 1);
+                out.truncate(start);
+            }
+            c => out.push(c),
+        }
+    }
+    let lines: Vec<&str> = out.lines().filter(|line| !line.trim().is_empty()).collect();
+    let mut kept: Vec<&str> = Vec::new();
+    let mut size = 0;
+    for line in lines.iter().rev() {
+        size += line.len() + 1;
+        if size > max_bytes {
+            break;
+        }
+        kept.push(line);
+    }
+    kept.reverse();
+    kept.join("\n")
+}
+
 /// App setting: the folder new runs keep their worktrees in (empty: app data).
 pub const WORKTREE_DIR_SETTING: &str = "agents_worktree_dir";
 
@@ -274,6 +382,19 @@ const SETUP_MARK: &str = "cm-setup.json";
 /// Task worktrees are slots: a merged task's slot goes to the next task,
 /// installed dependencies included.
 const SLOT_PREFIX: &str = "slot-";
+
+fn is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
 
 /// A branch name safe to pass to git and gh as it is.
 fn valid_branch(name: &str) -> bool {
@@ -332,6 +453,8 @@ pub struct RunDetail {
     pub quotas: HashMap<String, Quota>,
     /// The last "Verify PR".
     pub verification: Option<Verification>,
+    /// The last push that failed, until one goes through.
+    pub push_failure: Option<PushFailure>,
     /// Checks, setup, context and push logs of this session.
     pub side_logs: Vec<SideLog>,
     /// Paused for a usage limit: when the run goes on by itself.
@@ -426,6 +549,8 @@ pub struct Engine {
     /// pushes), newest last, for the run's terminals. Not kept across
     /// restarts.
     side_logs: Mutex<HashMap<String, Vec<SideLog>>>,
+    /// Per run: the leader's session takes one turn at a time.
+    leader_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 fn short(id: &str) -> &str {
@@ -440,6 +565,7 @@ impl Engine {
             quotas: Mutex::new(HashMap::new()),
             quota_waits: Mutex::new(HashMap::new()),
             side_logs: Mutex::new(HashMap::new()),
+            leader_locks: Mutex::new(HashMap::new()),
         })
     }
 
@@ -481,6 +607,7 @@ impl Engine {
             verification: std::fs::read_to_string(self.run_dir(run_id).join(VERIFICATION_FILE))
                 .ok()
                 .and_then(|text| serde_json::from_str(&text).ok()),
+            push_failure: self.push_failure(run_id),
             resume_at: self
                 .quota_waits
                 .lock()
@@ -569,7 +696,9 @@ impl Engine {
             )));
         }
         std::fs::create_dir_all(&dir).map_err(|error| {
-            Error::msg(format!("Không tạo được thư mục worktree \"{dir}\": {error}"))
+            Error::msg(format!(
+                "Không tạo được thư mục worktree \"{dir}\": {error}"
+            ))
         })?;
         Ok(Some(dir))
     }
@@ -597,7 +726,12 @@ impl Engine {
         Ok(task)
     }
 
-    pub fn set_info(&self, run_id: &str, title: Option<String>, request: Option<String>) -> Result<Run> {
+    pub fn set_info(
+        &self,
+        run_id: &str,
+        title: Option<String>,
+        request: Option<String>,
+    ) -> Result<Run> {
         self.update_run(run_id, |run| {
             if let Some(t) = title {
                 let trimmed = t.trim().to_string();
@@ -702,7 +836,11 @@ impl Engine {
             plan_gate: new.plan_gate,
             merge_gate: new.merge_gate,
             limits,
-            stage: stage::DESIGN.into(),
+            stage: if new.research {
+                stage::RESEARCH.into()
+            } else {
+                stage::DESIGN.into()
+            },
             status: run_status::RUNNING.into(),
             status_note: None,
             design_md: None,
@@ -722,6 +860,8 @@ impl Engine {
             suggested_checks: Vec::new(),
             pull_requests: Vec::new(),
             worktree_root: self.chosen_worktree_root()?,
+            research: new.research.then(repo::Research::default),
+            leader_chat: Vec::new(),
         };
         self.db().write(|c| {
             repo::run_insert(c, &run)?;
@@ -793,6 +933,7 @@ impl Engine {
             stage::PLAN_GATE => {
                 return Err(Error::msg("Lượt chạy đang chờ duyệt kế hoạch (Cổng 1)"))
             }
+            stage::QA_GATE => return Err(Error::msg("Lượt chạy đang chờ trả lời QA (Cổng 0)")),
             stage::MERGE_GATE => return Err(Error::msg("Lượt chạy đang chờ duyệt merge (Cổng 2)")),
             stage::DONE => return Err(Error::msg("Lượt chạy đã kết thúc")),
             _ => {}
@@ -831,6 +972,8 @@ impl Engine {
                 return;
             }
             let flow = match run.stage.as_str() {
+                stage::RESEARCH => self.research(&run, control).await,
+                stage::QA_GATE => self.wait(&run, "Chờ trả lời QA (Cổng 0)"),
                 stage::DESIGN => self.design(&run, control).await,
                 stage::PLAN => self.plan(&run, control).await,
                 stage::PLAN_GATE => self.wait(&run, "Chờ duyệt thiết kế & kế hoạch (Cổng 1)"),
@@ -961,6 +1104,41 @@ impl Engine {
         schema: Option<&Value>,
         control: &Control,
     ) -> Step<Outcome> {
+        self.invoke_in(
+            run,
+            task,
+            cli_name,
+            step_name,
+            title,
+            access,
+            cwd,
+            resume,
+            prompt,
+            schema,
+            control,
+            &[],
+        )
+        .await
+    }
+
+    /// `invoke`, with folders outside `cwd` the agent may read (or write,
+    /// by its access) too.
+    #[allow(clippy::too_many_arguments)]
+    async fn invoke_in(
+        &self,
+        run: &Run,
+        task: Option<&Task>,
+        cli_name: &str,
+        step_name: &str,
+        title: &str,
+        access: Access,
+        cwd: &Path,
+        resume: Option<&str>,
+        prompt: String,
+        schema: Option<&Value>,
+        control: &Control,
+        extra: &[PathBuf],
+    ) -> Step<Outcome> {
         let usage = self.db().read(|c| repo::usage(c, &run.id))?;
         if usage.invocations >= run.limits.max_invocations as u64 {
             return Err(StepError::Failed(format!(
@@ -988,8 +1166,8 @@ impl Engine {
         })?;
         let phase = match step_name {
             // Pushing (rebase, conflicts, fixing checks) takes the lead's model.
-            "design" | "plan" | "push" => Phase::Lead,
-            "review" | "verify" | "prepare" | "chat" => Phase::Review,
+            "research" | "design" | "plan" | "push" => Phase::Lead,
+            "review" | "verify" | "prepare" | "chat" | "describe" => Phase::Review,
             "triage" => Phase::Lead,
             _ => Phase::Work,
         };
@@ -1030,6 +1208,7 @@ impl Engine {
             .filter(|dir| dir.is_dir())
             .into_iter()
             .collect();
+        extra_dirs.extend(extra.iter().cloned());
         // Pushing writes to the repository's own git folder too.
         if access == Access::Push {
             if let Ok(common) = git::common_dir(cwd).await {
@@ -1250,9 +1429,40 @@ impl Engine {
         control: &Control,
         parse: impl Fn(Value) -> Result<T>,
     ) -> Step<(T, Outcome)> {
+        self.ask_json_in(
+            run,
+            task,
+            step_name,
+            title,
+            cwd,
+            resume,
+            prompt,
+            schema,
+            control,
+            parse,
+            &[],
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn ask_json_in<T>(
+        &self,
+        run: &Run,
+        task: Option<&Task>,
+        step_name: &str,
+        title: &str,
+        cwd: &Path,
+        resume: Option<&str>,
+        prompt: String,
+        schema: &Value,
+        control: &Control,
+        parse: impl Fn(Value) -> Result<T>,
+        extra: &[PathBuf],
+    ) -> Step<(T, Outcome)> {
         let leader = run.leader_cli.clone();
         let mut outcome = self
-            .invoke(
+            .invoke_in(
                 run,
                 task,
                 &leader,
@@ -1264,6 +1474,7 @@ impl Engine {
                 prompt,
                 Some(schema),
                 control,
+                extra,
             )
             .await?;
         for attempt in 0..2 {
@@ -1284,7 +1495,7 @@ impl Engine {
                 )));
             }
             outcome = self
-                .invoke(
+                .invoke_in(
                     run,
                     task,
                     &leader,
@@ -1296,10 +1507,167 @@ impl Engine {
                     prompts::fix_json(&problem),
                     Some(schema),
                     control,
+                    extra,
                 )
                 .await?;
         }
         unreachable!("the loop returns")
+    }
+
+    // ---- the leader's one session -------------------------------------------
+
+    /// One leader turn at a time per run: they all go on in the same
+    /// session.
+    fn leader_lock(&self, run_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        Arc::clone(
+            self.leader_locks
+                .lock()
+                .expect("agent leader locks")
+                .entry(run_id.to_string())
+                .or_default(),
+        )
+    }
+
+    /// The code a leader turn is about lives in `place` (a worktree), not in
+    /// the project folder the turn runs in (Claude keeps a session per
+    /// folder, so every turn of the one session runs there).
+    fn relocate(prompt: String, place: Option<&Path>) -> String {
+        let Some(place) = place else {
+            return prompt;
+        };
+        let at = format!("`{}`", place.display());
+        let body = prompt
+            .replace("The current directory", &format!("The folder {at}"))
+            .replace("the current directory", &format!("the folder {at}"))
+            .replace("this worktree", &format!("the worktree {at}"));
+        format!(
+            "For this step the code to work on is in {at}, not in your working directory \
+             (the user's own checkout: leave it alone). Read the files there and run commands \
+             there (`cd {} && ...`, `git -C ...`).\n\n{body}",
+            place.display()
+        )
+    }
+
+    /// The session is gone (another machine, cleared CLI data): the turn
+    /// starts a new one.
+    fn lost_session(message: &str) -> bool {
+        let message = message.to_lowercase();
+        message.contains("no conversation found")
+            || (message.contains("session") && message.contains("not found"))
+    }
+
+    fn keep_leader_session(&self, run_id: &str, outcome: &Outcome) -> Result<()> {
+        if let Some(session) = outcome.session_id.clone() {
+            self.update_run(run_id, |run| run.leader_session = Some(session))?;
+        }
+        Ok(())
+    }
+
+    /// A leader turn with a JSON answer, in the run's one leader session.
+    #[allow(clippy::too_many_arguments)]
+    async fn leader_json<T>(
+        &self,
+        run_id: &str,
+        task: Option<&Task>,
+        step_name: &str,
+        title: &str,
+        place: Option<&Path>,
+        prompt: String,
+        schema: &Value,
+        control: &Control,
+        parse: impl Fn(Value) -> Result<T>,
+    ) -> Step<(T, Outcome)> {
+        let lock = self.leader_lock(run_id);
+        let _turn = lock.lock().await;
+        let run = self.db().read(|c| repo::run_get(c, run_id))?;
+        let project = self.project(&run)?;
+        let cwd = PathBuf::from(&project.path);
+        let extra: Vec<PathBuf> = place.into_iter().map(Path::to_path_buf).collect();
+        let prompt = Self::relocate(prompt, place);
+        let first = self
+            .ask_json_in(
+                &run,
+                task,
+                step_name,
+                title,
+                &cwd,
+                run.leader_session.as_deref(),
+                prompt.clone(),
+                schema,
+                control,
+                &parse,
+                &extra,
+            )
+            .await;
+        let (answer, outcome) = match first {
+            Err(StepError::Failed(message))
+                if run.leader_session.is_some() && Self::lost_session(&message) =>
+            {
+                self.ask_json_in(
+                    &run, task, step_name, title, &cwd, None, prompt, schema, control, &parse,
+                    &extra,
+                )
+                .await?
+            }
+            other => other?,
+        };
+        self.keep_leader_session(run_id, &outcome)?;
+        Ok((answer, outcome))
+    }
+
+    /// A read-only leader turn with a text answer, in the run's one leader
+    /// session.
+    #[allow(clippy::too_many_arguments)]
+    async fn leader_text(
+        &self,
+        run_id: &str,
+        task: Option<&Task>,
+        step_name: &str,
+        title: &str,
+        place: Option<&Path>,
+        prompt: String,
+        control: &Control,
+    ) -> Step<Outcome> {
+        let lock = self.leader_lock(run_id);
+        let _turn = lock.lock().await;
+        let run = self.db().read(|c| repo::run_get(c, run_id))?;
+        let project = self.project(&run)?;
+        let cwd = PathBuf::from(&project.path);
+        let extra: Vec<PathBuf> = place.into_iter().map(Path::to_path_buf).collect();
+        let prompt = Self::relocate(prompt, place);
+        let mut resume = run.leader_session.clone();
+        let mut outcome = loop {
+            let outcome = self
+                .invoke_in(
+                    &run,
+                    task,
+                    &run.leader_cli,
+                    step_name,
+                    title,
+                    Access::ReadOnly,
+                    &cwd,
+                    resume.as_deref(),
+                    prompt.clone(),
+                    None,
+                    control,
+                    &extra,
+                )
+                .await?;
+            let lost = outcome.error.as_deref().is_some_and(Self::lost_session);
+            if lost && resume.is_some() {
+                resume = None;
+                continue;
+            }
+            break outcome;
+        };
+        if let Some(error) = outcome.error.take() {
+            return Err(StepError::Failed(format!(
+                "Leader ({}): {error}",
+                run.leader_cli
+            )));
+        }
+        self.keep_leader_session(run_id, &outcome)?;
+        Ok(outcome)
     }
 
     // ---- stages -----------------------------------------------------------
@@ -1348,7 +1716,172 @@ impl Engine {
         self.close_side_log(&run.id, &id, true);
     }
 
+    /// Before the design: the leader looks for what blocks the work. QA
+    /// marked as blocking stops the run at gate 0; otherwise the design
+    /// goes on in the same session.
+    async fn research(&self, run: &Run, control: &Control) -> Step<Flow> {
+        // The leader's one session: a chat turn may have moved it on.
+        let lock = self.leader_lock(&run.id);
+        let _turn = lock.lock().await;
+        let run = &self.db().read(|c| repo::run_get(c, &run.id))?;
+        let project = self.project(run)?;
+        let feedback = run
+            .pending_feedback
+            .clone()
+            .filter(|_| run.leader_session.is_some());
+        let earlier = run.research.as_ref().and_then(|r| r.report.clone());
+        let (prompt, resume, title) = match &feedback {
+            Some(feedback) => (
+                prompts::research_again(earlier.as_ref(), feedback),
+                run.leader_session.as_deref(),
+                format!("{} · tìm hiểu lại", run.leader_cli),
+            ),
+            None => {
+                self.prepare_context(run, &run.request, false).await;
+                let overview = context::overview(Path::new(&project.path), &run.repos).await;
+                let files = context::files(&self.context_dir(&run.id));
+                let here = Path::new(&project.path);
+                let (guides, _) =
+                    guides::block(&Self::guides(&project), here, here, None, Use::Lead);
+                (
+                    prompts::research(run, &project, &overview, &files, &guides),
+                    None,
+                    format!("{} · tìm hiểu", run.leader_cli),
+                )
+            }
+        };
+        let parse = |value: Value| -> Result<repo::ResearchReport> {
+            let mut report: repo::ResearchReport =
+                serde_json::from_value(value).map_err(|error| {
+                    Error::msg(format!("report does not match the schema: {error}"))
+                })?;
+            let mut seen: Vec<String> = Vec::new();
+            for (index, qa) in report.qa.iter_mut().enumerate() {
+                qa.id = qa.id.trim().to_string();
+                if qa.id.is_empty() || seen.contains(&qa.id) {
+                    qa.id = format!("Q{}", index + 1);
+                }
+                seen.push(qa.id.clone());
+                if qa.severity != "blocker" {
+                    qa.severity = "question".into();
+                }
+                qa.answer = None;
+            }
+            Ok(report)
+        };
+        let (mut report, outcome) = self
+            .ask_json(
+                run,
+                None,
+                "research",
+                &title,
+                Path::new(&project.path),
+                resume,
+                prompt,
+                &prompts::research_schema(),
+                control,
+                parse,
+            )
+            .await?;
+        report.at = now_unix();
+        let blocked = report.blocked();
+        self.update_run(&run.id, |run| {
+            run.research = Some(repo::Research {
+                report: Some(report),
+                approved: !blocked,
+            });
+            if outcome.session_id.is_some() {
+                run.leader_session = outcome.session_id;
+            }
+            run.pending_feedback = None;
+            run.stage = if blocked {
+                stage::QA_GATE.into()
+            } else {
+                stage::DESIGN.into()
+            };
+        })?;
+        Ok(Flow::Continue)
+    }
+
+    /// Gate 0: the person's answers to the QA (by id); the design goes on
+    /// with them. Every blocking question needs one.
+    pub fn answer_research(self: &Arc<Self>, run_id: &str, answers: Vec<QaAnswer>) -> Result<()> {
+        self.require_idle(run_id)?;
+        let run = self.at_stage(run_id, stage::QA_GATE)?;
+        let mut research = run.research.clone().unwrap_or_default();
+        let Some(report) = research.report.as_mut() else {
+            return Err(Error::msg("Chưa có báo cáo tìm hiểu"));
+        };
+        for qa in &mut report.qa {
+            qa.answer = answers
+                .iter()
+                .find(|a| a.id == qa.id)
+                .map(|a| a.answer.trim().to_string())
+                .filter(|a| !a.is_empty());
+        }
+        let missing: Vec<String> = report
+            .qa
+            .iter()
+            .filter(|qa| qa.severity == "blocker" && qa.answer.is_none())
+            .map(|qa| qa.id.clone())
+            .collect();
+        if !missing.is_empty() {
+            return Err(Error::msg(format!(
+                "Hãy trả lời (hoặc dùng giả định của leader cho) các câu chặn: {}",
+                missing.join(", ")
+            )));
+        }
+        research.approved = true;
+        self.update_run(run_id, |run| {
+            run.research = Some(research);
+            run.stage = stage::DESIGN.into();
+            run.status = run_status::RUNNING.into();
+            run.status_note = None;
+        })?;
+        self.drive(run_id);
+        Ok(())
+    }
+
+    /// Gate 0: back to the leader to look again, with what the person says
+    /// (and the answers given so far).
+    pub fn research_again(
+        self: &Arc<Self>,
+        run_id: &str,
+        feedback: String,
+        answers: Vec<QaAnswer>,
+    ) -> Result<()> {
+        self.require_idle(run_id)?;
+        let run = self.at_stage(run_id, stage::QA_GATE)?;
+        let feedback = feedback.trim().to_string();
+        if feedback.is_empty() {
+            return Err(Error::msg("Hãy nhập điều leader cần tìm hiểu lại"));
+        }
+        let mut research = run.research.clone().unwrap_or_default();
+        if let Some(report) = research.report.as_mut() {
+            for qa in &mut report.qa {
+                qa.answer = answers
+                    .iter()
+                    .find(|a| a.id == qa.id)
+                    .map(|a| a.answer.trim().to_string())
+                    .filter(|a| !a.is_empty());
+            }
+        }
+        self.update_run(run_id, |run| {
+            run.research = Some(research);
+            run.pending_feedback = Some(feedback);
+            run.stage = stage::RESEARCH.into();
+            run.status = run_status::RUNNING.into();
+            run.status_note = None;
+        })?;
+        self.drive(run_id);
+        Ok(())
+    }
+
     async fn design(&self, run: &Run, control: &Control) -> Step<Flow> {
+        // The leader's one session: a chat turn may have moved it on.
+        let lock = self.leader_lock(&run.id);
+        let _turn = lock.lock().await;
+        let run = &self.db().read(|c| repo::run_get(c, &run.id))?;
         let project = self.project(run)?;
         let feedback = run
             .pending_feedback
@@ -1366,6 +1899,18 @@ impl Engine {
                 run.leader_session.as_deref(),
                 format!("{} · thiết kế lại", run.leader_cli),
             ),
+            (None, None) if run.leader_session.is_some() && run.research.is_some() => {
+                let report = run
+                    .research
+                    .as_ref()
+                    .and_then(|research| research.report.clone())
+                    .unwrap_or_default();
+                (
+                    prompts::design_after_research(run, &project, &report),
+                    run.leader_session.as_deref(),
+                    format!("{} · thiết kế", run.leader_cli),
+                )
+            }
             (None, None) => {
                 self.prepare_context(run, &run.request, false).await;
                 let overview = context::overview(Path::new(&project.path), &run.repos).await;
@@ -1424,6 +1969,10 @@ impl Engine {
     }
 
     async fn plan(&self, run: &Run, control: &Control) -> Step<Flow> {
+        // The leader's one session: a chat turn may have moved it on.
+        let lock = self.leader_lock(&run.id);
+        let _turn = lock.lock().await;
+        let run = &self.db().read(|c| repo::run_get(c, &run.id))?;
         let project = self.project(run)?;
         let roles: Vec<String> = run.roles.iter().map(|r| r.role.clone()).collect();
         let repos: Vec<String> = run.repos.iter().map(|r| r.path.clone()).collect();
@@ -1854,13 +2403,12 @@ impl Engine {
                 .map_err(|error| Error::msg(format!("guide does not match the schema: {error}")))
         };
         let (guide, _) = self
-            .ask_json(
-                run,
+            .leader_json(
+                &run.id,
                 Some(task),
                 "prepare",
                 &format!("{} · chuẩn bị {}", run.leader_cli, task.key),
-                integration,
-                None,
+                Some(integration),
                 prompt,
                 &prompts::test_guide_schema(),
                 control,
@@ -1930,13 +2478,12 @@ impl Engine {
             Ok((answer.summary, answer.tasks))
         };
         let ((summary, planned), _) = self
-            .ask_json(
-                run,
+            .leader_json(
+                &run.id,
                 Some(task),
                 "triage",
                 &format!("{} · xác nhận lỗi {}", run.leader_cli, task.key),
-                integration,
-                None,
+                Some(integration),
                 prompt,
                 &prompts::triage_schema(&roles, &repos),
                 control,
@@ -1990,53 +2537,8 @@ impl Engine {
                 kind: repo::task_kind::AGENT.into(),
             });
         }
-        let drafts = Self::fill_repos(run, drafts);
-        let fix_keys: Vec<String> = drafts.iter().map(|d| d.key.clone()).collect();
         let first = tasks.iter().map(|t| t.sort_order + 1).max().unwrap_or(0);
-        self.db().write(|c| {
-            for (index, draft) in drafts.iter().enumerate() {
-                repo::task_insert(
-                    c,
-                    &Task {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        run_id: run.id.clone(),
-                        key: draft.key.clone(),
-                        title: draft.title.trim().to_string(),
-                        role: draft.role.trim().to_lowercase(),
-                        cli: draft.cli.clone(),
-                        description: draft.description.clone(),
-                        acceptance: draft.acceptance.clone(),
-                        scope: draft.scope.clone(),
-                        depends_on: Vec::new(),
-                        repos: if draft.repos.is_empty() {
-                            task.repos.clone()
-                        } else {
-                            draft.repos.clone()
-                        },
-                        status: task_status::WAITING.into(),
-                        status_note: None,
-                        round: 0,
-                        worker_session: None,
-                        branch: None,
-                        worktree: None,
-                        checks: None,
-                        last_review: None,
-                        added: 0,
-                        removed: 0,
-                        out_of_scope: Vec::new(),
-                        sort_order: first + index as i64,
-                        batch: task.batch,
-                        handoff: None,
-                        model: None,
-                        effort: None,
-                        timeout_minutes: None,
-                        kind: repo::task_kind::AGENT.into(),
-                        human: None,
-                    },
-                )?;
-            }
-            Ok(())
-        })?;
+        let fix_keys = self.insert_fix_tasks(run, drafts, &task.repos, task.batch, first)?;
         self.update_task(&task.id, |task| {
             let human = task.human.get_or_insert_with(Default::default);
             if let Some(round) = human.rounds.last_mut() {
@@ -2054,6 +2556,94 @@ impl Engine {
             task.status_note = Some(format!("Chờ sửa: {}", fix_keys.join(", ")));
         })?;
         Ok(())
+    }
+
+    /// Fix tasks the leader planned, added to the run (waiting) after its
+    /// other tasks. Their keys.
+    fn insert_fix_tasks(
+        &self,
+        run: &Run,
+        drafts: Vec<TaskDraft>,
+        default_repos: &[String],
+        batch: u32,
+        first: i64,
+    ) -> Result<Vec<String>> {
+        let drafts = Self::fill_repos(run, drafts);
+        let keys: Vec<String> = drafts.iter().map(|d| d.key.clone()).collect();
+        self.db().write(|c| {
+            for (index, draft) in drafts.iter().enumerate() {
+                repo::task_insert(
+                    c,
+                    &Task {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        run_id: run.id.clone(),
+                        key: draft.key.clone(),
+                        title: draft.title.trim().to_string(),
+                        role: draft.role.trim().to_lowercase(),
+                        cli: draft.cli.clone(),
+                        description: draft.description.clone(),
+                        acceptance: draft.acceptance.clone(),
+                        scope: draft.scope.clone(),
+                        depends_on: Vec::new(),
+                        repos: if draft.repos.is_empty() {
+                            default_repos.to_vec()
+                        } else {
+                            draft.repos.clone()
+                        },
+                        status: task_status::WAITING.into(),
+                        status_note: None,
+                        round: 0,
+                        worker_session: None,
+                        branch: None,
+                        worktree: None,
+                        checks: None,
+                        last_review: None,
+                        added: 0,
+                        removed: 0,
+                        out_of_scope: Vec::new(),
+                        sort_order: first + index as i64,
+                        batch,
+                        handoff: None,
+                        model: None,
+                        effort: None,
+                        timeout_minutes: None,
+                        kind: repo::task_kind::AGENT.into(),
+                        human: None,
+                    },
+                )?;
+            }
+            Ok(())
+        })?;
+        Ok(keys)
+    }
+
+    /// Planned tasks as drafts with keys no task of the run has.
+    fn fix_drafts(run: &Run, used: &[String], planned: Vec<PlanTask>) -> Vec<TaskDraft> {
+        let mut used = used.to_vec();
+        let mut drafts = Vec::new();
+        for planned in planned {
+            let mut key = planned.key.trim().to_string();
+            let base = key.clone();
+            let mut n = 2;
+            while used.contains(&key) {
+                key = format!("{base}-{n}");
+                n += 1;
+            }
+            used.push(key.clone());
+            drafts.push(TaskDraft {
+                cli: Self::role_cli(run, &planned.role),
+                key,
+                title: planned.title,
+                role: planned.role,
+                description: planned.description,
+                acceptance: planned.acceptance,
+                scope: planned.scope,
+                depends_on: Vec::new(),
+                repos: planned.repos,
+                kind: repo::task_kind::AGENT.into(),
+            });
+        }
+        drafts
     }
 
     /// A person's result for the round. Passed: the task is done; failed:
@@ -2130,37 +2720,24 @@ impl Engine {
         } else {
             PathBuf::from(&project.path)
         };
-        let session = task
-            .human
-            .as_ref()
-            .and_then(|human| human.chat_session.clone());
-        let prompt = match &session {
-            Some(_) => message.clone(),
-            None => prompts::human_chat(&run, &task, &message),
-        };
         let control = Control {
             pause: AtomicBool::new(false),
             stop: watch::channel(false).0,
         };
+        // In the leader's one session: it knows the run, the plan and the
+        // person's earlier questions.
         let outcome = self
-            .invoke(
-                &run,
+            .leader_text(
+                &run.id,
                 Some(&task),
-                &run.leader_cli,
                 "chat",
                 &format!("{} · hỏi đáp {}", run.leader_cli, task.key),
-                Access::ReadOnly,
-                &cwd,
-                session.as_deref(),
-                prompt,
-                None,
+                (cwd != Path::new(&project.path)).then_some(cwd.as_path()),
+                prompts::human_chat(&run, &task, &message),
                 &control,
             )
             .await
-            .map_err(Error::from)?;
-        if let Some(error) = outcome.error {
-            return Err(Error::msg(format!("Leader: {error}")));
-        }
+            .map_err(|error| Error::msg(error.message()))?;
         let answer = repo::ChatMessage {
             role: "leader".into(),
             text: outcome.text.trim().to_string(),
@@ -2176,11 +2753,69 @@ impl Engine {
             let human = task.human.get_or_insert_with(Default::default);
             human.chat.push(asked);
             human.chat.push(answer);
-            if outcome.session_id.is_some() {
-                human.chat_session = outcome.session_id.clone();
-            }
         })?;
         Ok(reply)
+    }
+
+    /// "Chat với leader": a question about the run, answered in the
+    /// leader's one session (read-only), kept with the run.
+    pub async fn leader_chat(&self, run_id: &str, message: String) -> Result<repo::ChatMessage> {
+        let message = message.trim().to_string();
+        if message.is_empty() {
+            return Err(Error::msg("Hãy nhập câu hỏi"));
+        }
+        let run = self.db().read(|c| repo::run_get(c, run_id))?;
+        let tasks = self.db().read(|c| repo::task_list(c, run_id))?;
+        let integration = self.integration_dir(&run);
+        let place = integration.exists().then_some(integration);
+        let asked = repo::ChatMessage {
+            role: "user".into(),
+            text: message.clone(),
+            at: now_unix(),
+        };
+        // Shown at once; the answer follows.
+        self.update_run(run_id, |run| run.leader_chat.push(asked))?;
+        let control = Control {
+            pause: AtomicBool::new(false),
+            stop: watch::channel(false).0,
+        };
+        let outcome = self
+            .leader_text(
+                run_id,
+                None,
+                "chat",
+                &format!("{} · chat", run.leader_cli),
+                place.as_deref(),
+                prompts::leader_chat(&run, &tasks, place.is_some(), &message),
+                &control,
+            )
+            .await;
+        let answer = repo::ChatMessage {
+            role: "leader".into(),
+            text: match &outcome {
+                Ok(outcome) => outcome.text.trim().to_string(),
+                Err(_) => String::new(),
+            },
+            at: now_unix(),
+        };
+        match outcome {
+            Ok(_) => {
+                let reply = answer.clone();
+                self.update_run(run_id, |run| run.leader_chat.push(answer))?;
+                Ok(reply)
+            }
+            Err(error) => {
+                let message = error.message();
+                self.update_run(run_id, |run| {
+                    run.leader_chat.push(repo::ChatMessage {
+                        role: "error".into(),
+                        text: message.clone(),
+                        at: now_unix(),
+                    })
+                })?;
+                Err(Error::msg(message))
+            }
+        }
     }
 
     /// A screenshot for a person's task, kept with the run's context so
@@ -2451,22 +3086,28 @@ impl Engine {
             Some(&task.repos),
             Use::Work,
         );
+        let commit_style = self.commit_style(run, &worktree, &task.repos).await;
         let shared = prompts::Shared {
             design_file: design_file.as_deref(),
             files: &files,
             done: &done,
             guides: &guides,
+            commit_style: &commit_style,
         };
         let interrupted =
             self.interrupted_session(&run.id, Some(&task.id), &task.cli, &["implement", "fix"])?;
         let (prompt, resume, step) = match (&interrupted, &review, &task.worker_session) {
             (Some(session), _, _) => (
-                prompts::resume_step(prompts::HANDOFF_ASK),
+                prompts::resume_step(&format!(
+                    "{}\n{}",
+                    prompts::HANDOFF_ASK,
+                    prompts::commit_ask(&commit_style)
+                )),
                 Some(session.clone()),
                 if fixing { "fix" } else { "implement" },
             ),
             (None, Some(review), Some(session)) if fixing => (
-                prompts::fix(review, task.checks.as_deref().unwrap_or(&[])),
+                prompts::fix(review, task.checks.as_deref().unwrap_or(&[]), &commit_style),
                 Some(session.clone()),
                 "fix",
             ),
@@ -2475,7 +3116,7 @@ impl Engine {
                 format!(
                     "{}\n\n{}",
                     prompts::implement(run, project, &task, earlier_work, &shared),
-                    prompts::fix(review, task.checks.as_deref().unwrap_or(&[]))
+                    prompts::fix(review, task.checks.as_deref().unwrap_or(&[]), &commit_style)
                 ),
                 None,
                 "fix",
@@ -2535,16 +3176,30 @@ impl Engine {
             })?;
             return Ok(());
         }
-        let message = format!(
-            "cm({}): {}{}",
-            task.key,
-            task.title,
-            if task.round > 0 {
-                format!(" (vòng {})", task.round + 1)
-            } else {
-                String::new()
+        let message = match prompts::commit_message(&outcome.text) {
+            Some(message) => {
+                self.checked_commit_message(
+                    run,
+                    &task,
+                    &worktree,
+                    message,
+                    outcome.session_id.as_deref(),
+                    control,
+                )
+                .await
             }
-        );
+            // No message given: the app's own.
+            None => format!(
+                "cm({}): {}{}",
+                task.key,
+                task.title,
+                if task.round > 0 {
+                    format!(" (round {})", task.round + 1)
+                } else {
+                    String::new()
+                }
+            ),
+        };
         let committed = self.commit_workspace(run, &worktree, &message).await?;
         let (files, added, removed) = self.workspace_changes(run, &worktree).await?;
         if !committed && files.is_empty() {
@@ -2575,7 +3230,7 @@ impl Engine {
             return Ok(());
         }
         let outside = git::outside_scope(&task.scope, &files);
-        let handoff = Self::handoff(&outcome.text, &files);
+        let handoff = Self::handoff(&prompts::without_commit(&outcome.text), &files);
         self.update_task(&task.id, |task| {
             task.added = added;
             task.removed = removed;
@@ -2584,6 +3239,83 @@ impl Engine {
             task.status = task_status::CHECKING.into();
         })?;
         Ok(())
+    }
+
+    /// How the task's repositories write commit messages, for its worker.
+    async fn commit_style(&self, run: &Run, base: &Path, repos: &[String]) -> String {
+        let mut parts = Vec::new();
+        for repo in run.repos.iter().filter(|repo| repos.contains(&repo.path)) {
+            let dir = workspace::repo_dir(base, &repo.path);
+            let remote = format!("refs/remotes/origin/{}", repo.base_branch);
+            let base_ref = if git::commit_of(&dir, &remote).await.is_ok() {
+                format!("origin/{}", repo.base_branch)
+            } else {
+                repo.base_branch.clone()
+            };
+            let style = git::commit_style(&dir, &base_ref).await;
+            if !style.is_empty() {
+                parts.push(if repos.len() > 1 || repo.path != repo::ROOT_REPO {
+                    format!("Repository `{}`:\n{style}", repo.path)
+                } else {
+                    style
+                });
+            }
+        }
+        parts.join("\n\n")
+    }
+
+    /// The worker's commit message, checked with the repositories' own
+    /// commit-msg hooks (commitlint...); refused, the worker gets one try to
+    /// correct it in its session. A message still refused is used anyway:
+    /// the app commits without hooks, and the PR's squash may rewrite it.
+    async fn checked_commit_message(
+        &self,
+        run: &Run,
+        task: &Task,
+        base: &Path,
+        message: String,
+        session: Option<&str>,
+        control: &Control,
+    ) -> String {
+        let check = |message: String| async move {
+            for repo in run
+                .repos
+                .iter()
+                .filter(|repo| task.repos.contains(&repo.path))
+            {
+                let dir = workspace::repo_dir(base, &repo.path);
+                git::check_commit_msg(&dir, &message).await?;
+            }
+            Ok::<(), String>(())
+        };
+        let Err(refusal) = check(message.clone()).await else {
+            return message;
+        };
+        let Some(session) = session else {
+            return message;
+        };
+        let answer = self
+            .invoke(
+                run,
+                Some(task),
+                &task.cli,
+                "commit",
+                &format!("{} · {} · commit message", task.cli, task.key),
+                Access::ReadOnly,
+                base,
+                Some(session),
+                prompts::commit_retry(&message, &refusal),
+                None,
+                control,
+            )
+            .await;
+        match answer
+            .ok()
+            .and_then(|outcome| prompts::commit_message(&outcome.text))
+        {
+            Some(corrected) => corrected,
+            None => message,
+        }
     }
 
     /// The commit each repo of a workspace is at.
@@ -2849,9 +3581,10 @@ impl Engine {
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
-                Err(MergeError::Failed(message)) => {
-                    format!("{}{message}", workspace::label(&repo.path))
-                }
+                Err(MergeError::Failed(message)) => format!(
+                    "{}Merge không thành công (không phải xung đột code): {message}",
+                    workspace::label(&repo.path)
+                ),
             };
             self.update_task(&task.id, |task| {
                 task.status = task_status::CONFLICT.into();
@@ -2946,6 +3679,22 @@ impl Engine {
             run.integration_checks = Some(checks);
             run.stage = stage::MERGE_GATE.into();
         })?;
+        // Fix tasks for a failed push are merged: push it again.
+        if let Some(failure) = self.push_failure(&run.id).filter(|failure| failure.retry) {
+            if !checks_ok {
+                return self.wait(run, "Kiểm tra tích hợp lỗi nên chưa push lại; xem Cổng 2");
+            }
+            return match self
+                .push_pull_requests(&run.id, failure.request.clone())
+                .await
+            {
+                Ok(_) => Ok(Flow::Stop),
+                Err(error) => self.wait(
+                    run,
+                    &format!("Push lại vẫn lỗi: {error} — bấm \"Leader xử lý lỗi push\""),
+                ),
+            };
+        }
         // A follow-up asked to update its pull requests when done.
         let push = run
             .followups
@@ -3633,13 +4382,12 @@ impl Engine {
                 })
             };
             let answer = self
-                .ask_json(
-                    &run,
+                .leader_json(
+                    &run.id,
                     None,
                     "verify",
                     &format!("{} · verify PR", run.leader_cli),
-                    &verify_dir,
-                    None,
+                    Some(verify_dir.as_path()),
                     prompt,
                     &prompts::review_schema(),
                     &control,
@@ -3784,11 +4532,7 @@ impl Engine {
         let run_id = run_id.to_string();
         tokio::spawn(async move {
             let result = engine.ai_push_inner(&run_id, &request, &control).await;
-            engine
-                .drivers
-                .lock()
-                .expect("agent drivers")
-                .remove(&run_id);
+            // The outcome is saved before the run counts as idle again.
             let _ = engine.update_run(&run_id, |run| match &result {
                 Ok(urls) => {
                     run.status_note = Some(format!("AI đã push lên PR: {}", urls.join(" · ")));
@@ -3800,6 +4544,11 @@ impl Engine {
                 }
                 Err(error) => run.status_note = Some(format!("Push bằng AI chưa xong: {error}")),
             });
+            engine
+                .drivers
+                .lock()
+                .expect("agent drivers")
+                .remove(&run_id);
         });
         Ok(())
     }
@@ -3981,6 +4730,25 @@ impl Engine {
                 }
             }
         }
+        let qa = run
+            .research
+            .as_ref()
+            .and_then(|research| research.report.as_ref())
+            .map(|report| report.qa.as_slice())
+            .unwrap_or_default();
+        if !qa.is_empty() {
+            body.push_str("\n## QA\n");
+            for item in qa {
+                body.push_str(&format!("- {} {}\n", item.id, item.question.trim()));
+                match item.answer.as_deref() {
+                    Some(answer) => body.push_str(&format!("  → {}\n", answer.trim())),
+                    None => body.push_str(&format!(
+                        "  → (chưa có câu trả lời; làm theo giả định: {})\n",
+                        item.assumption.trim()
+                    )),
+                }
+            }
+        }
         if let Some(checks) = run.integration_checks.as_ref().filter(|c| !c.is_empty()) {
             body.push_str("\n## Kiểm tra\n");
             for check in checks {
@@ -3998,6 +4766,485 @@ impl Engine {
             body,
             draft: false,
             rebase: None,
+        })
+    }
+
+    fn push_failure(&self, run_id: &str) -> Option<PushFailure> {
+        std::fs::read_to_string(self.run_dir(run_id).join(PUSH_FAILURE_FILE))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+    }
+
+    fn save_push_failure(&self, run_id: &str, failure: Option<&PushFailure>) -> Result<()> {
+        let path = self.run_dir(run_id).join(PUSH_FAILURE_FILE);
+        match failure {
+            Some(failure) => {
+                std::fs::create_dir_all(self.run_dir(run_id))?;
+                std::fs::write(
+                    path,
+                    serde_json::to_vec_pretty(failure).map_err(|e| Error::msg(e.to_string()))?,
+                )?;
+            }
+            None => {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        self.env.changed(run_id);
+        Ok(())
+    }
+
+    /// "Bỏ qua" on a failed push: forgets it.
+    pub fn dismiss_push_failure(&self, run_id: &str) -> Result<()> {
+        self.require_idle(run_id)?;
+        self.save_push_failure(run_id, None)
+    }
+
+    /// "Leader xử lý lỗi push": the leader reads why the push failed and
+    /// pushes again as it is, fixes it itself and pushes, or hands fix tasks
+    /// to the team (the run pushes again once they are merged). Runs in the
+    /// background like a driver.
+    pub fn fix_push(self: &Arc<Self>, run_id: &str, note: String) -> Result<()> {
+        self.require_idle(run_id)?;
+        let run = self.db().read(|c| repo::run_get(c, run_id))?;
+        if self.push_failure(run_id).is_none() {
+            return Err(Error::msg("Không có lần push lỗi nào để xử lý"));
+        }
+        let delivered = run.stage == stage::DONE
+            && (run.status == run_status::KEPT || run.status == run_status::MERGED);
+        if run.stage != stage::MERGE_GATE && !delivered {
+            return Err(Error::msg(
+                "Xử lý lỗi push khi lượt chạy ở Cổng 2 hoặc đã kết thúc",
+            ));
+        }
+        let control = {
+            let mut drivers = self.drivers.lock().expect("agent drivers");
+            if drivers.contains_key(run_id) {
+                return Err(Error::msg("Lượt chạy đang chạy"));
+            }
+            let control = Arc::new(Control {
+                pause: AtomicBool::new(false),
+                stop: watch::channel(false).0,
+            });
+            drivers.insert(run_id.to_string(), Arc::clone(&control));
+            control
+        };
+        let _ = self.update_run(run_id, |run| {
+            run.status_note = Some("Leader đang xem vì sao push lỗi…".into());
+        });
+        let engine = Arc::clone(self);
+        let run_id = run_id.to_string();
+        tokio::spawn(async move {
+            let result = engine.fix_push_inner(&run_id, &note, &control).await;
+            // The outcome is saved before the run counts as idle again.
+            match &result {
+                Ok(None) => {}
+                Ok(Some(note)) => {
+                    let _ = engine.update_run(&run_id, |run| run.status_note = Some(note.clone()));
+                }
+                Err(error) => {
+                    let _ = engine.update_run(&run_id, |run| {
+                        run.status_note = Some(format!("Leader chưa xử lý xong lỗi push: {error}"))
+                    });
+                }
+            }
+            engine
+                .drivers
+                .lock()
+                .expect("agent drivers")
+                .remove(&run_id);
+            if matches!(result, Ok(None)) {
+                engine.drive(&run_id);
+            }
+        });
+        Ok(())
+    }
+
+    /// None: fix tasks were added and the run drives on; else the note to
+    /// show.
+    async fn fix_push_inner(
+        &self,
+        run_id: &str,
+        note: &str,
+        control: &Control,
+    ) -> Result<Option<String>> {
+        let run = self.db().read(|c| repo::run_get(c, run_id))?;
+        let project = self.project(&run)?;
+        let tasks = self.db().read(|c| repo::task_list(c, run_id))?;
+        let Some(mut failure) = self.push_failure(run_id) else {
+            return Err(Error::msg("Không có lần push lỗi nào để xử lý"));
+        };
+        let integration = self.ensure_integration(&run, &project).await?;
+        let target = failure
+            .request
+            .repos
+            .iter()
+            .map(|pr| {
+                format!(
+                    "{}`{}` → `{}`",
+                    workspace::label(&pr.repo),
+                    pr.branch,
+                    pr.base
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let repos: Vec<String> = failure
+            .request
+            .repos
+            .iter()
+            .map(|pr| pr.repo.clone())
+            .collect();
+        let (guides, _) = guides::block(
+            &Self::guides(&project),
+            Path::new(&project.path),
+            &integration,
+            Some(&repos),
+            Use::Lead,
+        );
+        let done: Vec<&Task> = tasks
+            .iter()
+            .filter(|task| task.status == task_status::MERGED)
+            .collect();
+        let keys: Vec<String> = tasks.iter().map(|t| t.key.clone()).collect();
+        let roles: Vec<String> = run.roles.iter().map(|r| r.role.clone()).collect();
+        let run_repos: Vec<String> = run.repos.iter().map(|r| r.path.clone()).collect();
+        let prompt = prompts::push_failure(
+            &run,
+            &target,
+            &failure.error,
+            &failure.output,
+            &done,
+            &keys,
+            note,
+            &guides,
+        );
+        let parse = |value: Value| -> Result<(String, String, Vec<PlanTask>)> {
+            #[derive(Deserialize)]
+            struct Answer {
+                summary: String,
+                action: String,
+                tasks: Vec<PlanTask>,
+            }
+            let answer: Answer = serde_json::from_value(value).map_err(|error| {
+                Error::msg(format!("answer does not match the schema: {error}"))
+            })?;
+            Ok((answer.summary, answer.action, answer.tasks))
+        };
+        let ((summary, action, planned), _) = self
+            .leader_json(
+                &run.id,
+                None,
+                "triage",
+                &format!("{} · xem lỗi push", run.leader_cli),
+                Some(integration.as_path()),
+                prompt,
+                &prompts::push_failure_schema(&roles, &run_repos),
+                control,
+                parse,
+            )
+            .await
+            .map_err(|error| Error::msg(error.message()))?;
+        let action = if action == "tasks" && planned.is_empty() {
+            "none".to_string()
+        } else {
+            action
+        };
+        failure.diagnosis = Some(summary.clone());
+        failure.action = Some(action.clone());
+        self.save_push_failure(run_id, Some(&failure))?;
+
+        match action.as_str() {
+            "tasks" => {
+                let drafts = Self::fix_drafts(&run, &keys, planned);
+                let first = tasks.iter().map(|t| t.sort_order + 1).max().unwrap_or(0);
+                let batch = tasks.iter().map(|t| t.batch).max().unwrap_or(0);
+                let fix_keys = self.insert_fix_tasks(&run, drafts, &repos, batch, first)?;
+                failure.fix_tasks = fix_keys.clone();
+                failure.retry = true;
+                self.save_push_failure(run_id, Some(&failure))?;
+                self.update_run(run_id, |run| {
+                    run.stage = stage::IMPLEMENT.into();
+                    run.status = run_status::RUNNING.into();
+                    run.status_note = Some(format!(
+                        "Sửa lỗi push: {} — xong sẽ push lại",
+                        fix_keys.join(", ")
+                    ));
+                    run.integration_checks = None;
+                    run.finished_at = None;
+                })?;
+                Ok(None)
+            }
+            "retry" => Ok(Some(self.push_again(run_id, &failure, &summary).await)),
+            "self" => {
+                // Its own session, in the worktree it writes to (the leader's
+                // session lives in the user's checkout, read-only).
+                let leader = run.leader_cli.clone();
+                let answer = self
+                    .invoke(
+                        &run,
+                        None,
+                        &leader,
+                        "push",
+                        &format!("{leader} · sửa lỗi push"),
+                        Access::Write,
+                        &integration,
+                        None,
+                        prompts::push_fix_self(
+                            &run,
+                            &target,
+                            &summary,
+                            &failure.output,
+                            &guides,
+                            &self.commit_style(&run, &integration, &repos).await,
+                        ),
+                        None,
+                        control,
+                    )
+                    .await
+                    .map_err(|error| Error::msg(error.message()))?;
+                if let Some(error) = answer.error {
+                    return Err(Error::msg(error));
+                }
+                for repo in &run.repos {
+                    git::abort_in_progress(&workspace::repo_dir(&integration, &repo.path)).await;
+                }
+                let message = prompts::commit_message(&answer.text)
+                    .unwrap_or_else(|| "cm(push-fix): fix what the push refused".into());
+                let committed = self.commit_workspace(&run, &integration, &message).await?;
+                if !committed {
+                    return Ok(Some(format!(
+                        "Leader không sửa gì: {}",
+                        adapter::shorten(answer.text.trim(), 400)
+                    )));
+                }
+                Ok(Some(self.push_again(run_id, &failure, &summary).await))
+            }
+            _ => Ok(Some(format!("Leader: {summary}"))),
+        }
+    }
+
+    /// Pushes what failed again; the note says how it went.
+    async fn push_again(&self, run_id: &str, failure: &PushFailure, summary: &str) -> String {
+        match self
+            .push_pull_requests(run_id, failure.request.clone())
+            .await
+        {
+            Ok(run) => format!(
+                "Đã push lại sau khi leader xử lý ({}). {}",
+                adapter::shorten(summary.trim(), 200),
+                run.status_note.unwrap_or_default()
+            ),
+            Err(error) => format!("Push lại vẫn lỗi: {error}"),
+        }
+    }
+
+    /// Runs the repo's pre-push hook (core.hooksPath honoured) the way git
+    /// would for pushing HEAD to `branch` on origin. No hook: nothing to do.
+    async fn run_pre_push(
+        &self,
+        run_id: &str,
+        place: &Path,
+        branch: &str,
+        remote_head: Option<&str>,
+        log: &AgentLog,
+        stop: watch::Receiver<bool>,
+    ) -> std::result::Result<(), String> {
+        let Ok(rel) = git::git(place, &["rev-parse", "--git-path", "hooks/pre-push"]).await else {
+            return Ok(());
+        };
+        let hook = place.join(rel);
+        if !is_executable(&hook) {
+            return Ok(());
+        }
+        let head = git::commit_of(place, "HEAD")
+            .await
+            .map_err(|error| error.to_string())?;
+        let url = git::git(place, &["remote", "get-url", "--push", "origin"])
+            .await
+            .map_err(|error| error.to_string())?;
+        // What git feeds the hook on stdin.
+        let input = self.run_dir(run_id).join("pre-push-stdin");
+        std::fs::create_dir_all(self.run_dir(run_id)).map_err(|error| error.to_string())?;
+        std::fs::write(
+            &input,
+            format!(
+                "HEAD {head} refs/heads/{branch} {}\n",
+                remote_head.unwrap_or("0000000000000000000000000000000000000000")
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+        log.heading("pre-push hook (chạy trước, rồi git push --no-verify)");
+        let args: Vec<String> = vec![
+            "-c".into(),
+            "\"$0\" \"$1\" \"$2\" < \"$3\"".into(),
+            hook.to_string_lossy().into_owned(),
+            "origin".into(),
+            url,
+            input.to_string_lossy().into_owned(),
+        ];
+        let result =
+            process::run_program(Path::new("sh"), &args, place, PUSH_TIMEOUT, log, stop).await;
+        let _ = std::fs::remove_file(&input);
+        match result {
+            Ok((true, _, _)) => {
+                log.result(true, "pre-push hook qua");
+                Ok(())
+            }
+            Ok((false, code, tail)) => {
+                log.result(false, "pre-push hook thất bại");
+                Err(format!(
+                    "pre-push hook thất bại (mã {}): {}",
+                    code.map_or("?".into(), |c| c.to_string()),
+                    push_error(&tail)
+                ))
+            }
+            Err(error) => {
+                log.result(false, &error.to_string());
+                Err(format!("pre-push hook: {error}"))
+            }
+        }
+    }
+
+    /// "Viết bằng AI" in the PR form: the leader writes the title and
+    /// description from the run's work, following the project's rules and
+    /// skills, the repository's PR template and its commit style.
+    pub async fn pr_ai_draft(
+        &self,
+        run_id: &str,
+        repos: Vec<PrRepo>,
+        note: String,
+    ) -> Result<PrText> {
+        self.require_idle(run_id)?;
+        let run = self.db().read(|c| repo::run_get(c, run_id))?;
+        let project = self.project(&run)?;
+        let tasks = self.db().read(|c| repo::task_list(c, run_id))?;
+        let integration = self.ensure_integration(&run, &project).await?;
+        let mut sections = Vec::new();
+        for pr in &repos {
+            let Some(config) = run.repos.iter().find(|repo| repo.path == pr.repo) else {
+                continue;
+            };
+            let place = workspace::repo_dir(&integration, &pr.repo);
+            let range = format!("{}..HEAD", config.base_commit);
+            let commits = git::git(&place, &["log", "--no-merges", "--format=- %s", &range])
+                .await
+                .unwrap_or_default();
+            let stat = git::git(
+                &place,
+                &[
+                    "diff",
+                    "--stat=120",
+                    &format!("{}...HEAD", config.base_commit),
+                ],
+            )
+            .await
+            .unwrap_or_default();
+            let remote = format!("refs/remotes/origin/{}", pr.base);
+            let base_ref = if git::commit_of(&place, &remote).await.is_ok() {
+                remote
+            } else {
+                pr.base.clone()
+            };
+            let style = git::git(
+                &place,
+                &["log", "-15", "--no-merges", "--format=- %s", &base_ref],
+            )
+            .await
+            .unwrap_or_default();
+            let template = PR_TEMPLATES
+                .iter()
+                .find_map(|rel| {
+                    std::fs::read_to_string(place.join(rel))
+                        .ok()
+                        .map(|text| (rel, text))
+                })
+                .map(|(rel, text)| {
+                    format!(
+                        "PR template (`{rel}`):\n<template>\n{}\n</template>",
+                        git::cut(text, 6000).0.trim()
+                    )
+                })
+                .unwrap_or_else(|| "PR template: (none)".into());
+            sections.push(format!(
+                "## {repo}: `{branch}` → `{base}`\n{template}\n\nCommits of the run:\n{commits}\n\nFiles changed:\n{stat}\n\nRecent commit subjects of `{base}`:\n{style}",
+                repo = if pr.repo == repo::ROOT_REPO {
+                    "repository".to_string()
+                } else {
+                    format!("`{}/`", pr.repo)
+                },
+                branch = pr.branch,
+                base = pr.base,
+                commits = git::cut(commits, 4000).0,
+                stat = git::cut(stat, 4000).0,
+                style = if style.is_empty() { "(unknown)".into() } else { style },
+            ));
+        }
+        if sections.is_empty() {
+            return Err(Error::msg("Hãy chọn ít nhất một repo của lượt chạy"));
+        }
+        let checks = run
+            .integration_checks
+            .iter()
+            .flatten()
+            .map(|check| {
+                format!(
+                    "- {} `{}`",
+                    if check.ok { "passed" } else { "FAILED" },
+                    check.command
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let chosen: Vec<String> = repos.iter().map(|pr| pr.repo.clone()).collect();
+        let (guides, _) = guides::block(
+            &Self::guides(&project),
+            Path::new(&project.path),
+            &integration,
+            Some(&chosen),
+            Use::Lead,
+        );
+        let done: Vec<&Task> = tasks
+            .iter()
+            .filter(|task| task.status == task_status::MERGED)
+            .collect();
+        let prompt =
+            prompts::describe_pr(&run, &done, &sections.join("\n\n"), &checks, &note, &guides);
+        let control = Control {
+            pause: AtomicBool::new(false),
+            stop: watch::channel(false).0,
+        };
+        let parse = |value: Value| -> Result<PrText> {
+            let text: PrText = serde_json::from_value(value).map_err(|error| {
+                Error::msg(format!("answer does not match the schema: {error}"))
+            })?;
+            if text.title.trim().is_empty() || text.body.trim().is_empty() {
+                return Err(Error::msg("title and body must not be empty"));
+            }
+            Ok(text)
+        };
+        let (text, _) = self
+            .leader_json(
+                &run.id,
+                None,
+                "describe",
+                &format!("{} · viết PR", run.leader_cli),
+                Some(integration.as_path()),
+                prompt,
+                &prompts::pr_text_schema(),
+                &control,
+                parse,
+            )
+            .await
+            .map_err(|error| Error::msg(error.message()))?;
+        Ok(PrText {
+            title: text
+                .title
+                .trim()
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_string(),
+            body: text.body.trim().to_string(),
         })
     }
 
@@ -4060,7 +5307,9 @@ impl Engine {
                 return Err(error);
             }
         };
+        let mut failed_repo = String::new();
         for pr in &request.repos {
+            failed_repo = pr.repo.clone();
             let (branch, base) = (pr.branch.trim(), pr.base.trim());
             let label = workspace::label(&pr.repo);
             let root = workspace::repo_dir(Path::new(&project.path), &pr.repo);
@@ -4114,8 +5363,33 @@ impl Engine {
                     }
                 }
             }
+            // The pre-push hook runs first, on its own: git opens the
+            // connection to origin before running it, and a hook that takes
+            // many minutes (the project's tests and builds) outlives that
+            // connection, so git died silently once the hook had passed.
+            match self
+                .run_pre_push(
+                    run_id,
+                    &place,
+                    branch,
+                    remote_head.as_deref(),
+                    &log,
+                    stop.clone(),
+                )
+                .await
+            {
+                Ok(()) => {}
+                Err(message) => {
+                    if rebase && !before.is_empty() {
+                        let _ = git::reset_worktree(&place, &before).await;
+                    }
+                    outcome = Err(Error::msg(format!("{label}{message}")));
+                    break;
+                }
+            }
             let refspec = format!("HEAD:refs/heads/{branch}");
-            let mut args: Vec<String> = vec!["push".into()];
+            // The hook just passed for this very commit.
+            let mut args: Vec<String> = vec!["push".into(), "--no-verify".into()];
             if rebase {
                 // Rewrites the PR branch, but only the commit we saw there.
                 args.push(format!(
@@ -4142,11 +5416,17 @@ impl Engine {
                 }
                 Ok((false, code, tail)) => {
                     log.result(false, "git push thất bại");
-                    Some(format!(
-                        "{label}git push thất bại (mã {}): {}",
-                        code.map_or("?".into(), |c| c.to_string()),
-                        push_error(&tail)
-                    ))
+                    Some(match code {
+                        Some(code) => format!(
+                            "{label}git push thất bại (mã {code}): {}",
+                            push_error(&tail)
+                        ),
+                        None => format!(
+                            "{label}git push bị ngắt giữa chừng (git bị dừng bởi tín hiệu, \
+                             thường do kết nối tới origin bị đóng): {}",
+                            push_error(&tail)
+                        ),
+                    })
                 }
                 Err(error) => {
                     log.result(false, &error.to_string());
@@ -4214,9 +5494,23 @@ impl Engine {
         // What was opened is kept even when a later repo failed.
         let saved = opened.clone();
         if let Err(error) = outcome {
+            // For the leader to look into ("Leader xử lý lỗi push").
+            let failure = PushFailure {
+                at: now_unix(),
+                repo: failed_repo,
+                error: error.to_string(),
+                output: plain_tail(&log.snapshot_bytes(), PUSH_OUTPUT_BYTES),
+                request: request.clone(),
+                diagnosis: None,
+                action: None,
+                fix_tasks: Vec::new(),
+                retry: false,
+            };
+            let _ = self.save_push_failure(run_id, Some(&failure));
             self.update_run(run_id, |run| run.pull_requests = saved)?;
             return Err(error);
         }
+        let _ = self.save_push_failure(run_id, None);
         self.delivered(&run).await?;
         let note = opened
             .iter()
@@ -4370,7 +5664,13 @@ impl Engine {
                 let dir = workspace::repo_dir(&base, &repo.path);
                 let merged = git::git(
                     &dir,
-                    &["merge", "--no-ff", "--no-commit", &run.integration_branch],
+                    &[
+                        "merge",
+                        "--no-ff",
+                        "--no-commit",
+                        "--no-verify",
+                        &run.integration_branch,
+                    ],
                 )
                 .await;
                 let files = git::git(&dir, &["diff", "--name-only", "--diff-filter=U"])
@@ -4387,8 +5687,22 @@ impl Engine {
                 return Err(Error::msg("Không merge được nhánh tích hợp vào nhánh task"));
             }
             if conflicts.is_empty() {
-                self.commit_workspace(&run, &base, &format!("cm({}): merge integration", task.key))
+                let brought = self
+                    .commit_workspace(&run, &base, &format!("cm({}): merge integration", task.key))
                     .await?;
+                let approved = task
+                    .last_review
+                    .as_ref()
+                    .is_some_and(|review| review.verdict == "approved");
+                if approved && !brought {
+                    // Approved and nothing new came in: the merge itself
+                    // failed (a hook, a lock), not the work; merge again.
+                    let integration = self.ensure_integration(&run, &project).await?;
+                    self.merge_task(&run, &integration, &task)
+                        .await
+                        .map_err(Error::from)?;
+                    return self.continue_after_task_action(&task.run_id);
+                }
                 self.update_task(task_id, |task| {
                     task.status = task_status::REVIEW.into();
                     task.status_note = None;
@@ -4447,7 +5761,7 @@ impl Engine {
         self.commit_workspace(
             &run,
             Path::new(&base),
-            &format!("cm({}): sửa tay trước khi review lại", task.key),
+            &format!("cm({}): manual changes before review", task.key),
         )
         .await?;
         let (files, added, removed) = self.workspace_changes(&run, Path::new(&base)).await?;

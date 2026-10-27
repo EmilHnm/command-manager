@@ -1081,7 +1081,10 @@ mod tests {
 
     #[test]
     fn cursor_versions_order_by_date_then_build_time() {
-        assert_eq!(cursor_version("2026.10.22-27dcf5f"), Some([2026, 10, 22, 0, 0, 0]));
+        assert_eq!(
+            cursor_version("2026.10.22-27dcf5f"),
+            Some([2026, 10, 22, 0, 0, 0])
+        );
         assert_eq!(
             cursor_version("2026.1.2-13-05-09-abc123"),
             Some([2026, 1, 2, 13, 5, 9])
@@ -1096,7 +1099,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let launcher = dir.path().join("cursor-agent.cmd");
         std::fs::write(&launcher, "@echo off").unwrap();
-        for version in ["2026.9.30-aaa111", "2026.10.22-bbb222", "2026.10.22-01-00-00-ccc333"] {
+        for version in [
+            "2026.9.30-aaa111",
+            "2026.10.22-bbb222",
+            "2026.10.22-01-00-00-ccc333",
+        ] {
             let path = dir.path().join("versions").join(version);
             std::fs::create_dir_all(&path).unwrap();
             std::fs::write(path.join("node.exe"), "").unwrap();

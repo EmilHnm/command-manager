@@ -16,6 +16,7 @@ import type {
   NewRunInput,
   ProjectSettings,
   RoleCli,
+  QaAnswer,
   RunDetail,
   RunLimits,
   RunSummary,
@@ -2006,6 +2007,8 @@ export const ipcClient = {
     invokeTauri<Verification>('agents_run_verify_prs', { run_id: runId }),
 
   agentsPrDraft: (runId: string) => invokeTauri<PrRequest>('agents_pr_draft', { run_id: runId }),
+  agentsPrAiDraft: (runId: string, repos: PrRequest['repos'], note: string) =>
+    invokeTauri<{ title: string; body: string }>('agents_pr_ai_draft', { run_id: runId, repos, note }),
 
   agentsRunAttachPr: (
     runId: string,
@@ -2054,6 +2057,16 @@ export const ipcClient = {
     invokeTauri<void>('agents_run_follow_up', { run_id: runId, request, push_pr: pushPr }),
 
   agentsRunDiscard: (runId: string) => invokeTauri<void>('agents_run_discard', { run_id: runId }),
+  agentsResearchAnswer: (runId: string, answers: QaAnswer[]) =>
+    invokeTauri<void>('agents_research_answer', { run_id: runId, answers }),
+  agentsResearchAgain: (runId: string, feedback: string, answers: QaAnswer[]) =>
+    invokeTauri<void>('agents_research_again', { run_id: runId, feedback, answers }),
+  agentsLeaderChat: (runId: string, message: string) =>
+    invokeTauri<ChatMessage>('agents_leader_chat', { run_id: runId, message }),
+  agentsRunFixPush: (runId: string, note: string) =>
+    invokeTauri<void>('agents_run_fix_push', { run_id: runId, note }),
+  agentsPushFailureDismiss: (runId: string) =>
+    invokeTauri<void>('agents_push_failure_dismiss', { run_id: runId }),
   agentsRunCleanWorktrees: (runId: string) =>
     invokeTauri<void>('agents_run_clean_worktrees', { run_id: runId }),
 

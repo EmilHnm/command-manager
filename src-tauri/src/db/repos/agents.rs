@@ -244,6 +244,10 @@ impl Default for Limits {
 
 /// Where a run is in its pipeline (SCR-09 §3).
 pub mod stage {
+    /// The leader looks for what could block the work, before designing.
+    pub const RESEARCH: &str = "research";
+    /// Gate 0: a person answers the QA the research raised.
+    pub const QA_GATE: &str = "qa_gate";
     pub const DESIGN: &str = "design";
     pub const PLAN: &str = "plan";
     pub const PLAN_GATE: &str = "plan_gate";
@@ -345,6 +349,74 @@ pub struct Run {
     /// folder's `agents/wt`.
     #[serde(default)]
     pub worktree_root: Option<String>,
+    /// The leader's research before the design; None: the run skips it.
+    #[serde(default)]
+    pub research: Option<Research>,
+    /// Questions asked to the leader about the run, and its answers.
+    #[serde(default)]
+    pub leader_chat: Vec<ChatMessage>,
+}
+
+/// The research step: what the leader found before designing, and the QA
+/// it raised for a person.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Research {
+    /// None until the leader has reported.
+    #[serde(default)]
+    pub report: Option<ResearchReport>,
+    /// Gate 0 settled: the design goes on with the answers.
+    #[serde(default)]
+    pub approved: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ResearchReport {
+    pub summary: String,
+    #[serde(default)]
+    pub findings: Vec<Finding>,
+    #[serde(default)]
+    pub qa: Vec<QaItem>,
+    #[serde(default)]
+    pub at: String,
+}
+
+/// Something the leader checked: ready, missing or unclear.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Finding {
+    pub title: String,
+    /// ready, missing, unclear.
+    pub status: String,
+    #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
+    pub source: String,
+}
+
+/// A question for a person: what blocks or may block the work.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct QaItem {
+    pub id: String,
+    pub title: String,
+    /// blocker: the work cannot be designed right without an answer;
+    /// question: worth asking, the leader can go on with its assumption.
+    pub severity: String,
+    #[serde(default)]
+    pub detail: String,
+    pub question: String,
+    /// What the leader would go on with, unanswered.
+    #[serde(default)]
+    pub assumption: String,
+    #[serde(default)]
+    pub source: String,
+    /// The person's answer at gate 0.
+    #[serde(default)]
+    pub answer: Option<String>,
+}
+
+impl ResearchReport {
+    pub fn blocked(&self) -> bool {
+        self.qa.iter().any(|qa| qa.severity == "blocker")
+    }
 }
 
 /// A pull request of the run's work in one repo.
@@ -846,7 +918,7 @@ const RUN_COLUMNS: &str = "id, project_id, title, request, leader_cli, roles, pl
      merge_gate, limits, stage, status, status_note, design_md, contract, leader_session, \
      pending_feedback, base_branch, base_commit, integration_branch, integration_checks, \
      created_at, updated_at, finished_at, repos, followups, leader_model, leader_effort, \
-     suggested_checks, pull_requests, worktree_root";
+     suggested_checks, pull_requests, worktree_root, research, leader_chat";
 
 fn run_row(row: &Row) -> rusqlite::Result<Run> {
     let mut repos: Vec<RunRepo> = parse(&row.get::<_, String>(23)?)?;
@@ -889,6 +961,12 @@ fn run_row(row: &Row) -> rusqlite::Result<Run> {
         suggested_checks: parse(&row.get::<_, String>(27)?)?,
         pull_requests: parse(&row.get::<_, String>(28)?)?,
         worktree_root: row.get(29)?,
+        research: parse_opt(row.get(30)?)?,
+        leader_chat: row
+            .get::<_, Option<String>>(31)?
+            .map(|text| parse(&text))
+            .transpose()?
+            .unwrap_or_default(),
     })
 }
 
@@ -897,7 +975,7 @@ pub fn run_insert(conn: &Connection, run: &Run) -> Result<()> {
         &format!(
             "INSERT INTO agent_run ({RUN_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
              ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25,
-             ?26, ?27, ?28, ?29, ?30)"
+             ?26, ?27, ?28, ?29, ?30, ?31, ?32)"
         ),
         rusqlite::params![
             run.id,
@@ -930,6 +1008,8 @@ pub fn run_insert(conn: &Connection, run: &Run) -> Result<()> {
             json(&run.suggested_checks),
             json(&run.pull_requests),
             run.worktree_root,
+            run.research.as_ref().map(json),
+            json(&run.leader_chat),
         ],
     )?;
     Ok(())
@@ -943,7 +1023,7 @@ pub fn run_save(conn: &Connection, run: &Run) -> Result<()> {
            integration_checks = ?12, updated_at = ?13, finished_at = ?14, pending_feedback = ?15,
            repos = ?16, followups = ?17, leader_model = ?18, leader_effort = ?19,
            base_branch = ?20, base_commit = ?21, suggested_checks = ?22,
-           pull_requests = ?23
+           pull_requests = ?23, research = ?24, leader_chat = ?25
          WHERE id = ?1",
         rusqlite::params![
             run.id,
@@ -969,6 +1049,8 @@ pub fn run_save(conn: &Connection, run: &Run) -> Result<()> {
             run.base_commit,
             json(&run.suggested_checks),
             json(&run.pull_requests),
+            run.research.as_ref().map(json),
+            json(&run.leader_chat),
         ],
     )?;
     Ok(())
@@ -1527,6 +1609,8 @@ mod tests {
             suggested_checks: Vec::new(),
             pull_requests: Vec::new(),
             worktree_root: Some("D:\\wt".into()),
+            research: None,
+            leader_chat: Vec::new(),
         };
         let mut run = run;
         run.repos.push(RunRepo {

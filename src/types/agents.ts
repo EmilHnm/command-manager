@@ -256,7 +256,16 @@ export const DEFAULT_LIMITS: RunLimits = {
   auto_resume: true,
 };
 
-export type RunStage = 'design' | 'plan' | 'plan_gate' | 'implement' | 'integrate' | 'merge_gate' | 'done';
+export type RunStage =
+  | 'research'
+  | 'qa_gate'
+  | 'design'
+  | 'plan'
+  | 'plan_gate'
+  | 'implement'
+  | 'integrate'
+  | 'merge_gate'
+  | 'done';
 export type RunStatus = 'running' | 'waiting' | 'paused' | 'failed' | 'merged' | 'kept' | 'discarded';
 export type TaskStatus =
   | 'waiting'
@@ -378,6 +387,48 @@ export interface AgentRun {
   finished_at: string | null;
   /** Requests made after delivery (a code review's comments...); their tasks are batch 1, 2... */
   followups: { request: string; created_at: string }[];
+  /** The leader's research before the design; null: the run skips it. */
+  research: Research | null;
+  /** Questions asked to the leader about the run, and its answers. */
+  leader_chat: ChatMessage[];
+}
+
+/** What the leader found before designing, and the QA it raised. */
+export interface Research {
+  report: ResearchReport | null;
+  /** Gate 0 settled. */
+  approved: boolean;
+}
+
+export interface ResearchReport {
+  summary: string;
+  findings: Finding[];
+  qa: QaItem[];
+  at: string;
+}
+
+export interface Finding {
+  title: string;
+  status: 'ready' | 'missing' | 'unclear' | string;
+  detail: string;
+  source: string;
+}
+
+export interface QaItem {
+  id: string;
+  title: string;
+  /** blocker: no design without an answer; question: the leader goes on with its assumption. */
+  severity: 'blocker' | 'question' | string;
+  detail: string;
+  question: string;
+  assumption: string;
+  source: string;
+  answer: string | null;
+}
+
+export interface QaAnswer {
+  id: string;
+  answer: string;
 }
 
 export interface AgentTask {
@@ -474,6 +525,24 @@ export interface RunDetail {
   side_logs: SideLog[];
   /** Worktrees of the run are still on disk. */
   worktrees: boolean;
+  /** The last push that failed, until one goes through. */
+  push_failure: PushFailure | null;
+}
+
+/** A refused push, for the leader to look into. */
+export interface PushFailure {
+  at: string;
+  repo: string;
+  error: string;
+  /** The end of the push's output (the pre-push hook's checks). */
+  output: string;
+  request: PrRequest;
+  diagnosis: string | null;
+  /** What the leader chose: retry, self, tasks, none. */
+  action: string | null;
+  fix_tasks: string[];
+  /** Fix tasks are on it: pushed again once they are merged. */
+  retry: boolean;
 }
 
 export interface RunSummary extends AgentRun {
@@ -494,6 +563,8 @@ export interface NewRunInput {
   plan_gate: boolean;
   merge_gate: boolean;
   limits: RunLimits;
+  /** The leader looks for blockers and raises QA before designing. */
+  research?: boolean;
 }
 
 export interface DiffStat {
@@ -503,6 +574,8 @@ export interface DiffStat {
 }
 
 export const STAGE_LABELS: Record<RunStage, string> = {
+  research: 'Tìm hiểu',
+  qa_gate: 'Cổng 0',
   design: 'Thiết kế',
   plan: 'Kế hoạch',
   plan_gate: 'Cổng 1',

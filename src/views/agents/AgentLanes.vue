@@ -125,6 +125,9 @@ const STEP_LABELS: Record<string, string> = {
   push: 'push lên PR (AI)',
   prepare: 'chuẩn bị test',
   triage: 'xác nhận lỗi',
+  research: 'tìm hiểu',
+  describe: 'viết PR',
+  commit: 'commit message',
   chat: 'hỏi đáp',
 };
 

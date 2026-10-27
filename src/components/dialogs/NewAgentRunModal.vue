@@ -154,6 +154,17 @@
         <div class="form-group">
           <label class="form-label">Cổng kiểm soát duyệt người dùng (Safety Gates)</label>
           <div class="gates-row">
+            <label class="checkbox-card wide">
+              <input v-model="form.research" type="checkbox" class="form-checkbox" @change="rememberResearch" />
+              <div class="checkbox-text">
+                <span class="checkbox-title">🔎 Tìm hiểu trước + ⛩ Cổng 0 — QA</span>
+                <span class="checkbox-desc">
+                  Trước khi thiết kế, leader quét xem có gì chặn triển khai (API chưa xong, spec mơ hồ, PR chưa
+                  merge…). Có câu hỏi chặn thì dừng để bạn trả lời; không có thì đi thẳng vào thiết kế.
+                </span>
+              </div>
+            </label>
+
             <label class="checkbox-card">
               <input v-model="form.plan_gate" type="checkbox" class="form-checkbox" />
               <div class="checkbox-text">
@@ -397,8 +408,19 @@ const form = reactive({
   roles: PRESETS[0].roles.map(roleDraft),
   plan_gate: true,
   merge_gate: true,
+  research: false,
   limits: { ...DEFAULT_LIMITS },
 });
+
+// "Tìm hiểu trước" is remembered per project folder.
+const researchKey = () => `agents.research.${props.project?.path ?? ''}`;
+const rememberResearch = () => {
+  try {
+    localStorage.setItem(researchKey(), form.research ? '1' : '0');
+  } catch {
+    // Not remembered: the default stays.
+  }
+};
 
 const projectLabel = computed(() => {
   const path = props.project?.path ?? '';
@@ -451,6 +473,11 @@ watch(
     if (props.initialPrompt) form.request = props.initialPrompt;
     // The project's last run set these; it knows how long its work takes.
     form.limits = { ...DEFAULT_LIMITS, ...(props.project?.limits ?? {}) };
+    try {
+      form.research = localStorage.getItem(researchKey()) === '1';
+    } catch {
+      form.research = false;
+    }
   },
   { immediate: true }
 );
@@ -507,6 +534,7 @@ async function handleSubmit() {
         .map((r) => ({ role: r.role.trim(), cli: r.cli, model: r.model.trim() || null, effort: r.effort || null })),
       plan_gate: form.plan_gate,
       merge_gate: form.merge_gate,
+      research: form.research,
       limits: { ...form.limits },
     });
     form.title = '';
@@ -755,6 +783,10 @@ async function handleSubmit() {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+
+.checkbox-card.wide {
+  grid-column: 1 / -1;
 }
 
 .checkbox-card {

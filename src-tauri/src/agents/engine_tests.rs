@@ -2,7 +2,7 @@
 //! design → plan → gate 1 → implement / check / review / fix → merge.
 
 use super::adapter::Cli;
-use super::engine::{AgentEnv, AiPush, AttachPr, Engine, NewRun, WORKTREE_DIR_SETTING};
+use super::engine::{AgentEnv, AiPush, AttachPr, Engine, NewRun, QaAnswer, WORKTREE_DIR_SETTING};
 use super::git;
 use super::log::AgentLog;
 use crate::db::repos::agents::{
@@ -34,6 +34,46 @@ case "$last" in
       if [ ! -f "$here/reviewed-b" ]; then touch "$here/reviewed-b"; verdict=changes_requested; fi;;
     esac
     out '{"type":"result","subtype":"success","is_error":false,"session_id":"rev","result":"","structured_output":{"verdict":"'$verdict'","summary":"s","comments":[{"file":"b.txt","line":1,"issue":"more","severity":"must"}]}}'
+    ;;
+  *"find out whether anything blocks it"*|*"asks you to look again"*)
+    printf '%s\n' "$*" >> "$here/args-research"
+    qa='[]'
+    if [ -f "$here/research-blocker" ] && [ ! -f "$here/research-again" ]; then
+      qa='[{"id":"Q1","title":"API-361 chưa có","severity":"blocker","detail":"Không thấy route","question":"API-361 xong chưa?","assumption":"Dùng mock","source":"api_list.md"},{"id":"Q2","title":"Câu chữ","severity":"question","detail":"","question":"Dùng chữ nào?","assumption":"Theo BD","source":""}]'
+    fi
+    out '{"type":"system","subtype":"init","session_id":"research"}'
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"research","result":"","structured_output":{"summary":"Tìm hiểu xong","findings":[{"title":"API-360","status":"ready","detail":"có","source":"x"}],"qa":'"$qa"'}}'
+    ;;
+  *"a question (it is"*)
+    printf '%s\n' "$*" >> "$here/args-leaderchat"
+    out '{"type":"system","subtype":"init","session_id":"lead-chat"}'
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"lead-chat","result":"Vì a phải xong trước b"}'
+    ;;
+  *"commit-msg hook refused"*)
+    printf '%s\n' "$last" >> "$here/prompts-commit"
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"'$resume'","result":"<commit>\nfeat: add the work file\n</commit>"}'
+    ;;
+  *"Pushing this run's work was refused"*)
+    printf '%s\n' "$last" >> "$here/prompts-pushfail"
+    action=tasks
+    if [ -f "$here/push-action" ]; then action=$(cat "$here/push-action"); fi
+    tasks='[]'
+    if [ "$action" = tasks ]; then
+      tasks='[{"key":"fix-push","title":"Sửa test hỏng","role":"backend","repos":["."],"description":"test hỏng","acceptance":["xanh"],"scope":["fix-push.txt"],"depends_on":[]}]'
+    fi
+    out '{"type":"system","subtype":"init","session_id":"pf"}'
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"pf","result":"","structured_output":{"summary":"Test X hỏng","action":"'$action'","tasks":'"$tasks"'}}'
+    ;;
+  *"was refused and you found"*)
+    printf '%s\n' "$*" >> "$here/args-selffix"
+    echo work > self-fix.txt
+    out '{"type":"system","subtype":"init","session_id":"pf"}'
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"pf","result":"Đã sửa test"}'
+    ;;
+  *"You write the pull request"*)
+    printf '%s\n' "$last" >> "$here/prompts-describe"
+    out '{"type":"system","subtype":"init","session_id":"desc"}'
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"desc","result":"","structured_output":{"title":"feat: thêm a và b\nthừa","body":"**Summary**\nThêm a, b"}}'
     ;;
   *"PERSON will do by hand"*)
     printf '%s\n' "$last" >> "$here/prompts-prepare"
@@ -69,7 +109,7 @@ case "$last" in
     out '{"type":"system","subtype":"init","session_id":"'$resume'"}'
     out '{"type":"result","subtype":"success","is_error":false,"session_id":"'$resume'","result":"Design resumed"}'
     ;;
-  *"lead architect"*|*"reviewed your design"*)
+  *"lead architect"*|*"reviewed your design"*|*"Your research is settled"*)
     printf '%s\n' "$*" >> "$here/args-lead"
     out '{"type":"system","subtype":"init","session_id":"lead"}'
     if [ -f "$here/quota" ]; then
@@ -81,7 +121,7 @@ case "$last" in
     ;;
   *)
     key=""
-    case "$last" in *'Task `a`'*) key=a;; *'Task `b`'*) key=b;; *'Task `c`'*) key=c;; *'Task `fix-x`'*) key=fix-x;; esac
+    case "$last" in *'Task `a`'*) key=a;; *'Task `b`'*) key=b;; *'Task `c`'*) key=c;; *'Task `fix-x`'*) key=fix-x;; *'Task `fix-push`'*) key=fix-push;; esac
     if [ -z "$key" ]; then key=${resume#w-}; fi
     printf '%s\n' "$last" >> "$here/prompts-$key"
     printf '%s\n' "$*" >> "$here/args-$key"
@@ -100,7 +140,9 @@ case "$last" in
       done
     fi
     out '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"'$key'.txt"}}]}}'
-    out '{"type":"result","subtype":"success","is_error":false,"session_id":"w-'$key'","result":"done","usage":{"input_tokens":10,"output_tokens":2},"total_cost_usd":'$cost'}'
+    answer=done
+    if [ -f "$here/commits" ]; then answer="done\\n<commit>\\nfeat($key): add $key.txt\\n</commit>"; fi
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"w-'$key'","result":"'"$answer"'","usage":{"input_tokens":10,"output_tokens":2},"total_cost_usd":'$cost'}'
     ;;
 esac
 "#;
@@ -219,6 +261,7 @@ fn new_run(project_id: &str, plan_gate: bool) -> NewRun {
         plan_gate,
         merge_gate: true,
         limits: None,
+        research: false,
     }
 }
 
@@ -428,10 +471,20 @@ async fn a_run_keeps_its_worktrees_where_the_setting_said_when_it_started() {
     idle(&s.engine, &run.id).await;
 
     let detail = s.engine.detail(&run.id).unwrap();
-    assert_eq!(detail.run.stage, stage::MERGE_GATE, "{:?}", detail.run.status_note);
+    assert_eq!(
+        detail.run.stage,
+        stage::MERGE_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
     let wt = root.join(&run.id[..8]);
     assert!(wt.join("_integration").exists());
-    assert!(!s.env.data_dir().join("agents/wt").join(&run.id[..8]).exists());
+    assert!(!s
+        .env
+        .data_dir()
+        .join("agents/wt")
+        .join(&run.id[..8])
+        .exists());
     s.engine.discard(&run.id).await.unwrap();
     assert!(!wt.join("_integration").exists());
 
@@ -439,7 +492,11 @@ async fn a_run_keeps_its_worktrees_where_the_setting_said_when_it_started() {
         .db
         .write(|c| settings::set(c, WORKTREE_DIR_SETTING, "rel/wt"))
         .unwrap();
-    let error = s.engine.start_run(new_run(&s.project_id, false)).await.unwrap_err();
+    let error = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap_err();
     assert!(error.to_string().contains("tuyệt đối"), "{error}");
 }
 
@@ -1181,7 +1238,7 @@ async fn a_forced_review_takes_hand_made_changes_and_merges() {
     let log = git::git(&s.repo, &["log", "--format=%s", &run.integration_branch])
         .await
         .unwrap();
-    assert!(log.contains("sửa tay trước khi review lại"), "{log}");
+    assert!(log.contains("manual changes before review"), "{log}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1821,11 +1878,13 @@ async fn a_person_tests_by_hand_and_failures_become_fixes() {
         .human_chat(&qa.id, "Câu hỏi 2".into())
         .await
         .unwrap();
+    // Both in the leader's one session: the first goes on from where the
+    // guide was prepared, the second from the first.
     let chat_args = std::fs::read_to_string(s.cli_dir.join("args-chat")).unwrap();
-    assert!(
-        chat_args.lines().last().unwrap().contains("--resume chat"),
-        "{chat_args}"
-    );
+    let calls: Vec<&str> = chat_args.split("-p --output-format").skip(1).collect();
+    assert_eq!(calls.len(), 2, "{chat_args}");
+    assert!(calls[0].contains("--resume prep"), "{chat_args}");
+    assert!(calls[1].contains("--resume chat"), "{chat_args}");
 
     // C2 fails, with a screenshot.
     let shot = s.engine.human_attach(&qa.id, "lỗi c2.png", b"PNG").unwrap();
@@ -1980,4 +2039,478 @@ async fn worktrees_are_reused_and_set_up_once_pushes_included() {
     git::commit_all(&integration, "deps").await.unwrap();
     s.engine.push_to_pull_requests(&run.id).await.unwrap();
     assert_eq!(lines(), "slot-1\n_integration\n_integration\n");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ai_writes_the_pr_from_the_template_and_the_run() {
+    let s = setup(&[]).await;
+    std::fs::create_dir(s.repo.join(".github")).unwrap();
+    std::fs::write(
+        s.repo.join(".github/pull_request_template.md"),
+        "## Summary\n## Ticket\n",
+    )
+    .unwrap();
+    git::commit_all(&s.repo, "chore: template").await.unwrap();
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let draft = s.engine.pr_draft(&run.id).await.unwrap();
+    let text = s
+        .engine
+        .pr_ai_draft(&run.id, draft.repos, "Ticket ABC-1".into())
+        .await
+        .unwrap();
+    assert_eq!(text.title, "feat: thêm a và b");
+    assert_eq!(text.body, "**Summary**\nThêm a, b");
+    let prompt = std::fs::read_to_string(s.cli_dir.join("prompts-describe")).unwrap();
+    for part in [
+        "pull_request_template.md",
+        "## Ticket",
+        "cm(a)",
+        "- chore: template",
+        "a.txt",
+        "Ticket ABC-1",
+        "Thêm a và b",
+    ] {
+        assert!(prompt.contains(part), "{part}: {prompt}");
+    }
+    assert!(s
+        .engine
+        .pr_ai_draft(&run.id, Vec::new(), String::new())
+        .await
+        .is_err());
+}
+
+/// A repo with an origin, a gh that opens PR 7 and a pre-push hook that
+/// refuses until one of the fixes is there.
+async fn refusing_remote(s: &Setup) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let remote = s.cli_dir.join("remote.git");
+    git::git(&s.cli_dir, &["init", "-q", "--bare", "remote.git"])
+        .await
+        .unwrap();
+    git::git(
+        &s.repo,
+        &["remote", "add", "origin", &remote.to_string_lossy()],
+    )
+    .await
+    .unwrap();
+    let hook = s.repo.join(".git/hooks/pre-push");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> {log}\ncat >> {log}\nif [ -f fix-push.txt ] || [ -f self-fix.txt ]; then exit 0; fi\nprintf '\\033[31mFAIL\\033[0m src/x.test.ts > shows the message\\n'\nexit 1\n",
+            log = s.cli_dir.join("hook-runs").display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let gh = s.cli_dir.join("gh");
+    std::fs::write(&gh, "#!/bin/sh\necho 'https://github.com/o/r/pull/7'\n").unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    remote
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_push_goes_to_the_leader_who_hands_out_fixes_and_pushes_again() {
+    let s = setup(&[]).await;
+    let remote = refusing_remote(&s).await;
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let mut draft = s.engine.pr_draft(&run.id).await.unwrap();
+    draft.repos[0].branch = "feat/x".into();
+    assert!(s.engine.open_pull_requests(&run.id, draft).await.is_err());
+    let failure = s.engine.detail(&run.id).unwrap().push_failure.unwrap();
+    assert!(
+        failure
+            .output
+            .contains("FAIL src/x.test.ts > shows the message"),
+        "{}",
+        failure.output
+    );
+    assert!(!failure.output.contains('\u{1b}'));
+
+    s.engine.fix_push(&run.id, "xem test X".into()).unwrap();
+    idle(&s.engine, &run.id).await;
+    // Wait for the driver the fix tasks started.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    idle(&s.engine, &run.id).await;
+    let prompt = std::fs::read_to_string(s.cli_dir.join("prompts-pushfail")).unwrap();
+    assert!(prompt.contains("shows the message") && prompt.contains("xem test X"));
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        (detail.run.stage.as_str(), detail.run.status.as_str()),
+        (stage::DONE, run_status::KEPT),
+        "{:?}",
+        detail.run.status_note
+    );
+    let fix = detail.tasks.iter().find(|t| t.key == "fix-push").unwrap();
+    assert_eq!(fix.status, task_status::MERGED);
+    assert!(detail.push_failure.is_none());
+    assert_eq!(
+        detail.run.pull_requests[0].url,
+        "https://github.com/o/r/pull/7"
+    );
+    let pushed = git::git(&remote, &["log", "--oneline", "feat/x"])
+        .await
+        .unwrap();
+    assert!(pushed.contains("merge fix-push"), "{pushed}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_leader_fixes_a_failed_push_itself_or_says_why_not() {
+    let s = setup(&[]).await;
+    let remote = refusing_remote(&s).await;
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let mut draft = s.engine.pr_draft(&run.id).await.unwrap();
+    draft.repos[0].branch = "feat/x".into();
+    assert!(s.engine.open_pull_requests(&run.id, draft).await.is_err());
+
+    // Nothing the leader can do: the failure stays, with its reading.
+    std::fs::write(s.cli_dir.join("push-action"), "none").unwrap();
+    s.engine.fix_push(&run.id, String::new()).unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(detail.run.stage, stage::MERGE_GATE);
+    assert_eq!(
+        detail.run.status_note.as_deref(),
+        Some("Leader: Test X hỏng")
+    );
+    let failure = detail.push_failure.unwrap();
+    assert_eq!(failure.diagnosis.as_deref(), Some("Test X hỏng"));
+    assert_eq!(failure.action.as_deref(), Some("none"));
+
+    std::fs::write(s.cli_dir.join("push-action"), "self").unwrap();
+    s.engine.fix_push(&run.id, String::new()).unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::DONE,
+        "{:?}",
+        detail.run.status_note
+    );
+    assert!(detail.push_failure.is_none());
+    // A session of its own, in the worktree it writes to.
+    let args = std::fs::read_to_string(s.cli_dir.join("args-selffix")).unwrap();
+    assert!(!args.contains("--resume"), "{args}");
+    let pushed = git::git(&remote, &["log", "--oneline", "feat/x"])
+        .await
+        .unwrap();
+    assert!(pushed.contains("cm(push-fix)"), "{pushed}");
+    // The app ran the hook as git would, once per push (git itself skips
+    // it), and only then pushed.
+    let runs = std::fs::read_to_string(s.cli_dir.join("hook-runs")).unwrap();
+    let calls: Vec<&str> = runs.lines().filter(|l| l.starts_with("origin ")).collect();
+    assert_eq!(calls.len(), 2, "{runs}");
+    assert!(calls[0].ends_with("remote.git"), "{runs}");
+    assert!(
+        runs.contains(" refs/heads/feat/x 0000000000000000000000000000000000000000"),
+        "{runs}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn research_raises_qa_that_a_person_answers_before_the_design() {
+    let s = setup(&[]).await;
+    std::fs::write(s.cli_dir.join("research-blocker"), "").unwrap();
+    let mut new = new_run(&s.project_id, true);
+    new.research = true;
+    let run = s.engine.start_run(new).await.unwrap();
+    idle(&s.engine, &run.id).await;
+
+    // Gate 0: a blocking question stops the run.
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::QA_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+    let report = detail
+        .run
+        .research
+        .as_ref()
+        .unwrap()
+        .report
+        .clone()
+        .unwrap();
+    assert_eq!(report.qa.len(), 2);
+    assert!(s.engine.resume(&run.id).is_err());
+    assert!(s
+        .engine
+        .answer_research(
+            &run.id,
+            vec![QaAnswer {
+                id: "Q2".into(),
+                answer: "BD".into()
+            }]
+        )
+        .is_err());
+
+    // Looking again, with what is known: the blocker is gone.
+    std::fs::write(s.cli_dir.join("research-again"), "").unwrap();
+    s.engine
+        .research_again(
+            &run.id,
+            "API-361 đã merge hôm qua".into(),
+            vec![QaAnswer {
+                id: "Q2".into(),
+                answer: "BD".into(),
+            }],
+        )
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let args = std::fs::read_to_string(s.cli_dir.join("args-research")).unwrap();
+    let calls: Vec<&str> = args.split("-p --output-format").skip(1).collect();
+    assert_eq!(calls.len(), 2, "{args}");
+    assert!(calls[1].contains("--resume research") && calls[1].contains("API-361 đã merge"));
+    assert!(calls[1].contains("Answer: BD"), "{args}");
+    // Nothing blocks: the design goes on, in the research's session.
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::PLAN_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+    let lead = std::fs::read_to_string(s.cli_dir.join("args-lead")).unwrap();
+    assert!(lead.contains("--resume research") && lead.contains("Your research is settled"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_blocker_answered_at_gate_zero_reaches_the_design_and_the_pr() {
+    let s = setup(&[]).await;
+    std::fs::write(s.cli_dir.join("research-blocker"), "").unwrap();
+    let mut new = new_run(&s.project_id, false);
+    new.research = true;
+    let run = s.engine.start_run(new).await.unwrap();
+    idle(&s.engine, &run.id).await;
+    s.engine
+        .answer_research(
+            &run.id,
+            vec![QaAnswer {
+                id: "Q1".into(),
+                answer: "Xong rồi, ở PR #12".into(),
+            }],
+        )
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::MERGE_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+    let lead = std::fs::read_to_string(s.cli_dir.join("args-lead")).unwrap();
+    assert!(lead.contains("Answer: Xong rồi, ở PR #12"), "{lead}");
+    assert!(
+        lead.contains("go on with your assumption: Theo BD"),
+        "{lead}"
+    );
+    let draft = s.engine.pr_draft(&run.id).await.unwrap();
+    assert!(draft.body.contains("## QA") && draft.body.contains("→ Xong rồi, ở PR #12"));
+
+    // Chat with the leader: in its one session, kept with the run.
+    let answer = s
+        .engine
+        .leader_chat(&run.id, "Vì sao b chờ a?".into())
+        .await
+        .unwrap();
+    assert_eq!(answer.text, "Vì a phải xong trước b");
+    let session = s
+        .engine
+        .detail(&run.id)
+        .unwrap()
+        .run
+        .leader_session
+        .unwrap();
+    assert_eq!(session, "lead-chat");
+    s.engine
+        .leader_chat(&run.id, "Còn gì nữa?".into())
+        .await
+        .unwrap();
+    let args = std::fs::read_to_string(s.cli_dir.join("args-leaderchat")).unwrap();
+    let calls: Vec<&str> = args.split("-p --output-format").skip(1).collect();
+    assert!(calls[0].contains("--resume lead") && calls[1].contains("--resume lead-chat"));
+    let chat = s.engine.detail(&run.id).unwrap().run.leader_chat;
+    assert_eq!(chat.len(), 4);
+    assert_eq!(
+        (chat[0].role.as_str(), chat[1].role.as_str()),
+        ("user", "leader")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_repos_commit_hooks_do_not_stop_the_apps_own_merges() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup(&[]).await;
+    // A commitlint-like hook that refuses every message the app writes.
+    for name in ["commit-msg", "pre-merge-commit"] {
+        let hook = s.repo.join(".git/hooks").join(name);
+        std::fs::write(&hook, "#!/bin/sh\necho refused >&2\nexit 1\n").unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(detail.run.stage, stage::MERGE_GATE, "{:?}", detail.tasks);
+    assert!(detail.tasks.iter().all(|t| t.status == task_status::MERGED));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_approved_task_whose_merge_failed_is_merged_again_without_a_new_review() {
+    let s = setup(&[]).await;
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, true))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    // The leader's worktree, made ahead with its index locked: merges fail.
+    let short = &run.id[..8];
+    let place = s
+        .env
+        .data_dir()
+        .join("agents/wt")
+        .join(short)
+        .join("_integration");
+    std::fs::create_dir_all(place.parent().unwrap()).unwrap();
+    git::git(&s.repo, &["branch", &run.integration_branch, "main"])
+        .await
+        .unwrap();
+    git::git(
+        &s.repo,
+        &[
+            "worktree",
+            "add",
+            &place.to_string_lossy(),
+            &run.integration_branch,
+        ],
+    )
+    .await
+    .unwrap();
+    let lock = git::git_dir(&place).await.unwrap().join("index.lock");
+    std::fs::write(&lock, "").unwrap();
+
+    let detail = s.engine.detail(&run.id).unwrap();
+    let drafts: Vec<TaskDraft> = detail
+        .tasks
+        .iter()
+        .take(1)
+        .map(|t| TaskDraft {
+            key: t.key.clone(),
+            title: t.title.clone(),
+            role: t.role.clone(),
+            cli: t.cli.clone(),
+            description: t.description.clone(),
+            acceptance: t.acceptance.clone(),
+            scope: t.scope.clone(),
+            depends_on: Vec::new(),
+            repos: t.repos.clone(),
+            kind: t.kind.clone(),
+        })
+        .collect();
+    s.engine
+        .approve_plan(&run.id, "D".into(), "C".into(), drafts, Vec::new())
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let a = s.engine.detail(&run.id).unwrap().tasks[0].clone();
+    assert_eq!(a.status, task_status::CONFLICT, "{a:?}");
+    assert!(a
+        .status_note
+        .as_deref()
+        .unwrap()
+        .contains("không phải xung đột code"));
+    let reviews = |detail: &super::engine::RunDetail| {
+        detail
+            .invocations
+            .iter()
+            .filter(|i| i.step == "review")
+            .count()
+    };
+    let before = reviews(&s.engine.detail(&run.id).unwrap());
+
+    std::fs::remove_file(&lock).unwrap();
+    s.engine.retry_task(&a.id).await.unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(detail.tasks[0].status, task_status::MERGED);
+    assert_eq!(reviews(&detail), before);
+    assert_eq!(
+        detail.run.stage,
+        stage::MERGE_GATE,
+        "{:?}",
+        detail.run.status_note
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn workers_name_their_commits_the_way_the_repo_does() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup(&[]).await;
+    std::fs::write(s.cli_dir.join("commits"), "").unwrap();
+    std::fs::write(
+        s.repo.join("commitlint.config.js"),
+        "module.exports = { extends: ['@commitlint/config-conventional'] };\n",
+    )
+    .unwrap();
+    git::commit_all(&s.repo, "chore: add commitlint")
+        .await
+        .unwrap();
+    // A commitlint stand-in that takes no scope.
+    let hook = s.repo.join(".git/hooks/commit-msg");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nif grep -q '^feat(' \"$1\"; then echo 'scope-empty: scope must be empty' >&2; exit 1; fi\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(detail.run.stage, stage::MERGE_GATE, "{:?}", detail.tasks);
+    // The worker was told the repo's way.
+    let prompt = std::fs::read_to_string(s.cli_dir.join("prompts-a")).unwrap();
+    assert!(
+        prompt.contains("between <commit> and </commit>"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("config-conventional") && prompt.contains("- chore: add commitlint"));
+    // Its message was refused once, then corrected in its session.
+    let retry = std::fs::read_to_string(s.cli_dir.join("prompts-commit")).unwrap();
+    assert!(retry.contains("feat(a): add a.txt") && retry.contains("scope-empty"));
+    let log = git::git(&s.repo, &["log", "--format=%s", &run.integration_branch])
+        .await
+        .unwrap();
+    assert!(log.contains("feat: add the work file"), "{log}");
+    assert!(!log.lines().any(|line| line.starts_with("cm(a)")), "{log}");
+    // The handoff note does not carry the commit block.
+    assert!(!detail.tasks[0]
+        .handoff
+        .as_deref()
+        .unwrap()
+        .contains("<commit>"));
 }

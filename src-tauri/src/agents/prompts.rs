@@ -7,7 +7,8 @@
 
 use super::context::ContextFile;
 use crate::db::repos::agents::{
-    CaseResult, CheckResult, HumanRound, Project, Review, Run, Task, TestGuide, ROOT_REPO,
+    CaseResult, CheckResult, HumanRound, Project, ResearchReport, Review, Run, Task, TestGuide,
+    ROOT_REPO,
 };
 use serde_json::{json, Value};
 use std::path::Path;
@@ -20,6 +21,74 @@ pub const REVIEW_DIFF_BYTES: usize = 60 * 1024;
 const ECONOMY: &str = "Work economically: read only the files this step needs (entry points, \
 the modules involved, their conventions) and do not survey the whole codebase or verify \
 every detail; prefer targeted searches (grep, file listings) over reading whole files.";
+
+/// What goes into the repository is in the codebase's language, whatever
+/// the request's: agents told to answer in the request's language (Vietnamese)
+/// otherwise let it leak into comments.
+pub const CODE_LANGUAGE: &str = "Everything you write into the repository (code comments, \
+docstrings, identifiers, test names, log and error messages for developers, docs) follows \
+the language the codebase already uses: look at the comments around your change and match \
+them (English when they are English), even though the request, the task and these notes \
+are in another language. Text users see (UI strings, translations) follows the project's \
+i18n files. Only your answer to us (the summary, the handoff note) is in the request's \
+language.";
+
+/// How a worker turn names its commit (the orchestrator makes it).
+pub fn commit_ask(style: &str) -> String {
+    format!(
+        "Then, last, the commit message for your changes, between <commit> and </commit>: a \
+subject line, plus a body only when this repository's convention wants one. Follow the \
+repository's convention (its rules, AGENTS.md and skills win; then the commitlint config \
+and recent commits below): type, scope, case, length, language (the codebase's language, \
+not the request's). Describe the change itself; no task keys, review rounds or tool names.\n{}",
+        if style.trim().is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", style.trim())
+        }
+    )
+}
+
+/// The commit message a worker gave between <commit> and </commit>.
+pub fn commit_message(text: &str) -> Option<String> {
+    let start = text.rfind("<commit>")? + "<commit>".len();
+    let end = start + text[start..].find("</commit>")?;
+    let message = text[start..end]
+        .trim()
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim()
+        .to_string();
+    let subject = message.lines().next().unwrap_or("").trim();
+    (!subject.is_empty() && subject.len() <= 200).then_some(message)
+}
+
+/// The worker's answer without its commit message (for the handoff note).
+pub fn without_commit(text: &str) -> String {
+    match (text.rfind("<commit>"), text.rfind("</commit>")) {
+        (Some(start), Some(end)) if end > start => {
+            format!("{}{}", &text[..start], &text[end + "</commit>".len()..])
+                .trim()
+                .to_string()
+        }
+        _ => text.trim().to_string(),
+    }
+}
+
+/// The repository's commit-msg hook refused the message.
+pub fn commit_retry(message: &str, refusal: &str) -> String {
+    format!(
+        "The repository's commit-msg hook refused your commit message:
+<message>
+{message}
+</message>
+<hook-output>
+{refusal}
+</hook-output>
+Do not change any file. Reply with only a corrected commit message between <commit> and \
+</commit>."
+    )
+}
 
 /// How every worker turn ends: the note the tasks after it get.
 pub const HANDOFF_ASK: &str = "Finish with a handoff note for the teammates who work after you \
@@ -96,7 +165,9 @@ fn files_block(files: &[ContextFile]) -> String {
         .join("\n");
     format!(
         "\nThe orchestrator already prepared these files; read them instead of fetching \
-the same data again (no `gh`, no web):\n{list}\n"
+the same data again (no `gh`, no web). They are snapshots taken when the request came in \
+(a pull request's diff and comments as they were on GitHub then), so they do not show work \
+done since:\n{list}\n"
     )
 }
 
@@ -150,7 +221,19 @@ Map of the code (tracked folders with file counts), so you can go straight to wh
 <map>
 {overview}</map>
 {guides}{files}
-Request from the user:
+{task}",
+        layout = layout(run, "The current directory"),
+        economy = ECONOMY,
+        files = files_block(files),
+        guides = guides,
+        task = design_task(run, project),
+    )
+}
+
+/// The request and what the design document must hold.
+fn design_task(run: &Run, project: &Project) -> String {
+    format!(
+        "Request from the user:
 <request>
 {request}
 </request>
@@ -163,14 +246,180 @@ tasks must agree on. Be exact, this is what parallel workers will rely on.
 4. Risks and how to avoid them.
 
 The team has these worker roles: {roles}. Do not list tasks yet.
-Write the document in the same language as the request. Reply with the document only.",
+Write the document in the same language as the request, but write the contract's \
+identifiers, types, signatures and any code in the codebase's own language and naming, as \
+they will go into the code. Reply with the document only.",
         request = run.request,
         notes = notes(project),
         roles = roles_line(run),
+    )
+}
+
+/// Before the design: the lead looks for what could block the work.
+pub fn research(
+    run: &Run,
+    project: &Project,
+    overview: &str,
+    files: &[ContextFile],
+    guides: &str,
+) -> String {
+    format!(
+        "You are the lead of a small team of AI coding agents. Before anyone designs or \
+writes code for the request below, find out whether anything blocks it. Do NOT modify any \
+file. You may run read-only commands to check the real state: `git log`/`show`/`diff`, \
+`gh pr list`/`view`/`diff`, `gh issue view`, and GET requests with `curl` to services that \
+are running locally (for example a backend's API docs). Never POST, PUT, PATCH or DELETE, \
+never start or stop anything.
+{economy}
+{layout}
+Map of the code (tracked folders with file counts):
+<map>
+{overview}</map>
+{guides}{files}
+Request from the user:
+<request>
+{request}
+</request>
+{notes}
+Follow the project's rules and skills above where they say how to check this kind of work \
+(a skill that lists the sources of truth for an API, a screen or a spec wins over your own \
+habits). Look for what would stop the team or make it build the wrong thing:
+- what the work depends on that is not there or not finished (an API, an endpoint, a field, \
+a migration, a design, a pull request not merged yet);
+- specs that are missing, unclear or contradict each other or the code (docs vs code vs the \
+running system);
+- decisions only a person can take (behaviour, wording, scope, priorities);
+- anything in the environment that would stop the work (access, data, services).
+
+Report:
+- `summary`: the state in a few lines: can the work go ahead, fully or in part.
+- `findings`: what you checked, each `ready`, `missing` or `unclear`, with the detail and \
+the `source` (file path, URL, command).
+- `qa`: questions for a person, only real ones. `severity` `blocker` when the work cannot \
+be designed right without the answer; `question` when you can go on with your assumption. \
+Each has a short `id` (Q1, Q2...), a `title`, the `detail` (what you saw and why it \
+matters), the exact `question` to ask, the `assumption` you would work with unanswered and \
+the `source`. No questions when nothing blocks.
+Write in the language of the request.",
         layout = layout(run, "The current directory"),
         economy = ECONOMY,
         files = files_block(files),
         guides = guides,
+        request = run.request,
+        notes = notes(project),
+    )
+}
+
+pub fn research_schema() -> Value {
+    let text = json!({ "type": "string" });
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["summary", "findings", "qa"],
+        "properties": {
+            "summary": text,
+            "findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["title", "status", "detail", "source"],
+                    "properties": {
+                        "title": text,
+                        "status": { "type": "string", "enum": ["ready", "missing", "unclear"] },
+                        "detail": text,
+                        "source": text
+                    }
+                }
+            },
+            "qa": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["id", "title", "severity", "detail", "question", "assumption", "source"],
+                    "properties": {
+                        "id": text,
+                        "title": text,
+                        "severity": { "type": "string", "enum": ["blocker", "question"] },
+                        "detail": text,
+                        "question": text,
+                        "assumption": text,
+                        "source": text
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// The QA and its answers, for what comes after the research.
+fn qa_block(report: &ResearchReport) -> String {
+    if report.qa.is_empty() {
+        return "No open questions.".into();
+    }
+    report
+        .qa
+        .iter()
+        .map(|qa| {
+            format!(
+                "- {} [{}] {}\n  Question: {}\n  Answer: {}",
+                qa.id,
+                qa.severity,
+                qa.title,
+                qa.question,
+                match qa
+                    .answer
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|a| !a.is_empty())
+                {
+                    Some(answer) => answer.to_string(),
+                    None => format!("(none; go on with your assumption: {})", qa.assumption),
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The research again, with what the person says about it.
+pub fn research_again(report: Option<&ResearchReport>, feedback: &str) -> String {
+    format!(
+        "The user read your research report and asks you to look again:
+<feedback>
+{feedback}
+</feedback>
+{earlier}
+Check again what the feedback points at, and report in full the same way (summary, \
+findings, qa); keep the questions that are still open and drop the ones that are settled. \
+Do NOT modify any file.",
+        earlier = match report {
+            Some(report) => format!(
+                "\nYour questions so far and the answers given:\n{}\n",
+                qa_block(report)
+            ),
+            None => String::new(),
+        }
+    )
+}
+
+/// The design, in the session that did the research.
+pub fn design_after_research(run: &Run, project: &Project, report: &ResearchReport) -> String {
+    format!(
+        "Your research is settled. What you found:
+<research>
+{summary}
+</research>
+Questions and the user's answers (they win over your assumptions):
+{qa}
+
+Now design the work. Leave out what is still blocked and say so in the scope. Do NOT \
+modify any file.
+{task}",
+        summary = report.summary.trim(),
+        qa = qa_block(report),
+        task = design_task(run, project),
     )
 }
 
@@ -464,6 +713,234 @@ only when nothing `must` is left. Write the summary and issues in the language o
     )
 }
 
+/// A push was refused (the pre-push hook's checks, mostly): the lead finds
+/// out why and says what happens next.
+#[allow(clippy::too_many_arguments)]
+pub fn push_failure(
+    run: &Run,
+    target: &str,
+    error: &str,
+    output: &str,
+    done: &[&Task],
+    keys: &[String],
+    note: &str,
+    guides: &str,
+) -> String {
+    format!(
+        "You are the lead. Pushing this run's work was refused, so nothing reached the pull \
+request. Find out why. The current directory holds the run's integration branch (what was \
+being pushed) with its dependencies installed. Do NOT modify any file now.
+{layout}{guides}
+Pushed: {target}
+Error: {error}
+
+The end of the push's output (the pre-push hook runs the project's checks):
+```
+{output}
+```
+{handoffs}{note}
+How the app pushes: it fetches the base, rebases the branch onto it itself when the branch \
+is behind or carries merge commits (its own task merges are merge commits; the rebase \
+flattens them), runs the pre-push hook, then pushes with a lease. A push the base moved \
+under, or one that only needs that rebase, is a `retry`. You can never run `git rebase`, \
+`git commit` or `git push` yourself; the app does those. Read the output first: when the \
+hook's checks all passed and git still failed (a dropped connection, a refused ref, a \
+timeout), it is not the code.
+
+Read the failing tests or checks and the code they cover, and decide:
+- `retry`: the failure does not come from the code (a flaky test, the network, a machine \
+limit, a timeout): push again as it is.
+- `self`: a small, clear fix you can make yourself right now (a test that expects the old \
+behaviour, a type, lint or format error, a missing import). It is made next from your \
+`summary` alone, so name the files, the tests and the change in it.
+- `tasks`: real work for the team: split it into fix tasks like the plan (roles {roles}; keys \
+must be new, already used: {used}; `repos`, `scope`, `acceptance` as usual; put the failing \
+test names and the error in each description). The app pushes again once they are merged.
+- `none`: a person has to decide (the failure is in code this run did not touch and is not \
+flaky, or a rule forbids the change); say what they should do.
+Leave `tasks` empty unless `action` is `tasks`. `summary` explains the cause (which tests or \
+checks, why) and what happens next, in the language of the request.",
+        layout = layout(run, "The current directory"),
+        output = if output.trim().is_empty() {
+            "(no output)"
+        } else {
+            output.trim()
+        },
+        handoffs = handoffs_block(done),
+        note = if note.trim().is_empty() {
+            String::new()
+        } else {
+            format!("\nFrom the user:\n<note>\n{}\n</note>\n", note.trim())
+        },
+        roles = roles_line(run),
+        used = keys.join(", "),
+    )
+}
+
+pub fn push_failure_schema(roles: &[String], repos: &[String]) -> Value {
+    let plan = plan_schema(roles, repos);
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["summary", "action", "tasks"],
+        "properties": {
+            "summary": { "type": "string" },
+            "action": { "type": "string", "enum": ["retry", "self", "tasks", "none"] },
+            "tasks": plan["properties"]["tasks"].clone()
+        }
+    })
+}
+
+/// The lead makes the fix it chose (`self`), before the app pushes again.
+pub fn push_fix_self(
+    run: &Run,
+    target: &str,
+    summary: &str,
+    output: &str,
+    guides: &str,
+    commit_style: &str,
+) -> String {
+    format!(
+        "You are the lead of this run. Pushing its work ({target}) was refused and you found \
+why; fix it now, in this worktree (the run's integration branch; dependencies are \
+installed).
+{layout}{guides}
+What you found:
+<summary>
+{summary}
+</summary>
+
+The end of the push's output:
+```
+{output}
+```
+
+Change only what the failure needs, in the files. {code_language} Then run the failing tests \
+or checks again (only those, in the foreground; never poll for processes with `pgrep` or \
+`sleep` loops) and make sure they pass. `git rebase`, `git commit` and `git push` are blocked for you: the app \
+commits your changes, rebases onto the base when needed and pushes again. Finish with a short \
+summary of what you changed and what you ran, in the language of the request.
+{commit_ask}",
+        commit_ask = commit_ask(commit_style),
+        layout = layout(run, "The current directory"),
+        output = output.trim(),
+        code_language = CODE_LANGUAGE,
+    )
+}
+
+/// "Chat với leader": the user asks the run's lead something.
+pub fn leader_chat(run: &Run, tasks: &[Task], merged_code: bool, message: &str) -> String {
+    let list = tasks
+        .iter()
+        .map(|task| format!("- `{}` {} [{}]", task.key, task.title, task.status))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "The user asks you, the lead of this run, a question (it is {stage}, {status}). \
+Answer it from what you know of the run and from the code{code}. Do NOT modify any file and \
+do not start any work: when the question asks for changes, say what you would do and that \
+the user can send it as a follow-up request.
+Tasks of the run now:
+{list}
+
+<question>
+{message}
+</question>
+Answer in the language of the question, briefly unless asked for detail.",
+        stage = run.stage,
+        status = run.status,
+        code = if merged_code {
+            " (the current directory holds the run's work merged so far)"
+        } else {
+            ""
+        },
+        list = if list.is_empty() {
+            "(none yet)".into()
+        } else {
+            list
+        },
+    )
+}
+
+/// "Viết bằng AI" in the PR form: the title and description of the run's
+/// pull request, the way the team writes them.
+pub fn describe_pr(
+    run: &Run,
+    done: &[&Task],
+    repos: &str,
+    checks: &str,
+    note: &str,
+    guides: &str,
+) -> String {
+    let followups = run
+        .followups
+        .iter()
+        .map(|f| format!("<followup>\n{}\n</followup>", adapter_cut(&f.request, 1500)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "You write the pull request for this run's work. The current directory holds the \
+run's integration branch, which is what the pull request will contain. Do NOT modify any \
+file and run only read-only commands (reading files, `git log`, `git diff`, `git show`).
+{layout}{guides}
+Write it the way this team writes pull requests, in this order of precedence:
+1. Its rules and skills above (a skill or rule about pull requests or commits wins: title \
+format such as Conventional Commits or a ticket prefix, required sections, language).
+2. The pull request template of the repository, when there is one: keep its headings and \
+checklists, fill every section, tick only what is true.
+3. The style of the recent commit subjects of the base branch.
+Never invent ticket numbers, links, screenshots or test results: use what the request, the \
+branch name or the commits give, else leave the template's placeholder or drop the line. \
+Describe what changed and why for a reviewer, not how the agents worked; read the diff for \
+anything the notes below leave unclear.
+
+Request of the run:
+<request>
+{request}
+</request>
+{followups}{handoffs}
+Repositories of the pull request(s):
+{repos}
+
+Checks run on the integration branch:
+{checks}
+{note}
+One title and one body serve every repository listed. Write them in the language the rules \
+or the template use; when they say nothing, in the language of the request. Answer with \
+JSON matching the schema: `title` (one line) and `body` (Markdown).",
+        layout = layout(run, "The current directory"),
+        request = adapter_cut(&run.request, 3000),
+        followups = if followups.is_empty() {
+            String::new()
+        } else {
+            format!("\nFollow-up requests made after it (oldest first):\n{followups}\n")
+        },
+        handoffs = handoffs_block(done),
+        checks = if checks.trim().is_empty() {
+            "(none)"
+        } else {
+            checks
+        },
+        note = if note.trim().is_empty() {
+            String::new()
+        } else {
+            format!("\nFrom the user:\n<note>\n{}\n</note>\n", note.trim())
+        },
+    )
+}
+
+pub fn pr_text_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "body"],
+        "properties": {
+            "title": { "type": "string" },
+            "body": { "type": "string" }
+        }
+    })
+}
+
 /// "Push bằng AI": ship the run's work to its pull request the way the team
 /// pushes, solving what the orchestrator cannot (conflicts, failing hooks).
 #[allow(clippy::too_many_arguments)]
@@ -488,10 +965,13 @@ conflicts keeping the intent of both sides; what this run changed is described b
 If `origin/{branch}` has commits this branch lacks (someone pushed), keep them: rebase onto \
 or include them as the team's rules say.
 2. Run the project's checks (the pre-push hook runs them as well) and fix what breaks with \
-minimal changes; commit the fixes with clear messages.
+minimal changes; commit the fixes with messages that follow the repository's convention \
+(its rules and commitlint config, and the style of `git log origin/{base}`), in the \
+codebase's language.
 3. `git push --force-with-lease origin HEAD:{branch}`. Never `--no-verify`, never plain \
 `--force`. If the hook refuses, read why, fix it and push again.
 4. Do not open pull requests and do not push any other branch.
+{code_language}
 Dependencies are already installed in this worktree: install again only if the lockfile \
 changes. Run every command in the foreground and wait for it to finish; never poll for \
 processes with `pgrep`, `sleep` loops or the like.
@@ -508,6 +988,7 @@ and the pushed commit (`git rev-parse HEAD`). Write it in the language of the re
             format!("\nFrom the user:\n<note>\n{}\n</note>\n", note.trim())
         },
         request = adapter_cut(&run.request, 600),
+        code_language = CODE_LANGUAGE,
     )
 }
 
@@ -801,6 +1282,8 @@ pub struct Shared<'a> {
     pub guides: &'a str,
     /// Merged tasks before this one, in order.
     pub done: &'a [&'a Task],
+    /// How the task's repositories write commit messages.
+    pub commit_style: &'a str,
 }
 
 pub fn implement(
@@ -832,8 +1315,10 @@ Rules:
 - Do NOT run git commit, git push or change branches: the orchestrator commits for you \
 and opens the pull request (pushing is disabled here). Run tests and other commands freely.
 - Do not ask questions; make reasonable decisions and mention them at the end.
+- {code_language}
 - {economy}
-{handoff_ask}",
+{handoff_ask}
+{commit_ask}",
         role = task.role,
         place = if is_multi(run) {
             format!(
@@ -865,6 +1350,8 @@ the task and the contract above are not enough.\n",
         notes = notes(project),
         economy = ECONOMY,
         handoff_ask = HANDOFF_ASK,
+        code_language = CODE_LANGUAGE,
+        commit_ask = commit_ask(shared.commit_style),
     )
 }
 
@@ -892,7 +1379,7 @@ fn checks_block(checks: &[CheckResult]) -> String {
         .join("\n\n")
 }
 
-pub fn fix(review: &Review, checks: &[CheckResult]) -> String {
+pub fn fix(review: &Review, checks: &[CheckResult], commit_style: &str) -> String {
     let comments = review
         .comments
         .iter()
@@ -916,7 +1403,10 @@ Automated checks:
 {checks}
 
 Fix every `must` item (and `should` items when reasonable) in the same worktree. Same \
-rules as before: no git commit/push. {handoff_ask}",
+rules as before: no git commit/push. {code_language} {handoff_ask}
+{commit_ask}",
+        commit_ask = commit_ask(commit_style),
+        code_language = CODE_LANGUAGE,
         summary = review.summary,
         handoff_ask = HANDOFF_ASK,
         checks = checks_block(checks),
@@ -963,8 +1453,8 @@ Shared contract:
 <contract>
 {contract}
 </contract>
-
-Automated checks:
+{report}
+Automated checks (the project's configured commands; they may not cover this task's files):
 {checks}
 {scope}
 Diff against the integration branch:
@@ -972,14 +1462,28 @@ Diff against the integration branch:
 {diff}
 ```{cut}
 
-Approve only if the task is complete, matches the contract and the acceptance criteria, \
-and nothing is broken. Failing checks always mean changes_requested. Mark real problems \
-as `must`, nice-to-haves as `should`. Write the summary and issues in the language of the \
+Judge the work by this diff and the code in the workspace only: the prepared files above \
+are background from before this work (a pull request diff there shows the code as it was, \
+not as it is now). Approve only if the task is complete, matches the contract and the \
+acceptance criteria, and nothing is broken. Failing checks always mean changes_requested. \
+When the acceptance asks for tests the automated checks do not run, read the worker's report \
+and the tests in the diff; missing proof that they ran is a `should`, never a `must` by \
+itself. Mark real problems \
+as `must`, nice-to-haves as `should`. Comments, identifiers or developer messages the diff \
+adds in another language than the codebase's (for example Vietnamese comments in an English \
+codebase) are `must`. Write the summary and issues in the language of the \
 task.",
         role = task.role,
         layout = layout(run, "The current directory"),
         task = task_block(task),
         contract = run.contract.as_deref().unwrap_or("(none)"),
+        report = match task.handoff.as_deref().map(str::trim).filter(|h| !h.is_empty()) {
+            Some(handoff) => format!(
+                "\nThe worker's own report (not verified; what it says it did and ran):\n<report>\n{}\n</report>\n",
+                cut_text(handoff, 3000)
+            ),
+            None => String::new(),
+        },
         checks = checks_block(checks),
         files = files_block(files),
         guides = guides,

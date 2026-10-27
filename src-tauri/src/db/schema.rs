@@ -1,4 +1,4 @@
-pub const SCHEMA_VERSION: i64 = 23;
+pub const SCHEMA_VERSION: i64 = 24;
 pub const INIT_SQL: &str = include_str!("../../migrations/001_init.sql");
 pub const MIGRATION_002_SQL: &str = include_str!("../../migrations/002_templates.sql");
 pub const MIGRATION_003_SQL: &str = include_str!("../../migrations/003_template_history.sql");
@@ -23,3 +23,5 @@ pub const MIGRATION_020_SQL: &str = include_str!("../../migrations/020_agent_tim
 pub const MIGRATION_021_SQL: &str = include_str!("../../migrations/021_agent_pull_requests.sql");
 pub const MIGRATION_022_SQL: &str = include_str!("../../migrations/022_agent_human_tests.sql");
 pub const MIGRATION_023_SQL: &str = include_str!("../../migrations/023_agent_worktree_root.sql");
+pub const MIGRATION_024_SQL: &str =
+    include_str!("../../migrations/024_agent_research_and_leader_chat.sql");

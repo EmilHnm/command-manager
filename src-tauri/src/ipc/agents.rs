@@ -9,7 +9,8 @@ use super::commands::{buffer_bytes, StatusEvent};
 use super::{events, AppState};
 use crate::agents::adapter::{self, Cli};
 use crate::agents::engine::{
-    AgentEnv, AiPush, AttachPr, Engine, NewRun, PendingPush, PrRequest, RunDetail, Verification,
+    AgentEnv, AiPush, AttachPr, Engine, NewRun, PendingPush, PrRepo, PrRequest, PrText, QaAnswer,
+    RunDetail, Verification,
 };
 use crate::agents::git;
 use crate::agents::log::AgentLog;
@@ -449,6 +450,60 @@ pub async fn agents_run_follow_up(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn agents_pr_draft(app: AppHandle, run_id: String) -> Result<PrRequest> {
     engine(&app).pr_draft(&run_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_leader_chat(
+    app: AppHandle,
+    run_id: String,
+    message: String,
+) -> Result<repo::ChatMessage> {
+    engine(&app).leader_chat(&run_id, message).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_research_answer(
+    app: AppHandle,
+    run_id: String,
+    answers: Vec<QaAnswer>,
+) -> Result<()> {
+    engine(&app).answer_research(&run_id, answers)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_research_again(
+    app: AppHandle,
+    run_id: String,
+    feedback: String,
+    answers: Vec<QaAnswer>,
+) -> Result<()> {
+    engine(&app).research_again(&run_id, feedback, answers)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_run_fix_push(
+    app: AppHandle,
+    run_id: String,
+    note: Option<String>,
+) -> Result<()> {
+    engine(&app).fix_push(&run_id, note.unwrap_or_default())
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn agents_push_failure_dismiss(app: AppHandle, run_id: String) -> Result<()> {
+    engine(&app).dismiss_push_failure(&run_id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_pr_ai_draft(
+    app: AppHandle,
+    run_id: String,
+    repos: Vec<PrRepo>,
+    note: Option<String>,
+) -> Result<PrText> {
+    engine(&app)
+        .pr_ai_draft(&run_id, repos, note.unwrap_or_default())
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]

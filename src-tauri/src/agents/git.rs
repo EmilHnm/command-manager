@@ -13,6 +13,9 @@ async fn output(cwd: &Path, args: &[&str]) -> Result<std::process::Output> {
     Command::new("git")
         .args(args)
         .current_dir(cwd)
+        // The agents' PATH: an app started from the desktop lacks nvm's
+        // node, which the repo's own git hooks may run.
+        .env("PATH", super::adapter::child_path(Path::new("")))
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_ALL", "C")
         .stdin(std::process::Stdio::null())
@@ -213,6 +216,119 @@ pub async fn changed_between(cwd: &Path, from: &str, to: &str) -> Result<Vec<Str
         .collect())
 }
 
+/// Where a repository keeps its commitlint configuration.
+const COMMITLINT_FILES: &[&str] = &[
+    "commitlint.config.js",
+    "commitlint.config.cjs",
+    "commitlint.config.mjs",
+    "commitlint.config.ts",
+    "commitlint.config.cts",
+    "commitlint.config.mts",
+    ".commitlintrc",
+    ".commitlintrc.json",
+    ".commitlintrc.yaml",
+    ".commitlintrc.yml",
+    ".commitlintrc.js",
+    ".commitlintrc.cjs",
+    ".commitlintrc.mjs",
+    ".commitlintrc.ts",
+];
+
+/// How a repository writes commit messages: its commitlint configuration
+/// and the latest subjects on `base` (the app's own `cm(...)` ones left
+/// out). Empty when nothing is known.
+pub async fn commit_style(dir: &Path, base: &str) -> String {
+    let mut parts = Vec::new();
+    let config = COMMITLINT_FILES.iter().find_map(|name| {
+        std::fs::read_to_string(dir.join(name))
+            .ok()
+            .map(|text| (name.to_string(), text))
+    });
+    let config = config.or_else(|| {
+        let text = std::fs::read_to_string(dir.join("package.json")).ok()?;
+        let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+        let section = json.get("commitlint")?;
+        Some(("package.json \"commitlint\"".into(), section.to_string()))
+    });
+    if let Some((name, text)) = config {
+        parts.push(format!(
+            "commitlint config (`{name}`):\n```\n{}\n```",
+            cut(text, 1500).0.trim()
+        ));
+    }
+    let subjects: Vec<String> = git(dir, &["log", "-40", "--no-merges", "--format=%s", base])
+        .await
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.starts_with("cm(") && !line.starts_with("cm:"))
+        .take(15)
+        .map(|line| format!("- {line}"))
+        .collect();
+    if !subjects.is_empty() {
+        parts.push(format!(
+            "Latest commit subjects on `{base}`:\n{}",
+            subjects.join("\n")
+        ));
+    }
+    parts.join("\n\n")
+}
+
+/// Runs the repository's commit-msg hook on `message`, as `git commit`
+/// would. Err: the hook's output. No hook: Ok.
+pub async fn check_commit_msg(dir: &Path, message: &str) -> std::result::Result<(), String> {
+    let Ok(rel) = git(dir, &["rev-parse", "--git-path", "hooks/commit-msg"]).await else {
+        return Ok(());
+    };
+    let hook = dir.join(rel);
+    if !is_executable(&hook) {
+        return Ok(());
+    }
+    let Ok(git_dir) = git_dir(dir).await else {
+        return Ok(());
+    };
+    let file = git_dir.join("CM_COMMIT_MSG");
+    if std::fs::write(&file, format!("{}\n", message.trim())).is_err() {
+        return Ok(());
+    }
+    let run = Command::new("sh")
+        .args(["-c", "\"$0\" \"$1\""])
+        .arg(&hook)
+        .arg(&file)
+        .current_dir(dir)
+        .env("PATH", super::adapter::child_path(Path::new("")))
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .output();
+    let out = tokio::time::timeout(std::time::Duration::from_secs(180), run).await;
+    let _ = std::fs::remove_file(&file);
+    match out {
+        Ok(Ok(out)) if out.status.success() => Ok(()),
+        Ok(Ok(out)) => {
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            Err(cut(text.trim().to_string(), 2000).0)
+        }
+        // The hook could not run or hung: not the message's fault.
+        _ => Ok(()),
+    }
+}
+
+fn is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
+
 pub async fn delete_branch(root: &Path, branch: &str) {
     let _ = git(root, &["branch", "-D", branch]).await;
 }
@@ -389,7 +505,18 @@ pub fn cut(text: String, max_bytes: usize) -> (String, bool) {
 pub async fn merge(cwd: &Path, branch: &str, message: &str) -> std::result::Result<(), MergeError> {
     match commit(
         cwd,
-        &["merge", "--no-ff", "--no-edit", "-m", message, branch],
+        // The app's own merge commit, like its other commits: the repo's
+        // commit hooks (commitlint on `cm: merge ...`) are not for it; the
+        // pre-push hook checks what goes out.
+        &[
+            "merge",
+            "--no-ff",
+            "--no-edit",
+            "--no-verify",
+            "-m",
+            message,
+            branch,
+        ],
     )
     .await
     {
