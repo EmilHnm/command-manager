@@ -2001,7 +2001,8 @@ export const ipcClient = {
   agentsHumanFile: (taskId: string, name: string) =>
     invokeTauri<string>('agents_human_file', { task_id: taskId, name }),
 
-  agentsRunPushPrs: (runId: string) => invokeTauri<AgentRun>('agents_run_push_prs', { run_id: runId }),
+  agentsRunPushPrs: (runId: string, skipHooks = false) =>
+    invokeTauri<AgentRun>('agents_run_push_prs', { run_id: runId, skip_hooks: skipHooks }),
 
   agentsRunVerifyPrs: (runId: string) =>
     invokeTauri<Verification>('agents_run_verify_prs', { run_id: runId }),

@@ -526,8 +526,14 @@ pub async fn agents_pr_pending(app: AppHandle, run_id: String) -> Result<Vec<Pen
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn agents_run_push_prs(app: AppHandle, run_id: String) -> Result<Run> {
-    engine(&app).push_to_pull_requests(&run_id).await
+pub async fn agents_run_push_prs(
+    app: AppHandle,
+    run_id: String,
+    skip_hooks: Option<bool>,
+) -> Result<Run> {
+    engine(&app)
+        .push_to_pull_requests(&run_id, skip_hooks.unwrap_or(false))
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]

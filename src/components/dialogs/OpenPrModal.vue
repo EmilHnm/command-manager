@@ -73,6 +73,14 @@
             <input v-model="form.draft" type="checkbox" />
             <span>Tạo dạng draft</span>
           </label>
+          <label class="check">
+            <input v-model="form.skipHooks" type="checkbox" />
+            <span>Bỏ qua pre-push hook (<code>--no-verify</code>)</span>
+          </label>
+          <p v-if="form.skipHooks" class="hint warn">
+            Push mà không chạy kiểm tra của hook (test, build…). Chỉ dùng khi hook lỗi vì môi trường máy
+            này (ví dụ test không chạy được trên Windows); CI vẫn sẽ kiểm tra trên PR.
+          </p>
           </fieldset>
         </template>
         <div v-if="error" class="error">{{ error }}</div>
@@ -157,6 +165,7 @@ interface Form {
   title: string;
   body: string;
   draft: boolean;
+  skipHooks: boolean;
 }
 
 const form = ref<Form | null>(null);
@@ -307,6 +316,7 @@ watch(
         title: draft.title,
         body: draft.body,
         draft: draft.draft,
+        skipHooks: false,
       };
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
@@ -355,6 +365,7 @@ async function submit() {
     title: form.value.title.trim(),
     body: form.value.body,
     draft: form.value.draft,
+    skip_hooks: form.value.skipHooks,
   };
   try {
     const run = await ipcClient.agentsRunOpenPrs(props.runId, request);
@@ -441,6 +452,10 @@ async function submit() {
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary, #94a3b8);
+}
+
+.hint.warn {
+  color: var(--status-warning, #f59e0b);
 }
 
 .state {

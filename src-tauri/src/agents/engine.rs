@@ -125,6 +125,11 @@ pub struct PrRequest {
     /// when the branch needs it (behind its base, or merge commits).
     #[serde(default)]
     pub rebase: Option<bool>,
+    /// Push without the repo's pre-push hook (`--no-verify`): the user's
+    /// call when the hook fails for reasons of this machine (tests that do
+    /// not run on Windows), not of the change.
+    #[serde(default)]
+    pub skip_hooks: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4677,7 +4682,7 @@ impl Engine {
     /// "Push lên PR" on a finished run: its integration branch onto the
     /// branch of each pull request it has (fast-forward, hooks run, no new
     /// PR). The run stays finished.
-    pub async fn push_to_pull_requests(&self, run_id: &str) -> Result<Run> {
+    pub async fn push_to_pull_requests(&self, run_id: &str, skip_hooks: bool) -> Result<Run> {
         self.require_idle(run_id)?;
         let run = self.db().read(|c| repo::run_get(c, run_id))?;
         if run.pull_requests.is_empty() {
@@ -4690,6 +4695,7 @@ impl Engine {
         if draft.repos.is_empty() {
             return Err(Error::msg("Không có thay đổi nào để push lên PR"));
         }
+        draft.skip_hooks = skip_hooks;
         self.push_pull_requests(run_id, draft).await
     }
 
@@ -4766,6 +4772,7 @@ impl Engine {
             body,
             draft: false,
             rebase: None,
+            skip_hooks: false,
         })
     }
 
@@ -5367,8 +5374,11 @@ impl Engine {
             // connection to origin before running it, and a hook that takes
             // many minutes (the project's tests and builds) outlives that
             // connection, so git died silently once the hook had passed.
-            match self
-                .run_pre_push(
+            let hook = if request.skip_hooks {
+                log.heading("pre-push hook: bỏ qua theo yêu cầu (--no-verify)");
+                Ok(())
+            } else {
+                self.run_pre_push(
                     run_id,
                     &place,
                     branch,
@@ -5377,7 +5387,8 @@ impl Engine {
                     stop.clone(),
                 )
                 .await
-            {
+            };
+            match hook {
                 Ok(()) => {}
                 Err(message) => {
                     if rebase && !before.is_empty() {
@@ -5388,7 +5399,7 @@ impl Engine {
                 }
             }
             let refspec = format!("HEAD:refs/heads/{branch}");
-            // The hook just passed for this very commit.
+            // The hook just passed for this very commit (or was skipped).
             let mut args: Vec<String> = vec!["push".into(), "--no-verify".into()];
             if rebase {
                 // Rewrites the PR branch, but only the commit we saw there.

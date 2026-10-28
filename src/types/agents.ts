@@ -124,6 +124,8 @@ export interface PrRequest {
   title: string;
   body: string;
   draft: boolean;
+  /** Push with --no-verify: the repo's pre-push hook is not run. */
+  skip_hooks?: boolean;
 }
 
 /** What a finished run has not pushed to one of its pull requests. */

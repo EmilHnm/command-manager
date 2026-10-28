@@ -384,7 +384,7 @@
                 class="btn btn-primary btn-xs"
                 :disabled="pushing || verifying"
                 title="Push các commit mới của lượt chạy lên nhánh PR (fast-forward, hook pre-push vẫn chạy, không tạo PR mới)"
-                @click="pushToPrs"
+                @click="pushToPrs()"
               >
                 <GitFork :size="12" :class="{ spin: pushing }" />
                 <span>
@@ -394,6 +394,16 @@
                       : `${needsRebase ? 'Rebase & push' : 'Push'} lên PR${unpushed ? ` (${unpushed} commit)` : ''}`
                   }}
                 </span>
+              </button>
+              <button
+                v-if="detail.run.stage === 'done' && !detail.driving && unpushed !== 0"
+                type="button"
+                class="btn btn-ghost btn-xs"
+                :disabled="pushing || verifying"
+                title="Push mà không chạy hook pre-push (--no-verify): khi hook lỗi vì môi trường máy này, ví dụ test không chạy được trên Windows"
+                @click="pushToPrs(true)"
+              >
+                <span>--no-verify</span>
               </button>
               <button
                 v-if="(detail.run.stage === 'done' || detail.run.stage === 'merge_gate') && !detail.driving"
@@ -1999,7 +2009,7 @@ watch(
   { immediate: true }
 );
 
-const pushToPrs = () => {
+const pushToPrs = (skipHooks = false) => {
   const run = detail.value?.run;
   if (!run) return;
   const targets = pending.value
@@ -2012,16 +2022,21 @@ const pushToPrs = () => {
   ask(
     {
       title: needsRebase.value ? 'Rebase & Push Lên PR' : 'Push Lên PR',
-      message: needsRebase.value
+      message: (needsRebase.value
         ? `Nhánh chậm so với nhánh đích hoặc có commit merge (${rebaseNote}): app rebase trong worktree tạm (làm phẳng các commit merge), rồi push lên ${targets} bằng --force-with-lease — lịch sử nhánh PR được viết lại, nhưng chỉ khi nhánh trên GitHub vẫn đúng như app vừa fetch. Xung đột thì dừng, không push gì. Hook pre-push vẫn chạy.`
-        : `Push công việc mới của lượt chạy lên ${targets}? Chỉ fast-forward, hook pre-push của dự án vẫn chạy (có thể mất vài phút); không tạo PR mới.`,
+        : `Push công việc mới của lượt chạy lên ${targets}? Chỉ fast-forward, hook pre-push của dự án vẫn chạy (có thể mất vài phút); không tạo PR mới.`
+      ).concat(
+        skipHooks
+          ? ' Lần này BỎ QUA hook pre-push (--no-verify): test và build của hook không chạy trên máy này; CI của PR vẫn kiểm tra.'
+          : ''
+      ),
       confirmText: needsRebase.value ? 'Rebase & push' : 'Push',
-      danger: needsRebase.value,
+      danger: needsRebase.value || skipHooks,
     },
     async () => {
       pushing.value = true;
       try {
-        await ipcClient.agentsRunPushPrs(run.id);
+        await ipcClient.agentsRunPushPrs(run.id, skipHooks);
         notify(`Đã push lên PR: ${run.pull_requests.map((pr) => pr.url).join(' · ')}`, 'info');
       } finally {
         pushing.value = false;
