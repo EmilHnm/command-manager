@@ -3,7 +3,10 @@
 //! a cancel (the run's "Dừng ngay" or the tab's stop), taking the CLI's
 //! child processes with it.
 
-use super::adapter::{child_path, launch, prompt_on_stdin, Cli, LogLine, Outcome, Parser, Quota};
+use super::adapter::{
+    child_path, git_config_env, launch, prompt_on_stdin, quiet_command, Cli, LogLine, Outcome,
+    Parser, Quota,
+};
 use super::log::AgentLog;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -92,7 +95,8 @@ pub async fn run(
     } else {
         None
     };
-    let mut cmd = Command::new(&program);
+    let mut cmd = quiet_command(&program);
+    git_config_env(&mut cmd);
     cmd.args(&lead)
         .args(&args)
         .current_dir(spawn.cwd)
@@ -272,11 +276,11 @@ pub async fn run_shell(
     stop: watch::Receiver<bool>,
 ) -> Result<(bool, Option<i32>, String), RunError> {
     let mut cmd = if cfg!(windows) {
-        let mut cmd = Command::new("cmd");
+        let mut cmd = quiet_command("cmd");
         cmd.args(["/C", command]);
         cmd
     } else {
-        let mut cmd = Command::new("sh");
+        let mut cmd = quiet_command("sh");
         cmd.args(["-c", command]);
         cmd
     };
@@ -293,7 +297,7 @@ pub async fn run_program(
     log: &AgentLog,
     stop: watch::Receiver<bool>,
 ) -> Result<(bool, Option<i32>, String), RunError> {
-    let mut cmd = Command::new(program);
+    let mut cmd = quiet_command(program);
     cmd.args(args);
     let what = program.file_name().map_or_else(
         || program.to_string_lossy().into_owned(),
@@ -313,6 +317,7 @@ async fn watch_output(
     mut stop: watch::Receiver<bool>,
 ) -> Result<(bool, Option<i32>, String), RunError> {
     // Same PATH as the agents: a desktop-started app may lack ~/.local/bin.
+    git_config_env(&mut cmd);
     cmd.current_dir(cwd)
         .env("PATH", child_path(Path::new("")))
         .stdin(Stdio::null())

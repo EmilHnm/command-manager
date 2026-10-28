@@ -144,7 +144,7 @@ pub struct CliInfo {
 async fn version_of(program: &Path) -> Option<String> {
     let output = tokio::time::timeout(
         Duration::from_secs(10),
-        tokio::process::Command::new(program)
+        adapter::quiet_command(program)
             .arg("--version")
             .env("PATH", adapter::child_path(program))
             .stdin(std::process::Stdio::null())

@@ -7,7 +7,7 @@
 //!   visibility, priority}]}`; `visibility: "list"` is what its picker shows.
 //! - claude has no list: its aliases.
 
-use super::adapter::{child_path, Cli};
+use super::adapter::{child_path, quiet_command, Cli};
 use crate::error::{Error, Result};
 use serde::Serialize;
 use serde_json::Value;
@@ -44,7 +44,7 @@ pub async fn list(cli: Cli, program: &Path) -> Result<Vec<ModelInfo>> {
         Cli::Cursor => &["models"],
         Cli::Codex => &["debug", "models"],
     };
-    let run = tokio::process::Command::new(program)
+    let run = quiet_command(program)
         .args(args)
         .env("PATH", child_path(program))
         .env("NO_COLOR", "1")

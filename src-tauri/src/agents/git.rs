@@ -1,17 +1,18 @@
 //! The git work of a run, through the `git` CLI: worktrees per task, app
 //! commits, diffs for review, merges into the integration branch.
 
+use super::adapter::quiet_command;
 use crate::error::{Error, Result};
 use std::path::{Path, PathBuf};
-use tokio::process::Command;
 
 /// Commits the app makes when the repo has no identity configured.
 const FALLBACK_NAME: &str = "Command Manager Agents";
 const FALLBACK_EMAIL: &str = "agents@command-manager.local";
 
 async fn output(cwd: &Path, args: &[&str]) -> Result<std::process::Output> {
-    Command::new("git")
-        .args(args)
+    let mut cmd = quiet_command("git");
+    super::adapter::git_config_env(&mut cmd);
+    cmd.args(args)
         .current_dir(cwd)
         // The agents' PATH: an app started from the desktop lacks nvm's
         // node, which the repo's own git hooks may run.
@@ -290,7 +291,9 @@ pub async fn check_commit_msg(dir: &Path, message: &str) -> std::result::Result<
     if std::fs::write(&file, format!("{}\n", message.trim())).is_err() {
         return Ok(());
     }
-    let run = Command::new("sh")
+    let mut cmd = quiet_command(super::adapter::sh());
+    super::adapter::git_config_env(&mut cmd);
+    let run = cmd
         .args(["-c", "\"$0\" \"$1\""])
         .arg(&hook)
         .arg(&file)
@@ -690,5 +693,38 @@ mod tests {
         delete_branch(&root, "cm/r/t1").await;
         assert!(!task.exists());
         assert!(!branch_exists(&root, "cm/r/t1").await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn worktrees_stay_lf_when_the_repo_asks_for_crlf() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("repo");
+        std::fs::create_dir(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]).await.unwrap();
+        // What Git for Windows sets system-wide.
+        git(&root, &["config", "core.autocrlf", "true"])
+            .await
+            .unwrap();
+        std::fs::write(root.join("a.txt"), "one\ntwo\n").unwrap();
+        assert!(commit_all(&root, "init").await.unwrap());
+        let base = commit_of(&root, "HEAD").await.unwrap();
+        ensure_branch(&root, "cm/r/t1", &base).await.unwrap();
+        let task = dir.path().join("wt/t1");
+        ensure_worktree(&root, &task, "cm/r/t1").await.unwrap();
+        assert_eq!(std::fs::read(task.join("a.txt")).unwrap(), b"one\ntwo\n");
+
+        // An agent writing CRLF still commits LF.
+        std::fs::write(task.join("b.txt"), "x\r\ny\r\n").unwrap();
+        assert!(commit_all(&task, "cm(t1): crlf").await.unwrap());
+        let blob = git(&task, &["show", "HEAD:b.txt"]).await.unwrap();
+        assert!(!blob.contains('\r'));
+        assert!(dirty_files(&task).await.unwrap().is_empty());
+        // The repo's own config is left as it was.
+        assert_eq!(
+            git(&root, &["config", "--local", "core.autocrlf"])
+                .await
+                .unwrap(),
+            "true"
+        );
     }
 }

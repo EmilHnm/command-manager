@@ -8,7 +8,7 @@
 //!
 //! Files live in `<run dir>/context`, outside every worktree.
 
-use super::adapter::{child_path, search_path};
+use super::adapter::{child_path, quiet_command, search_path};
 use super::git;
 use super::log::AgentLog;
 use super::workspace;
@@ -217,7 +217,7 @@ pub fn find_gh() -> Option<PathBuf> {
 }
 
 pub async fn gh_output(gh: &Path, args: &[&str]) -> Result<String, String> {
-    let run = tokio::process::Command::new(gh)
+    let run = quiet_command(gh)
         .args(args)
         .env("PATH", child_path(gh))
         .env("NO_COLOR", "1")

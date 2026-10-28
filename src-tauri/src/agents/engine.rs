@@ -5083,7 +5083,7 @@ impl Engine {
             input.to_string_lossy().into_owned(),
         ];
         let result =
-            process::run_program(Path::new("sh"), &args, place, PUSH_TIMEOUT, log, stop).await;
+            process::run_program(&adapter::sh(), &args, place, PUSH_TIMEOUT, log, stop).await;
         let _ = std::fs::remove_file(&input);
         match result {
             Ok((true, _, _)) => {

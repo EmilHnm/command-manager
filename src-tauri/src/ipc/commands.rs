@@ -2027,18 +2027,29 @@ pub fn fs_read_folder_files(path: String, deep: bool) -> Result<Vec<String>> {
     Ok(files)
 }
 
+/// Async so the dialog never blocks the main (UI) thread: Tauri runs a sync
+/// command there, and the window would show "Not responding" while it is open.
 #[tauri::command]
-pub fn dialog_pick_folder() -> Result<Option<String>> {
+pub async fn dialog_pick_folder() -> Result<Option<String>> {
+    tauri::async_runtime::spawn_blocking(pick_folder_blocking)
+        .await
+        .map_err(|e| Error::msg(e.to_string()))?
+}
+
+fn pick_folder_blocking() -> Result<Option<String>> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
+        // A topmost owner keeps the dialog in front of the app instead of
+        // opening behind it; UTF-8 output keeps non-ASCII paths intact.
         let output = std::process::Command::new("powershell")
             .creation_flags(CREATE_NO_WINDOW)
             .args([
                 "-NoProfile",
+                "-STA",
                 "-Command",
-                r#"[System.Reflection.Assembly]::LoadWithPartialName('System.windows.forms') | Out-Null; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Chọn thư mục'; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }"#,
+                r#"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; $o = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $false }; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Chọn thư mục'; if ($f.ShowDialog($o) -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }; $o.Dispose()"#,
             ])
             .output()
             .map_err(|e| Error::msg(e.to_string()))?;

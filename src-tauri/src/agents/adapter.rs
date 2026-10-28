@@ -126,10 +126,11 @@ const CLAUDE_BLOCKED_TOOLS: &[&str] = &[
 ];
 
 /// The CLI reads its prompt from stdin: [`args`]' last item is written there
-/// instead. cursor-agent's prompt, with the rules and context it carries, can
-/// pass Windows' 32767-character command line ("os error 206").
+/// instead. A prompt with the rules and context it carries, or a review with
+/// its diff and check output, can pass Windows' 32767-character command line
+/// ("os error 206"). Claude reads it after the trailing `--` it is given.
 pub fn prompt_on_stdin(cli: Cli) -> bool {
-    matches!(cli, Cli::Cursor)
+    matches!(cli, Cli::Cursor | Cli::Claude)
 }
 
 /// Arguments after the program name. The prompt is always an argument of
@@ -933,7 +934,57 @@ pub fn extra_bin_dirs() -> Vec<PathBuf> {
     if let Some(appdata) = std::env::var_os("APPDATA") {
         dirs.push(PathBuf::from(appdata).join("npm"));
     }
+    #[cfg(windows)]
+    dirs.extend(git_for_windows_dirs());
     dirs
+}
+
+/// Git for Windows' sh and the unix tools git hooks call (husky's `sh`,
+/// `dirname`, `grep`): an app started from the desktop has only `Git\cmd` on
+/// its PATH. Last on the PATH, so Windows' own tools still come first.
+#[cfg(windows)]
+fn git_for_windows_dirs() -> Vec<PathBuf> {
+    let from_path = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|dir| dir.join("git.exe").is_file())
+        // `Git\cmd`, `Git\bin` or `Git\mingw64\bin`.
+        .flat_map(|dir| {
+            dir.ancestors()
+                .skip(1)
+                .take(2)
+                .map(Path::to_path_buf)
+                .collect::<Vec<_>>()
+        });
+    let installed = ["ProgramFiles", "ProgramW6432", "LOCALAPPDATA"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .flat_map(|base| {
+            let base = PathBuf::from(base);
+            [base.join("Git"), base.join("Programs").join("Git")]
+        });
+    from_path
+        .chain(installed)
+        .find(|root| root.join("usr").join("bin").join("sh.exe").is_file())
+        .map(|root| {
+            vec![
+                root.join("usr").join("bin"),
+                root.join("mingw64").join("bin"),
+            ]
+        })
+        .unwrap_or_default()
+}
+
+/// The `sh` that runs git hooks, by full path when it is found (on Windows,
+/// Git for Windows' own); bare `sh` otherwise.
+pub fn sh() -> PathBuf {
+    let name = if cfg!(windows) { "sh.exe" } else { "sh" };
+    search_path()
+        .into_iter()
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from("sh"))
 }
 
 /// PATH entries to search: the process PATH, then [`extra_bin_dirs`].
@@ -985,6 +1036,35 @@ fn is_executable(path: &Path) -> bool {
     }
 }
 
+/// A process the app starts without a console window: the app is a GUI
+/// process, so on Windows every console tool would flash a window of its own.
+pub fn quiet_command(program: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = tokio::process::Command::new(program);
+    #[cfg(windows)]
+    cmd.creation_flags(crate::process::platform::CREATE_NO_WINDOW);
+    cmd
+}
+
+/// Git settings for every git the app or its agents run, through git's
+/// environment config (kept out of the user's repo config, which a worktree
+/// shares): checkouts stay LF as committed, and CRLF is made LF on add. A
+/// system `core.autocrlf=true` (Git for Windows) otherwise leaves every file
+/// CRLF, failing formatters that want LF and merges in the app's worktrees.
+pub fn git_config_env(cmd: &mut tokio::process::Command) {
+    const SETTINGS: [(&str, &str); 1] = [("core.autocrlf", "input")];
+    // After any the app itself was started with.
+    let first = std::env::var("GIT_CONFIG_COUNT")
+        .ok()
+        .and_then(|count| count.parse::<usize>().ok())
+        .unwrap_or(0);
+    for (i, (key, value)) in SETTINGS.iter().enumerate() {
+        cmd.env(format!("GIT_CONFIG_KEY_{}", first + i), key)
+            .env(format!("GIT_CONFIG_VALUE_{}", first + i), value);
+    }
+    cmd.env("GIT_CONFIG_COUNT", (first + SETTINGS.len()).to_string());
+}
+
 /// PATH for a CLI process: its own folder first (a node script finds the
 /// node it was installed with), then everything searched.
 pub fn child_path(program: &Path) -> std::ffi::OsString {
@@ -1027,12 +1107,10 @@ async fn cursor_node(program: &Path) -> Option<(PathBuf, PathBuf)> {
     // The launcher first moves a downloaded update into place.
     let promote = versions.join("promote-staged.cmd");
     if promote.is_file() {
-        let mut cmd = tokio::process::Command::new(&promote);
+        let mut cmd = quiet_command(&promote);
         cmd.stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
-        #[cfg(windows)]
-        cmd.creation_flags(crate::process::platform::CREATE_NO_WINDOW);
         let _ = cmd.status().await;
     }
     let newest = std::fs::read_dir(&versions)
@@ -1078,6 +1156,20 @@ fn cursor_version(name: &str) -> Option<[u32; 6]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// With Git for Windows installed, hooks get its sh even when the app's
+    /// PATH has only `Git\cmd`.
+    #[cfg(windows)]
+    #[test]
+    fn git_hooks_find_git_for_windows_sh() {
+        let dirs = git_for_windows_dirs();
+        if dirs.is_empty() {
+            return; // no Git for Windows on this machine
+        }
+        assert!(dirs[0].join("sh.exe").is_file());
+        let sh = sh();
+        assert!(sh.is_absolute() && sh.is_file(), "{sh:?}");
+    }
 
     #[test]
     fn cursor_versions_order_by_date_then_build_time() {
