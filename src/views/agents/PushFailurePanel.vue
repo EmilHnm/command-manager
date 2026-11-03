@@ -65,6 +65,7 @@ const ACTIONS: Record<string, string> = {
   retry: 'Push lại',
   self: 'Leader tự sửa',
   tasks: 'Giao task sửa',
+  rebase: 'Leader giải xung đột',
   none: 'Cần bạn quyết định',
 };
 

@@ -68,7 +68,7 @@
             <ExternalLink :size="13" />
           </button>
         </header>
-        <div v-show="!isCollapsed(lane.key)" class="lane-body">
+        <div v-if="!isCollapsed(lane.key)" class="lane-body">
           <XtermPane
             v-if="terminals[lane.shown.id]"
             :key="terminals[lane.shown.id]!.runEventId"
@@ -167,27 +167,51 @@ const expanded = ref<string | null>(null);
 const terminals = reactive<Record<string, { commandId: number; runEventId: string }>>({});
 const errors = reactive<Record<string, string>>({});
 
+/** Track user-explicit toggle actions */
+const userInteracted = reactive<Record<string, boolean>>({});
 /** Map of collapsed status per lane key */
 const collapsed = reactive<Record<string, boolean>>({});
 
-const isCollapsed = (key: string) => !!collapsed[key];
+const isCollapsed = (key: string): boolean => {
+  if (key in collapsed) {
+    return collapsed[key];
+  }
+  const lane = lanes.value.find((l) => l.key === key);
+  return lane ? !lane.running : true;
+};
 
 const toggleCollapse = (key: string) => {
-  collapsed[key] = !collapsed[key];
+  const current = isCollapsed(key);
+  collapsed[key] = !current;
+  userInteracted[key] = true;
+  if (collapsed[key] && expanded.value === key) {
+    expanded.value = null;
+  }
   checkCollapseChange();
+  if (!collapsed[key]) {
+    // Just expanded, fetch data
+    void ensureTerminals();
+  }
 };
 
 const checkCollapseChange = () => {
   if (lanes.value.length === 0) return;
-  const all = lanes.value.every((l) => collapsed[l.key]);
+  const all = lanes.value.every((l) => isCollapsed(l.key));
   emit('collapse-change', all);
 };
 
 const setAllCollapsed = (target: boolean) => {
   for (const lane of lanes.value) {
     collapsed[lane.key] = target;
+    userInteracted[lane.key] = true;
+  }
+  if (target) {
+    expanded.value = null;
   }
   emit('collapse-change', target);
+  if (!target) {
+    void ensureTerminals();
+  }
 };
 
 defineExpose({
@@ -274,6 +298,9 @@ const lanes = computed<Lane[]>(() => {
 const pin = (lane: string, id: string) => {
   if (id) pinned[lane] = id;
   else delete pinned[lane];
+  if (!isCollapsed(lane)) {
+    void ensureTerminals();
+  }
 };
 
 // A log tab is opened (or rebuilt from its saved output) once per invocation.
@@ -282,6 +309,9 @@ let retry: number | undefined;
 
 const ensureTerminals = async () => {
   for (const lane of lanes.value) {
+    // Lazy-load: only fetch/open terminal when the lane is actively expanded
+    if (isCollapsed(lane.key)) continue;
+
     const item = lane.shown;
     if (terminals[item.id] || opening.has(item.id)) continue;
     opening.add(item.id);
@@ -293,8 +323,8 @@ const ensureTerminals = async () => {
       delete errors[item.id];
     } catch (error) {
       errors[item.id] = error instanceof Error ? error.message : String(error);
-      // A process just starting has no tab yet: try again shortly.
-      if (!item.finished_at) {
+      // A process just starting has no tab yet: try again shortly if lane is still opened.
+      if (!item.finished_at && !isCollapsed(lane.key)) {
         window.clearTimeout(retry);
         retry = window.setTimeout(() => void ensureTerminals(), 500);
       }
@@ -304,9 +334,23 @@ const ensureTerminals = async () => {
   }
 };
 
-watch(() => lanes.value.map((lane) => lane.shown.id).join(), () => void ensureTerminals(), {
-  immediate: true,
-});
+watch(
+  lanes,
+  (newLanes) => {
+    for (const lane of newLanes) {
+      if (!(lane.key in collapsed)) {
+        // Mặc định: terminal đang triển khai thì mở, còn lại đóng
+        collapsed[lane.key] = !lane.running;
+      } else if (lane.running && !userInteracted[lane.key] && collapsed[lane.key]) {
+        // Tự động mở khi lane bắt đầu triển khai nếu người dùng chưa chủ động đóng
+        collapsed[lane.key] = false;
+      }
+    }
+    checkCollapseChange();
+    void ensureTerminals();
+  },
+  { immediate: true, deep: true }
+);
 
 onUnmounted(() => window.clearTimeout(retry));
 </script>

@@ -93,6 +93,9 @@ pub struct Request<'a> {
     pub budget_usd: Option<f64>,
     /// Folders outside `cwd` the agent reads (the run's context files).
     pub extra_dirs: &'a [PathBuf],
+    /// The step's time limit, for CLIs that can stop themselves (the app
+    /// stops them too).
+    pub timeout: Option<std::time::Duration>,
 }
 
 /// Commands a worker leaves to the orchestrator (it commits, merges and
@@ -244,6 +247,11 @@ pub fn args(cli: Cli, request: &Request) -> Vec<String> {
             }
             if let Some(effort) = &profile.effort {
                 push(&["--effort", effort]);
+            }
+            if let Some(timeout) = request.timeout {
+                // Ends the turn itself a little before the app would kill it.
+                let secs = timeout.as_secs().saturating_sub(60).max(60);
+                push(&["--print-timeout", &format!("{secs}s")]);
             }
         }
         Cli::Cursor => {
@@ -477,6 +485,14 @@ pub struct Parser {
     pending_text: String,
     /// codex: the last agent message is the answer.
     last_message: Option<String>,
+    /// agy: usage of this turn's model calls, added up. Its result reports
+    /// the whole conversation's, every earlier turn of a resumed one too.
+    step_usage: Option<(u64, u64)>,
+    /// agy: this turn answered, and reported no error of its own. Its result
+    /// keeps the conversation's last error: a turn resumed after one that ran
+    /// out of quota ends "ERROR, quota reached" though it did all its work.
+    agy_answered: bool,
+    agy_errored: bool,
 }
 
 impl Parser {
@@ -486,6 +502,9 @@ impl Parser {
             outcome: Outcome::default(),
             pending_text: String::new(),
             last_message: None,
+            step_usage: None,
+            agy_answered: false,
+            agy_errored: false,
         }
     }
 
@@ -758,14 +777,25 @@ impl Parser {
                 let state = str_at(step, "state");
                 match str_at(step, "step_type") {
                     "agent_response" => {
+                        if let Some(usage) = step.get("usage").filter(|_| state == "DONE") {
+                            let (input, output) = self.step_usage.unwrap_or_default();
+                            self.step_usage = Some((
+                                input
+                                    + num_at(usage, "input_tokens")
+                                    + num_at(usage, "cache_read_tokens"),
+                                output + num_at(usage, "output_tokens"),
+                            ));
+                        }
                         self.pending_text.push_str(str_at(step, "text_delta"));
                         if state == "DONE" {
                             let text = std::mem::take(&mut self.pending_text);
                             if !text.trim().is_empty() {
+                                self.agy_answered = true;
                                 out.push(LogLine::Text(text.trim().to_string()));
                             }
                         }
                     }
+                    "error_message" => self.agy_errored = true,
                     "tool" if state == "ACTIVE" => {
                         let info = step.get("tool_info");
                         out.push(LogLine::Tool(
@@ -789,7 +819,9 @@ impl Parser {
                     outcome.session_id = Some(id.to_string());
                 }
                 outcome.text = str_at(result, "response").trim().to_string();
-                if let Some(usage) = result.get("usage") {
+                if let Some((input, output)) = self.step_usage {
+                    (outcome.input_tokens, outcome.output_tokens) = (input, output);
+                } else if let Some(usage) = result.get("usage") {
                     outcome.input_tokens =
                         num_at(usage, "input_tokens") + num_at(usage, "cache_read_tokens");
                     outcome.output_tokens = num_at(usage, "output_tokens");
@@ -799,7 +831,14 @@ impl Parser {
                     .and_then(Value::as_array)
                     .map_or(0, |list| list.len() as u32);
                 let status = str_at(result, "status");
-                if !status.is_empty() && status != "SUCCESS" {
+                let stale = self.agy_answered && !self.agy_errored;
+                if !status.is_empty() && status != "SUCCESS" && stale {
+                    out.push(LogLine::Info(format!(
+                        "agy vẫn báo lỗi của một lượt trước trong hội thoại ({}); lượt này đã \
+                         trả lời xong nên bỏ qua",
+                        str_at(result, "error").trim()
+                    )));
+                } else if !status.is_empty() && status != "SUCCESS" {
                     // "Individual quota reached. ... Resets in 149h8m18s."
                     let error = str_at(result, "error").trim();
                     let message = if error.is_empty() {
@@ -1337,6 +1376,7 @@ mod tests {
                 profile: &profile,
                 budget_usd: None,
                 extra_dirs: &[],
+                timeout: None,
             };
             let args = args(cli, &request).join(" ");
             for flag in [
@@ -1364,6 +1404,7 @@ mod tests {
             profile: &CliProfile::default(),
             budget_usd: Some(1.5),
             extra_dirs: &[],
+            timeout: None,
         };
         assert_eq!(
             args(Cli::Codex, &request),
@@ -1378,6 +1419,30 @@ mod tests {
         );
         let agy = args(Cli::Agy, &request);
         assert_eq!(&agy[agy.len() - 2..], ["-p", "do it"]);
+        // agy ends the turn itself a minute before the app's limit.
+        let timed = Request {
+            timeout: Some(std::time::Duration::from_secs(30 * 60)),
+            ..request
+        };
+        let agy = args(Cli::Agy, &timed).join(" ");
+        assert!(agy.contains("--print-timeout 1740s"), "{agy}");
+        assert!(!args(Cli::Claude, &timed)
+            .join(" ")
+            .contains("print-timeout"));
+    }
+
+    #[test]
+    fn a_resumed_agy_turn_counts_its_own_calls_not_the_conversations() {
+        let (_, outcome) = feed(
+            Cli::Agy,
+            &[
+                r#"{"event":"init","conversation_id":"c1"}"#,
+                r#"{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","text_delta":"a","usage":{"input_tokens":100,"output_tokens":5,"cache_read_tokens":900}}}"#,
+                r#"{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","text_delta":"b","usage":{"input_tokens":50,"output_tokens":7,"cache_read_tokens":1950}}}"#,
+                r#"{"event":"result","result":{"conversation_id":"c1","status":"SUCCESS","response":"ab","usage":{"input_tokens":90000,"output_tokens":800,"cache_read_tokens":5000000}}}"#,
+            ],
+        );
+        assert_eq!((outcome.input_tokens, outcome.output_tokens), (3000, 12));
     }
     #[test]
     fn claude_steps_are_capped_and_counted_over_the_whole_session() {
@@ -1391,6 +1456,7 @@ mod tests {
             profile: &CliProfile::default(),
             budget_usd: Some(2.345),
             extra_dirs: &[PathBuf::from("/runs/r1/context")],
+            timeout: None,
         };
         let args = super::args(Cli::Claude, &request);
         let at = |flag: &str| args.iter().position(|arg| arg == flag).unwrap();
@@ -1417,6 +1483,7 @@ mod tests {
         let shipping = Request {
             access: Access::Push,
             extra_dirs: &git_dir,
+            timeout: None,
             ..write
         };
         let claude = super::args(Cli::Claude, &shipping);
@@ -1461,5 +1528,34 @@ mod tests {
         assert!(outcome.hit_limit());
         assert_eq!(outcome.limit_resets_in(), Some(149 * 3600 + 8 * 60 + 18));
         assert_eq!(outcome.session_id.as_deref(), Some("c9"));
+    }
+
+    #[test]
+    fn a_resumed_agy_turn_is_not_failed_by_the_conversations_old_error() {
+        let quota = "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 95h1m4s.";
+        // The turn that ran out: an error step of its own.
+        let (_, outcome) = feed(
+            Cli::Agy,
+            &[
+                r#"{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","text_delta":"reading"}}"#,
+                r#"{"event":"step_update","step_update":{"state":"DONE","step_type":"error_message"}}"#,
+                format!(r#"{{"event":"result","result":{{"conversation_id":"c1","status":"ERROR","response":"","error":"{quota}"}}}}"#).as_str(),
+            ],
+        );
+        assert!(outcome.hit_limit());
+        // The next one did its work; the result still carries that error.
+        let (log, outcome) = feed(
+            Cli::Agy,
+            &[
+                r#"{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","text_delta":"done\n<commit>\nfix: x\n</commit>"}}"#,
+                format!(r#"{{"event":"result","result":{{"conversation_id":"c1","status":"ERROR","response":"done\n<commit>\nfix: x\n</commit>","error":"{quota}"}}}}"#).as_str(),
+            ],
+        );
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert!(!outcome.hit_limit());
+        assert!(outcome.text.contains("<commit>"));
+        assert!(log
+            .iter()
+            .any(|line| matches!(line, LogLine::Info(text) if text.contains("bỏ qua"))));
     }
 }

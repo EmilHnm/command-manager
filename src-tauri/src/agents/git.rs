@@ -376,6 +376,96 @@ pub async fn rebase(worktree: &Path, upstream: &str) -> std::result::Result<(), 
     }
 }
 
+/// Starts rebasing the worktree's HEAD onto `upstream` and leaves it where
+/// it stops: the files in conflict, none when it went through.
+pub async fn rebase_start(worktree: &Path, upstream: &str) -> Result<Vec<String>> {
+    let started = commit(worktree, &["rebase", "--no-verify", "-q", upstream]).await;
+    rebase_stop(worktree, started.err()).await
+}
+
+/// Stages the resolved files and lets the stopped rebase go on, to its
+/// next stop (the files in conflict) or its end (none).
+pub async fn rebase_continue(worktree: &Path) -> Result<Vec<String>> {
+    git(worktree, &["add", "-A"]).await?;
+    let mut went = commit(
+        worktree,
+        &["-c", "core.editor=true", "rebase", "--continue"],
+    )
+    .await;
+    if went.is_err() && rebasing(worktree).await && conflicted(worktree).await.is_empty() {
+        // The resolution left the commit empty (the base already had it).
+        went = git(worktree, &["rebase", "--skip"]).await;
+    }
+    rebase_stop(worktree, went.err()).await
+}
+
+async fn rebase_stop(worktree: &Path, error: Option<Error>) -> Result<Vec<String>> {
+    let files = conflicted(worktree).await;
+    match error {
+        Some(error) if files.is_empty() => {
+            let _ = output(worktree, &["rebase", "--abort"]).await;
+            Err(error)
+        }
+        _ => Ok(files),
+    }
+}
+
+/// `ancestor` is in `of`'s history.
+pub async fn is_ancestor(cwd: &Path, ancestor: &str, of: &str) -> bool {
+    output(cwd, &["merge-base", "--is-ancestor", ancestor, of])
+        .await
+        .is_ok_and(|out| out.status.success())
+}
+
+/// A rebase is stopped in the worktree.
+pub async fn rebasing(worktree: &Path) -> bool {
+    match git_dir(worktree).await {
+        Ok(dir) => dir.join("rebase-merge").exists() || dir.join("rebase-apply").exists(),
+        Err(_) => false,
+    }
+}
+
+/// The files git holds in conflict.
+pub async fn conflicted(worktree: &Path) -> Vec<String> {
+    git(worktree, &["diff", "--name-only", "--diff-filter=U"])
+        .await
+        .map(|out| out.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+/// Of `files`, those that still hold conflict markers.
+pub fn with_markers(worktree: &Path, files: &[String]) -> Vec<String> {
+    files
+        .iter()
+        .filter(|file| {
+            std::fs::read_to_string(worktree.join(file)).is_ok_and(|text| {
+                text.lines()
+                    .any(|line| line.starts_with("<<<<<<< ") || line.starts_with(">>>>>>> "))
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+/// The commit a stopped rebase is applying, and how far along it is.
+pub async fn rebase_step(worktree: &Path) -> (String, Option<(u32, u32)>) {
+    let commit = git(worktree, &["log", "-1", "--format=%h %s", "REBASE_HEAD"])
+        .await
+        .unwrap_or_default();
+    let progress = match git_dir(worktree).await {
+        Ok(dir) => {
+            let read = |name: &str| {
+                std::fs::read_to_string(dir.join("rebase-merge").join(name))
+                    .ok()
+                    .and_then(|text| text.trim().parse::<u32>().ok())
+            };
+            read("msgnum").zip(read("end"))
+        }
+        Err(_) => None,
+    };
+    (commit, progress)
+}
+
 /// Whether `head` has to be rebased before it may go on top of `base`:
 /// `base` is not in its history, or it carries merge commits `base` lacks
 /// (repos whose hooks refuse both). False when `base` is unknown.
@@ -538,6 +628,58 @@ pub async fn merge(cwd: &Path, branch: &str, message: &str) -> std::result::Resu
             }
         }
     }
+}
+
+/// Brings `branch` into `cwd` as one commit (`git merge --squash`), with
+/// `message`. Nothing new: no commit. On a conflict the worktree is put back
+/// and the conflicting files are returned as the error.
+pub async fn squash_merge(
+    cwd: &Path,
+    branch: &str,
+    message: &str,
+) -> std::result::Result<(), MergeError> {
+    if let Err(error) = git(cwd, &["merge", "--squash", "-q", branch]).await {
+        let conflicts = conflicted(cwd).await;
+        let _ = git(cwd, &["reset", "-q", "--merge"]).await;
+        return Err(if conflicts.is_empty() {
+            MergeError::Failed(error.to_string())
+        } else {
+            MergeError::Conflict(conflicts)
+        });
+    }
+    let staged = output(cwd, &["diff", "--cached", "--quiet"])
+        .await
+        .map_err(|error| MergeError::Failed(error.to_string()))?;
+    if staged.status.success() {
+        return Ok(());
+    }
+    // The app's commit: the repo's commit hooks are not for it; the
+    // pre-push hook checks what goes out.
+    commit(cwd, &["commit", "-q", "--no-verify", "-m", message])
+        .await
+        .map(|_| ())
+        .map_err(|error| MergeError::Failed(error.to_string()))
+}
+
+/// The commit messages of `from..to`, oldest first.
+pub async fn messages(cwd: &Path, from: &str, to: &str) -> Vec<String> {
+    git(
+        cwd,
+        &[
+            "log",
+            "--reverse",
+            "--format=%B%x00",
+            &format!("{from}..{to}"),
+        ],
+    )
+    .await
+    .map(|out| {
+        out.split('\0')
+            .map(|message| message.trim().to_string())
+            .filter(|message| !message.is_empty())
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 #[derive(Debug)]

@@ -10,7 +10,7 @@ use super::{events, AppState};
 use crate::agents::adapter::{self, Cli};
 use crate::agents::engine::{
     AgentEnv, AiPush, AttachPr, Engine, NewRun, PendingPush, PrRepo, PrRequest, PrText, QaAnswer,
-    RunDetail, Verification,
+    RunCommits, RunDetail, Verification,
 };
 use crate::agents::git;
 use crate::agents::log::AgentLog;
@@ -603,6 +603,16 @@ pub async fn agents_run_discard(app: AppHandle, run_id: String) -> Result<()> {
 #[tauri::command(rename_all = "snake_case")]
 pub async fn agents_run_clean_worktrees(app: AppHandle, run_id: String) -> Result<()> {
     engine(&app).clean_worktrees(&run_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_run_commits(app: AppHandle, run_id: String) -> Result<RunCommits> {
+    engine(&app).run_commits(&run_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn agents_run_squash(app: AppHandle, run_id: String, message: String) -> Result<u32> {
+    engine(&app).squash_run(&run_id, &message).await
 }
 
 #[tauri::command(rename_all = "snake_case")]

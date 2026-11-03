@@ -193,6 +193,22 @@ pub struct AiPush {
     pub note: Option<String>,
 }
 
+/// "Gộp commit": what the run's integration branch carries over its base,
+/// per repo, and the message proposed for the one commit.
+#[derive(Debug, Clone, Serialize)]
+pub struct RunCommits {
+    pub repos: Vec<RepoCommits>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoCommits {
+    pub repo: String,
+    pub base: String,
+    /// Oldest first.
+    pub subjects: Vec<String>,
+}
+
 /// What a finished run has not pushed to one of its pull requests yet.
 #[derive(Debug, Clone, Serialize)]
 pub struct PendingPush {
@@ -268,6 +284,8 @@ const VERIFICATION_FILE: &str = "verification.json";
 /// push goes through.
 const PUSH_FAILURE_FILE: &str = "push-failure.json";
 /// How much of a failed push's output the leader reads.
+/// Conflicted commits the leader resolves in one rebase before giving up.
+const MAX_REBASE_STOPS: u32 = 40;
 const PUSH_OUTPUT_BYTES: usize = 24_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -291,6 +309,10 @@ pub struct PushFailure {
     /// Fix tasks are on it: the run pushes again once they are merged.
     #[serde(default)]
     pub retry: bool,
+    /// The rebase onto the base stopped on conflicts: the leader resolves
+    /// them in the integration worktree, no triage.
+    #[serde(default)]
+    pub conflict: bool,
 }
 
 /// The end of a terminal log as plain text: no colours or cursor moves, a
@@ -1258,6 +1280,11 @@ impl Engine {
                 }),
             _ => (0.0, 0, 0),
         };
+        // A worker's task may have its own; review and leader steps use the run's.
+        let timeout_minutes = task
+            .filter(|_| phase == Phase::Work)
+            .and_then(|task| task.timeout_minutes)
+            .unwrap_or(run.limits.timeout_minutes);
         let args = adapter::args(
             cli,
             &adapter::Request {
@@ -1271,6 +1298,7 @@ impl Engine {
                 // Claude holds the whole session to the budget.
                 budget_usd: Some(budget + earlier.0),
                 extra_dirs: &extra_dirs,
+                timeout: Some(Duration::from_secs(timeout_minutes as u64 * 60)),
             },
         );
 
@@ -1320,11 +1348,6 @@ impl Engine {
                 ""
             }
         ));
-        // A worker's task may have its own; review and leader steps use the run's.
-        let timeout_minutes = task
-            .filter(|_| phase == Phase::Work)
-            .and_then(|task| task.timeout_minutes)
-            .unwrap_or(run.limits.timeout_minutes);
         let started = Instant::now();
         let result = process::run(
             Spawn {
@@ -3568,15 +3591,24 @@ impl Engine {
 
     /// Merges the task branch into the integration branch, repo by repo
     /// (only repos where the task has commits).
+    /// One commit per task on the integration branch (squashed), named by
+    /// the worker's own message: its fix rounds and the app's merge commits
+    /// no longer pile up, nor get replayed one by one when the push rebases.
     async fn merge_task(&self, run: &Run, integration: &Path, task: &Task) -> Step<()> {
         let branch = task.branch.clone().unwrap_or_default();
-        let message = format!("cm: merge {} — {}", task.key, task.title);
         for repo in &run.repos {
             let dir = workspace::repo_dir(integration, &repo.path);
             if git::ahead(&dir, &run.integration_branch, &branch).await? == 0 {
                 continue;
             }
-            let note = match git::merge(&dir, &branch, &message).await {
+            // The first message the worker wrote (its implementation); the
+            // app's own `cm(...)` ones only when it wrote none.
+            let message = git::messages(&dir, &run.integration_branch, &branch)
+                .await
+                .into_iter()
+                .find(|message| !message.starts_with("cm(") && !message.starts_with("cm:"))
+                .unwrap_or_else(|| format!("cm({}): {}", task.key, task.title));
+            let note = match git::squash_merge(&dir, &branch, &message).await {
                 Ok(()) => continue,
                 Err(MergeError::Conflict(files)) => format!(
                     "Xung đột merge: {}",
@@ -3694,6 +3726,20 @@ impl Engine {
                 .await
             {
                 Ok(_) => Ok(Flow::Stop),
+                // The base moved under the fixes: the leader resolves the
+                // rebase now instead of waiting for the button.
+                Err(_) if self.push_failure(&run.id).is_some_and(|f| f.conflict) => {
+                    let note = match self.fix_push_inner(&run.id, "", control).await {
+                        Ok(note) => note.unwrap_or_default(),
+                        Err(error) => format!("Leader chưa giải xong xung đột rebase: {error}"),
+                    };
+                    let now = self.db().read(|c| repo::run_get(c, &run.id))?;
+                    if now.stage == stage::DONE {
+                        self.update_run(&run.id, |run| run.status_note = Some(note))?;
+                        return Ok(Flow::Stop);
+                    }
+                    self.wait(&now, &format!("{note} — bấm \"Leader xử lý lỗi push\""))
+                }
                 Err(error) => self.wait(
                     run,
                     &format!("Push lại vẫn lỗi: {error} — bấm \"Leader xử lý lỗi push\""),
@@ -3919,6 +3965,147 @@ impl Engine {
             return Err(Error::msg("Chỉ dọn worktree khi lượt chạy đã kết thúc"));
         }
         self.cleanup_worktrees(&run, false).await
+    }
+
+    /// Where a repo's commits of the run start: the integration branch's
+    /// merge base with origin's base branch (the PR's, when there is one),
+    /// else with the base the run started from.
+    async fn squash_base(&self, run: &Run, root: &Path, repo: &repo::RunRepo) -> Result<String> {
+        let base = run
+            .pull_requests
+            .iter()
+            .find(|pr| pr.repo == repo.path)
+            .map_or(repo.base_branch.clone(), |pr| pr.base.clone());
+        let _ = git::git(root, &["fetch", "origin", &base]).await;
+        let remote = format!("refs/remotes/origin/{base}");
+        let from = if git::commit_of(root, &remote).await.is_ok() {
+            remote
+        } else {
+            repo.base_branch.clone()
+        };
+        match git::git(root, &["merge-base", &from, &run.integration_branch]).await {
+            Ok(commit) if !commit.is_empty() => Ok(commit),
+            _ => Ok(repo.base_commit.clone()),
+        }
+    }
+
+    /// "Gộp commit": the run's commits per repo and a message for them.
+    pub async fn run_commits(&self, run_id: &str) -> Result<RunCommits> {
+        let run = self.db().read(|c| repo::run_get(c, run_id))?;
+        let project = self.project(&run)?;
+        let mut repos = Vec::new();
+        for repo in &run.repos {
+            let root = workspace::repo_dir(Path::new(&project.path), &repo.path);
+            let from = self.squash_base(&run, &root, repo).await?;
+            let subjects: Vec<String> = git::git(
+                &root,
+                &[
+                    "log",
+                    "--reverse",
+                    "--no-merges",
+                    "--format=%s",
+                    &format!("{from}..{}", run.integration_branch),
+                ],
+            )
+            .await
+            .map(|out| out.lines().map(str::to_string).collect())
+            .unwrap_or_default();
+            if subjects.is_empty() {
+                continue;
+            }
+            repos.push(RepoCommits {
+                repo: repo.path.clone(),
+                base: from,
+                subjects,
+            });
+        }
+        // The pull request's title when one was written, then what the
+        // workers' own commits said.
+        let title = self
+            .push_failure(run_id)
+            .map(|failure| failure.request.title)
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or_else(|| run.title.clone());
+        let mut seen = std::collections::HashSet::new();
+        let points: Vec<String> = repos
+            .iter()
+            .flat_map(|repo| repo.subjects.iter())
+            .filter(|subject| !subject.starts_with("cm(") && !subject.starts_with("cm:"))
+            .filter(|subject| seen.insert(subject.to_string()))
+            .map(|subject| format!("- {subject}"))
+            .collect();
+        let message = if points.is_empty() {
+            title
+        } else {
+            format!("{title}\n\n{}", points.join("\n"))
+        };
+        Ok(RunCommits { repos, message })
+    }
+
+    /// "Gộp commit": the integration branch of each repo becomes one commit
+    /// over where it left its base. A PR already pushed is rewritten on the
+    /// next push, with a lease.
+    pub async fn squash_run(&self, run_id: &str, message: &str) -> Result<u32> {
+        self.require_idle(run_id)?;
+        let message = message.trim();
+        if message.is_empty() {
+            return Err(Error::msg("Hãy nhập commit message"));
+        }
+        let run = self.db().read(|c| repo::run_get(c, run_id))?;
+        let kept = run.stage == stage::DONE && run.status == run_status::KEPT;
+        if run.stage != stage::MERGE_GATE && !kept {
+            return Err(Error::msg(
+                "Gộp commit khi lượt chạy ở Cổng 2 hoặc đã kết thúc ở \"Giữ nhánh\"",
+            ));
+        }
+        let project = self.project(&run)?;
+        let integration = self.ensure_integration(&run, &project).await?;
+        let mut squashed = 0;
+        for repo in &run.repos {
+            let root = workspace::repo_dir(Path::new(&project.path), &repo.path);
+            let place = workspace::repo_dir(&integration, &repo.path);
+            let label = workspace::label(&repo.path);
+            let from = self.squash_base(&run, &root, repo).await?;
+            let count = git::git(&place, &["rev-list", "--count", &format!("{from}..HEAD")])
+                .await?
+                .trim()
+                .parse::<u32>()
+                .unwrap_or(0);
+            if count < 2 {
+                continue;
+            }
+            if git::rebasing(&place).await || !git::dirty_files(&place).await?.is_empty() {
+                return Err(Error::msg(format!(
+                    "{label}Worktree tích hợp đang có thay đổi chưa commit hoặc rebase dở"
+                )));
+            }
+            let before = git::commit_of(&place, "HEAD").await?;
+            git::git(&place, &["reset", "-q", "--soft", &from]).await?;
+            if let Err(error) = git::commit_all(&place, message).await {
+                let _ = git::reset_worktree(&place, &before).await;
+                return Err(error);
+            }
+            // Same code, one commit.
+            let same = git::git(&place, &["diff", "--quiet", &before, "HEAD"]).await;
+            if same.is_err() {
+                let _ = git::reset_worktree(&place, &before).await;
+                return Err(Error::msg(format!(
+                    "{label}Gộp commit làm đổi code; đã hoàn tác"
+                )));
+            }
+            squashed += count;
+        }
+        if squashed == 0 {
+            return Err(Error::msg(
+                "Không có gì để gộp: mỗi repo chỉ có tối đa 1 commit",
+            ));
+        }
+        self.update_run(run_id, |run| {
+            run.status_note = Some(format!(
+                "Đã gộp {squashed} commit thành một; push lần tới ghi đè nhánh PR (có lease)"
+            ));
+        })?;
+        Ok(squashed)
     }
 
     /// Whether a run still has worktrees on disk.
@@ -4925,6 +5112,20 @@ impl Engine {
             note,
             &guides,
         );
+        if failure.conflict {
+            failure.action = Some("rebase".into());
+            failure.diagnosis = Some(format!(
+                "Rebase lên nhánh gốc bị xung đột ({}); leader giải từng chỗ dừng trong worktree \
+                 tích hợp rồi push lại",
+                target
+            ));
+            self.save_push_failure(run_id, Some(&failure))?;
+            let resolved = self
+                .resolve_rebase(&run, &project, &failure, &integration, &guides, control)
+                .await?;
+            let summary = format!("đã giải xung đột rebase: {resolved}");
+            return Ok(Some(self.push_again(run_id, &failure, &summary).await));
+        }
         let parse = |value: Value| -> Result<(String, String, Vec<PlanTask>)> {
             #[derive(Deserialize)]
             struct Answer {
@@ -5028,6 +5229,110 @@ impl Engine {
             }
             _ => Ok(Some(format!("Leader: {summary}"))),
         }
+    }
+
+    /// Rebases the integration branch onto each pushed repo's base, the
+    /// leader resolving every stop in one session; the branch as it was when
+    /// a stop is left unresolved. Says what the leader did.
+    async fn resolve_rebase(
+        &self,
+        run: &Run,
+        project: &Project,
+        failure: &PushFailure,
+        integration: &Path,
+        guides: &str,
+        control: &Control,
+    ) -> Result<String> {
+        let leader = run.leader_cli.clone();
+        let mut session: Option<String> = None;
+        let mut said: Vec<String> = Vec::new();
+        for pr in &failure.request.repos {
+            let root = workspace::repo_dir(Path::new(&project.path), &pr.repo);
+            let place = workspace::repo_dir(integration, &pr.repo);
+            let base = pr.base.trim();
+            let _ = git::git(&root, &["fetch", "origin", base]).await;
+            let base_ref = format!("refs/remotes/origin/{base}");
+            if !git::needs_rebase(&root, &base_ref, &run.integration_branch).await {
+                continue;
+            }
+            git::abort_in_progress(&place).await;
+            let before = git::commit_of(&place, "HEAD").await?;
+            let undo = |error: String| async {
+                let _ = git::reset_worktree(&place, &before).await;
+                Error::msg(error)
+            };
+            let mut files = git::rebase_start(&place, &base_ref).await?;
+            let mut stops = 0;
+            while git::rebasing(&place).await {
+                if files.is_empty() {
+                    files = match git::rebase_continue(&place).await {
+                        Ok(files) => files,
+                        Err(error) => return Err(undo(error.to_string()).await),
+                    };
+                    continue;
+                }
+                stops += 1;
+                if stops > MAX_REBASE_STOPS {
+                    return Err(undo(format!(
+                        "Rebase dừng quá {MAX_REBASE_STOPS} lần; hãy rebase tay"
+                    ))
+                    .await);
+                }
+                let (commit, progress) = git::rebase_step(&place).await;
+                let prompt = prompts::resolve_conflicts(
+                    run,
+                    &pr.repo,
+                    base,
+                    &commit,
+                    progress,
+                    &files,
+                    guides,
+                    session.is_none(),
+                );
+                let answer = match self
+                    .invoke(
+                        run,
+                        None,
+                        &leader,
+                        "push",
+                        &format!("{leader} · giải xung đột rebase"),
+                        Access::Write,
+                        integration,
+                        session.as_deref(),
+                        prompt,
+                        None,
+                        control,
+                    )
+                    .await
+                {
+                    Ok(answer) => answer,
+                    Err(error) => return Err(undo(error.message()).await),
+                };
+                if let Some(error) = answer.error {
+                    return Err(undo(error).await);
+                }
+                session = answer.session_id.or(session);
+                let left = git::with_markers(&place, &files);
+                if !left.is_empty() {
+                    return Err(undo(format!(
+                        "Leader chưa giải hết xung đột ở {} (commit {commit}); nhánh tích hợp \
+                         được giữ như trước",
+                        left.join(", ")
+                    ))
+                    .await);
+                }
+                said.push(adapter::shorten(answer.text.trim(), 300));
+                files = match git::rebase_continue(&place).await {
+                    Ok(files) => files,
+                    Err(error) => return Err(undo(error.to_string()).await),
+                };
+            }
+        }
+        Ok(if said.is_empty() {
+            "không còn xung đột".into()
+        } else {
+            said.join(" · ")
+        })
     }
 
     /// Pushes what failed again; the note says how it went.
@@ -5315,6 +5620,7 @@ impl Engine {
             }
         };
         let mut failed_repo = String::new();
+        let mut conflict = false;
         for pr in &request.repos {
             failed_repo = pr.repo.clone();
             let (branch, base) = (pr.branch.trim(), pr.base.trim());
@@ -5354,11 +5660,14 @@ impl Engine {
                 log.heading(&format!("{label}git rebase origin/{base}"));
                 let rebased = match git::rebase(&place, &base_ref).await {
                     Ok(()) => Ok(()),
-                    Err(MergeError::Conflict(files)) => Err(format!(
-                        "Rebase lên origin/{base} bị xung đột, chưa push gì: {}. Hãy dùng \
-                         \"Push bằng AI\" hoặc rebase tay rồi Gắn PR / push lại",
-                        files.join(", ")
-                    )),
+                    Err(MergeError::Conflict(files)) => {
+                        conflict = true;
+                        Err(format!(
+                            "Rebase lên origin/{base} bị xung đột, chưa push gì: {}. Bấm \
+                             \"Leader xử lý lỗi push\" để leader giải xung đột rồi push lại",
+                            files.join(", ")
+                        ))
+                    }
                     Err(MergeError::Failed(message)) => Err(format!("Rebase lỗi: {message}")),
                 };
                 match rebased {
@@ -5401,7 +5710,12 @@ impl Engine {
             let refspec = format!("HEAD:refs/heads/{branch}");
             // The hook just passed for this very commit (or was skipped).
             let mut args: Vec<String> = vec!["push".into(), "--no-verify".into()];
-            if rebase {
+            // Squashed ("Gộp commit") since the last push: not on top of it.
+            let rewritten = match &remote_head {
+                Some(head) => !git::is_ancestor(&place, head, "HEAD").await,
+                None => false,
+            };
+            if rebase || rewritten {
                 // Rewrites the PR branch, but only the commit we saw there.
                 args.push(format!(
                     "--force-with-lease=refs/heads/{branch}:{}",
@@ -5516,6 +5830,7 @@ impl Engine {
                 action: None,
                 fix_tasks: Vec::new(),
                 retry: false,
+                conflict,
             };
             let _ = self.save_push_failure(run_id, Some(&failure));
             self.update_run(run_id, |run| run.pull_requests = saved)?;

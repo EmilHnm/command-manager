@@ -26,6 +26,12 @@ repos='["."]'
 if [ -f "$here/plan-repos" ]; then repos=$(cat "$here/plan-repos"); fi
 out() { printf '%s\n' "$1"; }
 case "$last" in
+  *"is rebasing the run's integration branch"*|*"The rebase went on and stopped again"*)
+    printf '%s\n' "$*" >> "$here/args-rebase"
+    printf 'resolved\n' > a.txt
+    out '{"type":"system","subtype":"init","session_id":"rb"}'
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"rb","result":"Giữ cả hai"}'
+    ;;
   *"lead reviewer"*)
     out '{"type":"system","subtype":"init","session_id":"rev"}'
     verdict=approved
@@ -563,6 +569,7 @@ async fn real_clis_answer_review_json() {
                 profile: &profile,
                 budget_usd: None,
                 extra_dirs: &[],
+                timeout: None,
             },
         );
         let log = AgentLog::new("real".into(), 256 * 1024, None);
@@ -1190,7 +1197,10 @@ async fn gate_two_pushes_and_opens_a_pull_request_once() {
     let pushed = git::git(&remote, &["log", "--oneline", "feat/cart"])
         .await
         .unwrap();
-    assert!(pushed.contains("merge c"), "{pushed}");
+    // One commit per task, no merge commits.
+    assert!(pushed.contains("cm(c): Task C"), "{pushed}");
+    assert_eq!(pushed.lines().count(), 4, "{pushed}");
+    assert!(!pushed.contains("merge"), "{pushed}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1238,7 +1248,15 @@ async fn a_forced_review_takes_hand_made_changes_and_merges() {
     let log = git::git(&s.repo, &["log", "--format=%s", &run.integration_branch])
         .await
         .unwrap();
-    assert!(log.contains("manual changes before review"), "{log}");
+    // The hand-made changes go out in the task's one commit.
+    assert_eq!(log, "cm(b): Task B\ncm(a): Task A\ninit", "{log}");
+    let a_txt = git::git(
+        &s.repo,
+        &["show", &format!("{}:a.txt", run.integration_branch)],
+    )
+    .await
+    .unwrap();
+    assert!(a_txt.contains("by hand"), "{a_txt}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1382,7 +1400,7 @@ async fn a_pr_opened_by_hand_is_attached_and_followed_up_on_its_branch() {
         .await
         .unwrap();
     assert!(
-        pushed.contains("manual") && pushed.contains("merge c"),
+        pushed.contains("manual") && pushed.contains("cm(c): Task C"),
         "{pushed}"
     );
     let args = std::fs::read_to_string(s.cli_dir.join("gh-args")).unwrap();
@@ -1568,7 +1586,8 @@ async fn a_kept_run_pushes_what_its_pr_lacks() {
 
     let pending = s.engine.pending_pushes(&run.id).await.unwrap();
     assert_eq!(pending[0].branch, "feat/manual");
-    assert_eq!(pending[0].commits, Some(2));
+    // Task c, squashed into one commit.
+    assert_eq!(pending[0].commits, Some(1));
     let done = s.engine.push_to_pull_requests(&run.id).await.unwrap();
     assert_eq!(
         (done.stage.as_str(), done.status.as_str()),
@@ -1577,7 +1596,7 @@ async fn a_kept_run_pushes_what_its_pr_lacks() {
     let pushed = git::git(&remote, &["log", "--oneline", "feat/manual"])
         .await
         .unwrap();
-    assert!(pushed.contains("merge c"), "{pushed}");
+    assert!(pushed.contains("cm(c): Task C"), "{pushed}");
     assert_eq!(
         s.engine.pending_pushes(&run.id).await.unwrap()[0].commits,
         Some(0)
@@ -2024,7 +2043,7 @@ async fn worktrees_are_reused_and_set_up_once_pushes_included() {
     let pushed = git::git(&remote, &["log", "--oneline", "feat/x"])
         .await
         .unwrap();
-    assert!(pushed.contains("merge c"), "{pushed}");
+    assert!(pushed.contains("cm(c): Task C"), "{pushed}");
     assert_eq!(lines(), "slot-1\n_integration\n");
 
     // A dependency change installs again where it lands.
@@ -2161,7 +2180,7 @@ async fn a_failed_push_goes_to_the_leader_who_hands_out_fixes_and_pushes_again()
     let pushed = git::git(&remote, &["log", "--oneline", "feat/x"])
         .await
         .unwrap();
-    assert!(pushed.contains("merge fix-push"), "{pushed}");
+    assert!(pushed.contains("cm(fix-push): Sửa test hỏng"), "{pushed}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2220,6 +2239,179 @@ async fn the_leader_fixes_a_failed_push_itself_or_says_why_not() {
         runs.contains(" refs/heads/feat/x 0000000000000000000000000000000000000000"),
         "{runs}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_push_whose_rebase_conflicts_is_resolved_by_the_leader_not_by_tasks() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup(&[]).await;
+    let remote = refusing_remote(&s).await;
+    let hook = s.repo.join(".git/hooks/pre-push");
+    std::fs::write(&hook, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    // The base moves on meanwhile, over a file the run wrote too.
+    let mut draft = s.engine.pr_draft(&run.id).await.unwrap();
+    draft.repos[0].branch = "feat/x".into();
+    let base = draft.repos[0].base.clone();
+    std::fs::write(s.repo.join("a.txt"), "theirs\n").unwrap();
+    git::commit_all(&s.repo, "base: a").await.unwrap();
+    git::git(&s.repo, &["push", "-q", "origin", &base])
+        .await
+        .unwrap();
+
+    let error = s
+        .engine
+        .open_pull_requests(&run.id, draft)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("xung đột"), "{error}");
+    let failure = s.engine.detail(&run.id).unwrap().push_failure.unwrap();
+    assert!(failure.conflict);
+
+    // No triage, no fix task: the leader resolves the stop, the app pushes.
+    s.engine.fix_push(&run.id, String::new()).unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::DONE,
+        "{:?}",
+        detail.run.status_note
+    );
+    assert!(detail.push_failure.is_none());
+    assert!(!s.cli_dir.join("prompts-pushfail").exists());
+    assert_eq!(detail.tasks.len(), 2);
+    let args = std::fs::read_to_string(s.cli_dir.join("args-rebase")).unwrap();
+    assert!(args.contains("a.txt") && args.contains("origin/"), "{args}");
+    let pushed = git::git(&remote, &["show", "feat/x:a.txt"]).await.unwrap();
+    assert_eq!(pushed, "resolved");
+    // On top of the base, merge commits flattened.
+    git::git(&remote, &["merge-base", "--is-ancestor", &base, "feat/x"])
+        .await
+        .unwrap();
+    let merges = git::git(
+        &remote,
+        &["rev-list", "--merges", &format!("{base}..feat/x")],
+    )
+    .await
+    .unwrap();
+    assert!(merges.is_empty(), "{merges}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_repush_after_fix_tasks_that_conflicts_goes_straight_to_the_leader() {
+    let s = setup(&[]).await;
+    let remote = refusing_remote(&s).await;
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let mut draft = s.engine.pr_draft(&run.id).await.unwrap();
+    draft.repos[0].branch = "feat/x".into();
+    let base = draft.repos[0].base.clone();
+    assert!(s.engine.open_pull_requests(&run.id, draft).await.is_err());
+    // While the fix task works, the base moves over a file of the run.
+    std::fs::write(s.repo.join("a.txt"), "theirs\n").unwrap();
+    git::commit_all(&s.repo, "base: a").await.unwrap();
+    git::git(&s.repo, &["push", "-q", "--no-verify", "origin", &base])
+        .await
+        .unwrap();
+
+    s.engine.fix_push(&run.id, String::new()).unwrap();
+    idle(&s.engine, &run.id).await;
+    let detail = s.engine.detail(&run.id).unwrap();
+    assert_eq!(
+        detail.run.stage,
+        stage::DONE,
+        "{:?}",
+        detail.run.status_note
+    );
+    assert!(detail.push_failure.is_none());
+    assert!(s.cli_dir.join("args-rebase").exists());
+    let pushed = git::git(&remote, &["show", "feat/x:a.txt"]).await.unwrap();
+    assert_eq!(pushed, "resolved");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_runs_commits_are_squashed_into_one_and_the_pr_rewritten_with_a_lease() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup(&[]).await;
+    let remote = refusing_remote(&s).await;
+    let hook = s.repo.join(".git/hooks/pre-push");
+    std::fs::write(&hook, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let run = s
+        .engine
+        .start_run(new_run(&s.project_id, false))
+        .await
+        .unwrap();
+    idle(&s.engine, &run.id).await;
+    let mut draft = s.engine.pr_draft(&run.id).await.unwrap();
+    draft.repos[0].branch = "feat/x".into();
+    let base = draft.repos[0].base.clone();
+    git::git(&s.repo, &["push", "-q", "--no-verify", "origin", &base])
+        .await
+        .unwrap();
+    s.engine.open_pull_requests(&run.id, draft).await.unwrap();
+    let tree = |r: &str| {
+        let repo = s.repo.clone();
+        let r = r.to_string();
+        async move {
+            git::git(&repo, &["rev-parse", &format!("{r}^{{tree}}")])
+                .await
+                .unwrap()
+        }
+    };
+    let before = tree(&run.integration_branch).await;
+
+    let commits = s.engine.run_commits(&run.id).await.unwrap();
+    assert_eq!(commits.repos.len(), 1);
+    assert_eq!(
+        commits.repos[0].subjects,
+        vec!["cm(a): Task A", "cm(b): Task B"]
+    );
+    assert!(!commits.message.trim().is_empty());
+    assert!(s.engine.squash_run(&run.id, "  ").await.is_err());
+
+    let squashed = s
+        .engine
+        .squash_run(&run.id, "feat: add a and b")
+        .await
+        .unwrap();
+    assert_eq!(squashed, 2);
+    // Same code, one commit over the base.
+    assert_eq!(tree(&run.integration_branch).await, before);
+    let log = git::git(
+        &s.repo,
+        &[
+            "log",
+            "--format=%s",
+            &format!("{base}..{}", run.integration_branch),
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(log, "feat: add a and b");
+    // Nothing left to squash.
+    assert!(s.engine.squash_run(&run.id, "x").await.is_err());
+
+    // The PR had the two commits: pushed over them, with a lease.
+    let pending = s.engine.pending_pushes(&run.id).await.unwrap();
+    assert_eq!(pending[0].commits, Some(1));
+    s.engine.push_to_pull_requests(&run.id).await.unwrap();
+    let pushed = git::git(&remote, &["log", "--format=%s", "feat/x"])
+        .await
+        .unwrap();
+    assert_eq!(pushed.lines().next(), Some("feat: add a and b"), "{pushed}");
+    assert_eq!(pushed.lines().count(), 2, "{pushed}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

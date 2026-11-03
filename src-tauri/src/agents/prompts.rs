@@ -750,10 +750,13 @@ timeout), it is not the code.
 Read the failing tests or checks and the code they cover, and decide:
 - `retry`: the failure does not come from the code (a flaky test, the network, a machine \
 limit, a timeout): push again as it is.
-- `self`: a small, clear fix you can make yourself right now (a test that expects the old \
-behaviour, a type, lint or format error, a missing import). It is made next from your \
-`summary` alone, so name the files, the tests and the change in it.
-- `tasks`: real work for the team: split it into fix tasks like the plan (roles {roles}; keys \
+- `self`: a fix you can make yourself in this worktree in one sitting: a test that expects \
+the old behaviour, a type, lint or format error, a missing import, code of two tasks (or of \
+the base) that do not fit together, a few files to adjust. Prefer it to `tasks` whenever you \
+can do it yourself. It is made next from your `summary` alone, so name the files, the tests \
+and the change in it.
+- `tasks`: only for work too big to do yourself (new behaviour, many files across a role's \
+area): split it into fix tasks like the plan (roles {roles}; keys \
 must be new, already used: {used}; `repos`, `scope`, `acceptance` as usual; put the failing \
 test names and the error in each description). The app pushes again once they are merged.
 - `none`: a person has to decide (the failure is in code this run did not touch and is not \
@@ -789,6 +792,69 @@ pub fn push_failure_schema(roles: &[String], repos: &[String]) -> Value {
             "tasks": plan["properties"]["tasks"].clone()
         }
     })
+}
+
+/// The rebase before a push stopped on conflicts: the lead resolves them,
+/// one stop after the other, in the integration worktree. A fix task could
+/// not: the push rebases again and its merge commit, the resolution in it,
+/// is flattened away.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_conflicts(
+    run: &Run,
+    repo: &str,
+    base: &str,
+    commit: &str,
+    progress: Option<(u32, u32)>,
+    files: &[String],
+    guides: &str,
+    first: bool,
+) -> String {
+    let at = match progress {
+        Some((step, end)) => format!("commit {step} of {end}, `{commit}`"),
+        None => format!("commit `{commit}`"),
+    };
+    let files = files
+        .iter()
+        .map(|file| format!("- `{file}`"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !first {
+        return format!(
+            "The rebase went on and stopped again, at {at}, with conflicts in:
+{files}
+Resolve them the same way: keep what the base did and bring this commit's intent onto it; \
+leave no conflict marker. Same rules as before. Finish with a one-paragraph summary."
+        );
+    }
+    format!(
+        "You are the lead of this run. To push its work, the app is rebasing the run's \
+integration branch onto `origin/{base}`{repo_label}. The base moved on meanwhile, and the \
+rebase stopped at {at}, with conflicts in:
+{files}
+{layout}{guides}
+In a rebase the first side of a conflict (`<<<<<<< HEAD`) is the base plus this run's \
+commits already replayed; the other side (`>>>>>>>`) is the commit being applied. Resolve \
+every conflict in those files: keep what the base changed (other people's work: its \
+structure, renames, shared components it moved to) and bring this commit's intent onto it, \
+so neither side's behaviour is lost. When the base rewrote a file, rewrite the commit's \
+change on top of the new version instead of restoring the old one. Read whatever helps \
+(`git show origin/{base}:<file>`, `git log origin/{base} -- <file>`, `git show REBASE_HEAD`, \
+the run's design). Change only the conflicted files, plus the smallest follow-up when the \
+base renamed or moved something they use. Leave no conflict marker.
+Do NOT run `git add`, `git commit`, `git rebase` or `git push`: the app continues the \
+rebase after you and stops again at the next conflict, if any. Do not run the test suite \
+now (later commits are not applied yet); the pre-push hook runs the project's checks before \
+anything is pushed. {code_language}
+Finish with a one-paragraph summary of how you resolved each file, in the language of the \
+request.",
+        repo_label = if repo == "." || repo.is_empty() {
+            String::new()
+        } else {
+            format!(" (repository `{repo}`)")
+        },
+        layout = layout(run, "The current directory"),
+        code_language = CODE_LANGUAGE,
+    )
 }
 
 /// The lead makes the fix it chose (`self`), before the app pushes again.
@@ -1313,12 +1379,14 @@ Rules:
 - Implement the task completely, including tests where the project has them.
 - Stay within the scope; if you must touch another file, keep the change minimal.
 - Do NOT run git commit, git push or change branches: the orchestrator commits for you \
-and opens the pull request (pushing is disabled here). Run tests and other commands freely.
+and opens the pull request (pushing is disabled here).
+- {verify}
 - Do not ask questions; make reasonable decisions and mention them at the end.
 - {code_language}
 - {economy}
 {handoff_ask}
 {commit_ask}",
+        verify = verify_rule(project, &task.repos),
         role = task.role,
         place = if is_multi(run) {
             format!(
@@ -1379,6 +1447,48 @@ fn checks_block(checks: &[CheckResult]) -> String {
         .join("\n\n")
 }
 
+/// How a worker checks its change. The app runs the project's checks right
+/// after the turn and sends failures back; agents (agy most of all) ran the
+/// whole lint and test suite again and again, in the background with
+/// `sleep` polls, which took most of a turn.
+fn verify_rule(project: &Project, repos: &[String]) -> String {
+    let checks: Vec<String> = project
+        .repos
+        .iter()
+        .filter(|repo| repos.is_empty() || repos.contains(&repo.path))
+        .flat_map(|repo| {
+            repo.check_cmds.iter().map(|cmd| match repo.path.as_str() {
+                "." | "" => format!("`{cmd}`"),
+                path => format!("`{cmd}` (in {path})"),
+            })
+        })
+        .collect();
+    let after = if checks.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " The app runs {} right after you and sends any failure back, so do not run \
+those (or the whole lint, typecheck or test suite) yourself.",
+            checks.join(", ")
+        )
+    };
+    format!(
+        "{VERIFY} Verify with the tests of the files you changed and a targeted lint or \
+typecheck of them when cheap.{after}"
+    )
+}
+
+/// Every command's output stays in the agent's context and is sent again
+/// with each later call: test logs and long diffs made most of it (agy turns
+/// of 150k tokens on average).
+const VERIFY: &str = "Run every command in the foreground and wait for it to finish; never \
+start one in the background and poll it with `sleep`, `pgrep`, a schedule or the like, and \
+never start watchers or dev servers. Keep command output short: run tests with a terse \
+reporter (e.g. `vitest run --reporter=dot`, `pytest -q`, `cargo test -q`) and pipe long \
+output through `| tail -n 60` (or grep for the failures); read a file once, whole or in \
+large ranges, rather than in many small slices; combine searches into one command; never \
+print whole diffs, logs or lockfiles.";
+
 pub fn fix(review: &Review, checks: &[CheckResult], commit_style: &str) -> String {
     let comments = review
         .comments
@@ -1403,9 +1513,11 @@ Automated checks:
 {checks}
 
 Fix every `must` item (and `should` items when reasonable) in the same worktree. Same \
-rules as before: no git commit/push. {code_language} {handoff_ask}
+rules as before: no git commit/push; verify only what you changed, as before. {verify} \
+{code_language} {handoff_ask}
 {commit_ask}",
         commit_ask = commit_ask(commit_style),
+        verify = VERIFY,
         code_language = CODE_LANGUAGE,
         summary = review.summary,
         handoff_ask = HANDOFF_ASK,

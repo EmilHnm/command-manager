@@ -532,6 +532,13 @@ export interface RunDetail {
 }
 
 /** A refused push, for the leader to look into. */
+/** "Gộp commit": the run's commits over its base, per repo. */
+export interface RunCommits {
+  repos: { repo: string; base: string; subjects: string[] }[];
+  /** Proposed message for the one commit. */
+  message: string;
+}
+
 export interface PushFailure {
   at: string;
   repo: string;
@@ -540,11 +547,13 @@ export interface PushFailure {
   output: string;
   request: PrRequest;
   diagnosis: string | null;
-  /** What the leader chose: retry, self, tasks, none. */
+  /** What the leader chose: retry, self, tasks, none; rebase for a conflict. */
   action: string | null;
   fix_tasks: string[];
   /** Fix tasks are on it: pushed again once they are merged. */
   retry: boolean;
+  /** The rebase onto the base hit conflicts: the leader resolves them. */
+  conflict: boolean;
 }
 
 export interface RunSummary extends AgentRun {

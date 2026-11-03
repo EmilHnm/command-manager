@@ -18,6 +18,14 @@ use tokio::process::Command;
 use tokio::sync::watch;
 
 const STDERR_TAIL: usize = 20;
+/// How long a CLI may stay after its final result. A command it left in the
+/// background (a test watcher, a lint run) holds stdout open, and agy waits
+/// for those: without this the step sat until the timeout, its work done.
+const AFTER_RESULT: Duration = if cfg!(test) {
+    Duration::from_millis(500)
+} else {
+    Duration::from_secs(15)
+};
 
 pub fn unix_now() -> i64 {
     std::time::SystemTime::now()
@@ -162,6 +170,8 @@ pub async fn run(
     let mut lines = BufReader::new(child.stdout.take().expect("piped stdout")).lines();
     let mut tab_stop = log.cancelled();
     let deadline = tokio::time::Instant::now() + spawn.timeout;
+    // Set once the final result is in.
+    let mut answered: Option<tokio::time::Instant> = None;
 
     let ended = loop {
         tokio::select! {
@@ -179,9 +189,15 @@ pub async fn run(
                     if let Some(quota) = full {
                         break Some(RunError::Quota(quota.clone()));
                     }
+                    if parser.outcome.finished && answered.is_none() {
+                        answered = Some(tokio::time::Instant::now() + AFTER_RESULT);
+                    }
                 }
                 _ => break None,
             },
+            _ = tokio::time::sleep_until(answered.unwrap_or(deadline)), if answered.is_some() => {
+                break None;
+            }
             _ = tokio::time::sleep_until(deadline) => break Some(RunError::TimedOut),
             changed = stop.changed() => {
                 if changed.is_err() || *stop.borrow() {
@@ -206,7 +222,21 @@ pub async fn run(
             partial: Box::new(parser.finish()),
         });
     }
-    let status = child.wait().await;
+    let status = match answered {
+        Some(_) => match tokio::time::timeout(AFTER_RESULT, child.wait()).await {
+            Ok(status) => status,
+            Err(_) => {
+                // The answer is in; what it left running goes with it.
+                log.line(&LogLine::Info(format!(
+                    "{} đã trả kết quả nhưng chưa thoát (còn lệnh chạy nền); đã dừng nó",
+                    spawn.cli.as_str()
+                )));
+                terminate(&mut child, pid).await;
+                Ok(success())
+            }
+        },
+        None => child.wait().await,
+    };
     if let Some(task) = stderr_task {
         let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
     }
@@ -242,6 +272,18 @@ pub async fn run(
         ));
     }
     Ok(outcome)
+}
+
+/// An exit status of 0, for a CLI stopped after it answered.
+fn success() -> std::process::ExitStatus {
+    #[cfg(unix)]
+    {
+        std::os::unix::process::ExitStatusExt::from_raw(0)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::process::ExitStatusExt::from_raw(0)
+    }
 }
 
 /// SIGTERM to the whole process group, SIGKILL if it lingers.
@@ -531,5 +573,40 @@ fi"#,
         assert!(!ok);
         assert_eq!(code, Some(2));
         assert!(tail.contains("hi") && tail.contains("bad"));
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_cli_that_answered_is_not_waited_on_for_what_it_left_running() {
+        let dir = tempfile::tempdir().unwrap();
+        // Like agy after a test run it started in the background: the result
+        // is out, but the process and its child keep stdout open.
+        let program = script(
+            dir.path(),
+            r#"echo '{"event":"result","result":{"conversation_id":"a1","status":"SUCCESS","response":"done"}}'
+sleep 30 &
+sleep 30"#,
+        );
+        let log = AgentLog::new("t".into(), 1024, None);
+        let (_tx, rx) = watch::channel(false);
+        let started = std::time::Instant::now();
+        let outcome = run(
+            Spawn {
+                cli: Cli::Agy,
+                program: &program,
+                args: Vec::new(),
+                cwd: dir.path(),
+                timeout: Duration::from_secs(20),
+                raw_log: None,
+                quota_limit: None,
+                env: Vec::new(),
+            },
+            &log,
+            rx,
+        )
+        .await
+        .expect("ran");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(outcome.text, "done");
+        assert_eq!(outcome.session_id.as_deref(), Some("a1"));
+        assert!(outcome.error.is_none(), "{:?}", outcome.error);
     }
 }

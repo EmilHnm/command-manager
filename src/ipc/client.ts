@@ -17,6 +17,7 @@ import type {
   ProjectSettings,
   RoleCli,
   QaAnswer,
+  RunCommits,
   RunDetail,
   RunLimits,
   RunSummary,
@@ -2070,6 +2071,11 @@ export const ipcClient = {
     invokeTauri<void>('agents_push_failure_dismiss', { run_id: runId }),
   agentsRunCleanWorktrees: (runId: string) =>
     invokeTauri<void>('agents_run_clean_worktrees', { run_id: runId }),
+
+  agentsRunCommits: (runId: string) => invokeTauri<RunCommits>('agents_run_commits', { run_id: runId }),
+
+  agentsRunSquash: (runId: string, message: string) =>
+    invokeTauri<number>('agents_run_squash', { run_id: runId, message }),
 
   agentsRunDelete: (runId: string) => invokeTauri<void>('agents_run_delete', { run_id: runId }),
 

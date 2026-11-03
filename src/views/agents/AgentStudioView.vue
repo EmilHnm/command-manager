@@ -270,6 +270,20 @@
                   <span>{{ detail.run.pull_requests.length ? 'Đổi PR' : 'Gắn PR' }}</span>
                 </button>
                 <button
+                  v-if="
+                    !detail.driving &&
+                    (detail.run.stage === 'merge_gate' ||
+                      (detail.run.stage === 'done' && detail.run.status === 'kept'))
+                  "
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  title="Gộp các commit của nhánh tích hợp thành một commit trước khi push (code giữ nguyên)"
+                  @click="showSquash = true"
+                >
+                  <GitCommitVertical :size="13" />
+                  <span>Gộp commit</span>
+                </button>
+                <button
                   v-if="detail.run.stage === 'done' && (detail.run.status === 'merged' || detail.run.status === 'kept')"
                   type="button"
                   class="btn btn-primary btn-sm"
@@ -911,6 +925,18 @@
       @close="showAiPush = false"
     />
 
+    <SquashRunModal
+      :visible="showSquash"
+      :run="detail?.run ?? null"
+      @squashed="
+        (count) => {
+          notify(`Đã gộp ${count} commit thành một`, 'info');
+          reload();
+        }
+      "
+      @close="showSquash = false"
+    />
+
     <AttachPrModal
       :visible="showAttachPr"
       :run="detail?.run ?? null"
@@ -1121,6 +1147,7 @@ import {
   FolderOpen,
   Users,
   Plus,
+  GitCommitVertical,
   GitFork,
   Pause,
   Play,
@@ -1174,6 +1201,7 @@ import RunModelsModal from '@/components/dialogs/RunModelsModal.vue';
 import BulkReassignModal from '@/components/dialogs/BulkReassignModal.vue';
 import OpenPrModal from '@/components/dialogs/OpenPrModal.vue';
 import AttachPrModal from '@/components/dialogs/AttachPrModal.vue';
+import SquashRunModal from '@/components/dialogs/SquashRunModal.vue';
 import AiPushModal from '@/components/dialogs/AiPushModal.vue';
 import HumanTestPanel from '@/views/agents/HumanTestPanel.vue';
 import PushFailurePanel from '@/views/agents/PushFailurePanel.vue';
@@ -1396,7 +1424,7 @@ const setLanesLayout = (layout: 'grid' | 'list') => {
 
 const activityCardCollapsed = ref(false);
 const agentLanesRef = ref<InstanceType<typeof AgentLanes> | null>(null);
-const allLanesCollapsed = ref(false);
+const allLanesCollapsed = ref(true);
 
 const toggleAllLanesCollapse = () => {
   allLanesCollapsed.value = !allLanesCollapsed.value;
@@ -1979,6 +2007,7 @@ const showModels = ref(false);
 const showBulkReassign = ref(false);
 const showOpenPr = ref(false);
 const showAttachPr = ref(false);
+const showSquash = ref(false);
 const showAiPush = ref(false);
 const verifying = ref(false);
 const pushing = ref(false);

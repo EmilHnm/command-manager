@@ -285,6 +285,8 @@ mod desktop {
                 ipc::agents::agents_human_file,
                 ipc::agents::agents_run_discard,
                 ipc::agents::agents_run_clean_worktrees,
+                ipc::agents::agents_run_commits,
+                ipc::agents::agents_run_squash,
                 ipc::agents::agents_run_delete,
                 ipc::agents::agents_run_diffstat,
                 ipc::agents::agents_run_diff,
