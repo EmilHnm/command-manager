@@ -2,6 +2,8 @@ pub const PTY_DATA: &str = "pty://data";
 pub const PROCESS_STATUS: &str = "process://status";
 pub const SHUTDOWN_PROGRESS: &str = "app://shutdown-progress";
 pub const INSTANCE: &str = "app://instance";
+/// A folder waits in `PendingDirs` (Explorer's "Open in Command Manager").
+pub const OPEN_DIR: &str = "app://open-dir";
 pub const HISTORY_ADDED: &str = "history://added";
 pub const CLOSE_REQUESTED: &str = "app://close-requested";
 pub const COMMANDS_CHANGED: &str = "commands://changed";

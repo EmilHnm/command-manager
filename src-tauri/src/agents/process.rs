@@ -4,7 +4,7 @@
 //! child processes with it.
 
 use super::adapter::{
-    child_path, git_config_env, launch, prompt_on_stdin, quiet_command, Cli, LogLine, Outcome,
+    child_path, git_config_env, launch, quiet_command, take_stdin_prompt, Cli, LogLine, Outcome,
     Parser, Quota,
 };
 use super::log::AgentLog;
@@ -98,11 +98,7 @@ pub async fn run(
 ) -> Result<Outcome, Stopped> {
     let (program, lead) = launch(spawn.program).await;
     let mut args = spawn.args;
-    let input = if prompt_on_stdin(spawn.cli) {
-        args.pop()
-    } else {
-        None
-    };
+    let input = take_stdin_prompt(spawn.cli, &mut args);
     let mut cmd = quiet_command(&program);
     git_config_env(&mut cmd);
     cmd.args(&lead)
@@ -317,11 +313,17 @@ pub async fn run_shell(
     log: &AgentLog,
     stop: watch::Receiver<bool>,
 ) -> Result<(bool, Option<i32>, String), RunError> {
-    let mut cmd = if cfg!(windows) {
+    #[cfg(windows)]
+    let mut cmd = {
+        // As typed: the usual argument quoting turns the command's own
+        // quotes into \" (`"C:\Program Files\Git\bin\bash.exe" x.sh`), which
+        // cmd does not read. /S: cmd drops only the outer pair of quotes.
         let mut cmd = quiet_command("cmd");
-        cmd.args(["/C", command]);
+        cmd.raw_arg(format!("/S /C \"{command}\""));
         cmd
-    } else {
+    };
+    #[cfg(not(windows))]
+    let mut cmd = {
         let mut cmd = quiet_command("sh");
         cmd.args(["-c", command]);
         cmd
@@ -608,5 +610,28 @@ sleep 30"#,
         assert_eq!(outcome.text, "done");
         assert_eq!(outcome.session_id.as_deref(), Some("a1"));
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    /// A setup or check command with a quoted program path, as typed in the
+    /// project (`"C:\Program Files\Git\bin\bash.exe" scripts/x.sh`).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shell_commands_keep_their_own_quotes() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = AgentLog::new("t".into(), 64 * 1024, None);
+        let (_tx, rx) = watch::channel(false);
+        let command = r#"echo first && "C:\Windows\System32\cmd.exe" /C echo quoted-ok"#;
+        let (ok, code, tail) = run_shell(command, dir.path(), Duration::from_secs(30), &log, rx)
+            .await
+            .expect("ran");
+        assert!(ok, "exit {code:?}: {tail}");
+        assert!(
+            tail.contains("first") && tail.contains("quoted-ok"),
+            "{tail}"
+        );
     }
 }

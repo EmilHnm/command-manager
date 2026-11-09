@@ -45,8 +45,11 @@
               {{ shortPath(item.path) }}
             </button>
             <div v-if="recentProjects.length > 0" class="project-menu-divider" />
+            <button type="button" class="project-menu-item" @click="pickProjectFolder">
+              <FolderOpen :size="12" /> Chọn thư mục khác…
+            </button>
             <button type="button" class="project-menu-item" @click="askFolder">
-              <FolderOpen :size="12" /> Mở thư mục khác…
+              <Pencil :size="12" /> Nhập đường dẫn…
             </button>
           </div>
         </div>
@@ -80,6 +83,16 @@
         Mở một git repo, hoặc một thư mục chứa nhiều repo (fe/, be/, docs/…). Mỗi task chạy trong worktree riêng,
         không đụng nhánh của bạn.
       </p>
+      <button
+        v-if="ipcClient.canPickFolder()"
+        type="button"
+        class="btn btn-primary btn-sm"
+        :disabled="picking"
+        @click="pickProjectFolder"
+      >
+        <FolderOpen :size="14" />
+        <span>Chọn thư mục…</span>
+      </button>
       <div class="empty-open-row">
         <input
           v-model="folderInput"
@@ -87,7 +100,13 @@
           placeholder="/đường/dẫn/tới/repo"
           @keydown.enter="openProject(folderInput)"
         />
-        <button type="button" class="btn btn-primary btn-sm" :disabled="!folderInput.trim()" @click="openProject(folderInput)">
+        <button
+          type="button"
+          class="btn btn-sm"
+          :class="ipcClient.canPickFolder() ? 'btn-secondary' : 'btn-primary'"
+          :disabled="!folderInput.trim()"
+          @click="openProject(folderInput)"
+        >
           Mở
         </button>
       </div>
@@ -1057,6 +1076,7 @@
       :task="selectedTask"
       :clis="clis"
       :default-timeout="detail?.run.limits.timeout_minutes"
+      :run-paused="detail?.run.status === 'paused'"
       :submit="reassignSingleTask"
       @close="showReassignModal = false"
     />
@@ -1716,6 +1736,27 @@ const askFolder = () => {
   folderPromptVisible.value = true;
 };
 
+const picking = ref(false);
+/** Native folder picker; typing the path stays as the fallback. */
+const pickProjectFolder = async () => {
+  projectMenuOpen.value = false;
+  if (!ipcClient.canPickFolder()) {
+    askFolder();
+    return;
+  }
+  if (picking.value) return;
+  picking.value = true;
+  try {
+    const picked = await ipcClient.pickFolder();
+    if (picked) await openProject(picked);
+  } catch (error) {
+    notify(errorText(error));
+    askFolder();
+  } finally {
+    picking.value = false;
+  }
+};
+
 const selectRun = (id: string) => {
   selectedRunId.value = id;
   selectedTaskId.value = null;
@@ -1886,7 +1927,8 @@ const reassignSingleTask = async (
   cli: AgentCli,
   model: string | null,
   effort: string | null,
-  timeoutMinutes: number | null
+  timeoutMinutes: number | null,
+  resume: boolean
 ) => {
   const task = selectedTask.value;
   if (!task) return;
@@ -1894,7 +1936,12 @@ const reassignSingleTask = async (
   if (timeoutMinutes !== null) {
     await ipcClient.agentsTaskSetTimeout(task.id, timeoutMinutes);
   }
-  notify(`Đã giao lại task ${task.key} cho ${cli}`, 'info');
+  if (resume && detail.value) {
+    await ipcClient.agentsRunResume(detail.value.run.id);
+    notify(`Đã giao task ${task.key} cho ${cli} và tiếp tục lượt chạy`, 'info');
+  } else {
+    notify(`Đã giao lại task ${task.key} cho ${cli}`, 'info');
+  }
   await reload();
 };
 

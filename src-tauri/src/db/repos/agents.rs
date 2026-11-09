@@ -1023,7 +1023,7 @@ pub fn run_save(conn: &Connection, run: &Run) -> Result<()> {
            integration_checks = ?12, updated_at = ?13, finished_at = ?14, pending_feedback = ?15,
            repos = ?16, followups = ?17, leader_model = ?18, leader_effort = ?19,
            base_branch = ?20, base_commit = ?21, suggested_checks = ?22,
-           pull_requests = ?23, research = ?24, leader_chat = ?25
+           pull_requests = ?23, research = ?24, leader_chat = ?25, integration_branch = ?26
          WHERE id = ?1",
         rusqlite::params![
             run.id,
@@ -1051,6 +1051,7 @@ pub fn run_save(conn: &Connection, run: &Run) -> Result<()> {
             json(&run.pull_requests),
             run.research.as_ref().map(json),
             json(&run.leader_chat),
+            run.integration_branch,
         ],
     )?;
     Ok(())

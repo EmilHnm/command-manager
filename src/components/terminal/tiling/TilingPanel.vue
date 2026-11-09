@@ -90,8 +90,9 @@
           <!-- New Tab Button inside this panel (inherits active tab CWD) -->
           <button
             class="panel-new-tab-btn"
-            title="Mở tab mới trong khung này (Giữ nguyên CWD)"
+            title="Mở tab mới trong khung này (Giữ nguyên CWD). Chuột phải để chọn loại terminal"
             @click.stop="$emit('new-tab', panel.id)"
+            @contextmenu.prevent.stop="$emit('new-tab-menu', panel.id, $event.clientX, $event.clientY)"
           >
             <Plus :size="12" />
           </button>
@@ -269,7 +270,9 @@
         <span>Không có tab nào trong panel này</span>
         <button
           class="btn btn-primary btn-xs"
+          title="Chuột phải để chọn loại terminal"
           @click="$emit('new-tab', panel.id)"
+          @contextmenu.prevent.stop="$emit('new-tab-menu', panel.id, $event.clientX, $event.clientY)"
         >
           <Plus :size="12" />
           <span>Mở Terminal</span>
@@ -354,6 +357,8 @@ const emit = defineEmits<{
   (e: 'focus', panelId: string): void;
   (e: 'select-tab', panelId: string, tabId: string): void;
   (e: 'new-tab', panelId: string): void;
+  /** Right click on a "+": pick the kind of terminal. */
+  (e: 'new-tab-menu', panelId: string, x: number, y: number): void;
   (e: 'close-tab', tabId: string): void;
   (e: 'close-panel', panelId: string): void;
   (e: 'split-right', panelId: string): void;

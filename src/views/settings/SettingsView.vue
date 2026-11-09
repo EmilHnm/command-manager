@@ -184,6 +184,25 @@
             </button>
           </div>
 
+          <div v-if="explorerMenu !== null" class="setting-row">
+            <div class="row-info">
+              <span class="row-label">"Open in Command Manager" trong File Explorer</span>
+              <span class="row-desc">
+                Chuột phải vào thư mục, nền thư mục hoặc ổ đĩa trong Explorer để mở terminal tại đó. Trên Windows 11
+                mục này nằm trong "Show more options". Áp dụng ngay, không cần Lưu.
+              </span>
+              <span v-if="explorerMenuError" class="row-desc row-error">{{ explorerMenuError }}</span>
+            </div>
+            <button
+              class="toggle-switch"
+              :class="{ active: explorerMenu }"
+              :disabled="explorerMenuBusy"
+              @click="toggleExplorerMenu"
+            >
+              <span class="toggle-slider" />
+            </button>
+          </div>
+
           <div class="setting-row">
             <div class="row-info">
               <span class="row-label">Khóa Single-Instance Cấp Ứng Dụng</span>
@@ -301,18 +320,26 @@
           <h3 class="card-title">Lịch sử lệnh & Gợi ý</h3>
           <div class="setting-row">
             <div class="row-info">
-              <span class="row-label">Shell mặc định cho terminal mới</span>
-              <span class="row-desc">Để trống để dùng thứ tự tự động theo hệ điều hành.</span>
+              <span class="row-label">Terminal mặc định</span>
+              <span class="row-desc">Loại terminal mở khi bấm "+" hoặc Ctrl+N. Chuột phải vào "+" để chọn loại khác cho một tab. "Tự động" thử PowerShell 7, rồi Windows PowerShell, rồi cmd.</span>
             </div>
-            <select v-model="settings.terminalShell" class="select-inline">
-              <option value="">Tự động theo hệ điều hành</option>
-              <option value="pwsh">PowerShell 7 (pwsh)</option>
-              <option value="powershell">Windows PowerShell 5.1</option>
-              <option value="cmd">Command Prompt (cmd)</option>
-              <option v-if="!isWindows" value="bash">Bash</option>
-              <option v-if="!isWindows" value="zsh">Zsh</option>
-              <option v-if="!isWindows" value="sh">POSIX sh</option>
-            </select>
+            <div class="terminal-profile-picker">
+              <select v-model="settings.terminalShell" class="select-inline">
+                <option value="">Tự động theo hệ điều hành</option>
+                <option v-for="item in shellOptions" :key="item.id" :value="item.id">
+                  {{ item.name }}
+                </option>
+              </select>
+              <button
+                class="btn btn-ghost btn-sm"
+                title="Tìm lại các loại terminal (vd: sau khi cài thêm bản phân phối WSL)"
+                :disabled="profilesLoading"
+                @click="reloadProfiles()"
+              >
+                <LoaderCircle v-if="profilesLoading" :size="13" class="spin" />
+                <RefreshCw v-else :size="13" />
+              </button>
+            </div>
           </div>
           <div class="setting-row">
             <div class="row-info">
@@ -430,12 +457,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { Save, Cpu, Terminal, Database, Download, Upload, LoaderCircle, Keyboard } from 'lucide-vue-next';
+import { Save, Cpu, Terminal, Database, Download, Upload, LoaderCircle, Keyboard, RefreshCw } from 'lucide-vue-next';
 import RestoreWizard from '@/components/dialogs/RestoreWizard.vue';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import KeyboardShortcutsTab from '@/views/settings/KeyboardShortcutsTab.vue';
 import { useKeybindings } from '@/composables/useKeybindings';
 import { ipcClient } from '@/ipc/client';
+import { useTerminalProfiles } from '@/composables/useTerminalProfiles';
 import { APP_ENGINE_TAG } from '@/config/version';
 import type { BackupIntegrityResult, OsHistorySource, SystemSettings } from '@/types/models';
 
@@ -458,7 +486,20 @@ watch(
     }
   }
 );
-const isWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
+const {
+  profiles: terminalProfiles,
+  loading: profilesLoading,
+  reload: reloadProfiles,
+} = useTerminalProfiles();
+/** The terminals found on this machine, plus a saved one no longer found. */
+const shellOptions = computed(() => {
+  const list = terminalProfiles.value.map(({ id, name }) => ({ id, name }));
+  const saved = settings.value.terminalShell;
+  if (saved && !list.some((item) => item.id === saved)) {
+    list.push({ id: saved, name: `${saved} (không tìm thấy trên máy này)` });
+  }
+  return list;
+});
 
 const settings = ref<SystemSettings>({
   autostartApp: true,
@@ -552,7 +593,27 @@ const confirmImportOsHistory = async () => {
   }
 };
 
+/** null: not on Windows, the row is hidden. */
+const explorerMenu = ref<boolean | null>(null);
+const explorerMenuBusy = ref(false);
+const explorerMenuError = ref('');
+
+const toggleExplorerMenu = async () => {
+  if (explorerMenu.value === null || explorerMenuBusy.value) return;
+  explorerMenuBusy.value = true;
+  explorerMenuError.value = '';
+  try {
+    await ipcClient.explorerMenuSet(!explorerMenu.value);
+  } catch (error) {
+    explorerMenuError.value = `Không đổi được menu Explorer: ${String(error)}`;
+  } finally {
+    explorerMenu.value = await ipcClient.explorerMenuStatus().catch(() => explorerMenu.value);
+    explorerMenuBusy.value = false;
+  }
+};
+
 onMounted(async () => {
+  void ipcClient.explorerMenuStatus().then((status) => (explorerMenu.value = status)).catch(console.error);
   void loadOsHistorySources();
   try {
     const [loaded, info] = await Promise.all([
@@ -984,6 +1045,10 @@ const confirmRestoreDatabase = async () => {
 .row-desc {
   font-size: 11.5px;
   color: var(--text-muted);
+}
+
+.row-desc.row-error {
+  color: var(--status-failed, #ef4444);
 }
 
 .os-history-row {

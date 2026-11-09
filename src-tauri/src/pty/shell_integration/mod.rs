@@ -11,6 +11,8 @@ pub enum ShellKind {
     Bash,
     Zsh,
     Sh,
+    /// A WSL distribution's own login shell, without shell integration.
+    Wsl,
     Other,
 }
 
@@ -23,6 +25,7 @@ impl ShellKind {
             Self::Bash => "bash",
             Self::Zsh => "zsh",
             Self::Sh => "sh",
+            Self::Wsl => "wsl",
             Self::Other => "other",
         }
     }
@@ -30,7 +33,7 @@ impl ShellKind {
     pub fn history_level(self) -> u8 {
         match self {
             Self::Pwsh | Self::WindowsPowerShell | Self::Bash | Self::Zsh => 1,
-            Self::Cmd | Self::Sh | Self::Other => 2,
+            Self::Cmd | Self::Sh | Self::Wsl | Self::Other => 2,
         }
     }
 }
@@ -149,6 +152,46 @@ fn remove_stale_scripts(directory: &std::path::Path, prefix: &str, keep: &std::p
             let _ = std::fs::remove_file(&path);
         }
     }
+}
+
+/// A ZDOTDIR for one zsh tab: zsh reads .zshenv and .zshrc from ZDOTDIR, so
+/// pointing it at our directory would skip the user's ~/.zshenv (often where
+/// PATH is set) and make oh-my-zsh rebuild .zcompdump in every new tab. Each
+/// file switches ZDOTDIR back to the user's while their file runs, as VS
+/// Code's shell integration does. `.zprofile` only runs for a login shell
+/// (WSL tabs). The shell removes the directory when it exits.
+fn write_zsh_dir(integration_root: Option<&std::path::Path>) -> Result<std::path::PathBuf> {
+    let directory = integration_root
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("shell-integration")
+        .join("1")
+        .join(format!("zsh-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&directory).map_err(|e| Error::msg(e.to_string()))?;
+    let zshenv = "CM_APP_ZDOTDIR=$ZDOTDIR\n\
+        ZDOTDIR=${CM_USER_ZDOTDIR:-$HOME}\n\
+        if [[ -f $ZDOTDIR/.zshenv ]]; then source $ZDOTDIR/.zshenv; fi\n\
+        CM_USER_ZDOTDIR=$ZDOTDIR\n\
+        ZDOTDIR=$CM_APP_ZDOTDIR\n";
+    let zprofile = "ZDOTDIR=$CM_USER_ZDOTDIR\n\
+        if [[ -f $ZDOTDIR/.zprofile ]]; then source $ZDOTDIR/.zprofile; fi\n\
+        CM_USER_ZDOTDIR=$ZDOTDIR\n\
+        ZDOTDIR=$CM_APP_ZDOTDIR\n";
+    let zshrc = format!(
+        "ZDOTDIR=$CM_USER_ZDOTDIR\n\
+         if [[ -f $ZDOTDIR/.zshrc ]]; then source $ZDOTDIR/.zshrc; fi\n\
+         {}\n\
+         TRAPEXIT() {{ command rm -rf -- $CM_APP_ZDOTDIR; }}\n",
+        include_str!("zsh.zsh")
+    );
+    for (name, contents) in [
+        (".zshenv", zshenv),
+        (".zprofile", zprofile),
+        (".zshrc", zshrc.as_str()),
+    ] {
+        std::fs::write(directory.join(name), contents).map_err(|e| Error::msg(e.to_string()))?;
+    }
+    Ok(directory)
 }
 
 pub fn spawn(

@@ -39,6 +39,7 @@
 
         <p class="reassign-hint">
           Task sẽ tiếp tục làm việc trên worktree hiện tại (các tệp đã sửa vẫn giữ nguyên). Lần chạy tới sẽ dùng agent và thiết lập mới này.
+          Nếu task đã từng chạy, agent mới nhận một memo về những gì agent trước đã nói và các lệnh đã chạy, để làm tiếp thay vì làm lại từ đầu.
         </p>
 
         <div class="form-grid">
@@ -94,6 +95,11 @@
           </div>
         </div>
 
+        <label v-if="runPaused" class="resume-row">
+          <input v-model="resume" type="checkbox" />
+          <span>Tiếp tục lượt chạy ngay sau khi giao lại</span>
+        </label>
+
         <div v-if="error" class="error-banner">
           <AlertCircle :size="14" />
           <span>{{ error }}</span>
@@ -112,7 +118,7 @@
           @click="handleSubmit"
         >
           <UserCheck :size="14" />
-          <span>{{ busy ? 'Đang giao lại…' : `Giao lại cho ${cli}` }}</span>
+          <span>{{ busy ? 'Đang giao lại…' : runPaused && resume ? `Giao cho ${cli} & tiếp tục` : `Giao lại cho ${cli}` }}</span>
         </button>
       </div>
     </div>
@@ -131,11 +137,14 @@ const props = defineProps<{
   task: AgentTask | null;
   clis: CliInfo[];
   defaultTimeout?: number;
+  /** The run is paused: offer to resume it right after. */
+  runPaused?: boolean;
   submit: (
     cli: AgentCli,
     model: string | null,
     effort: string | null,
-    timeoutMinutes: number | null
+    timeoutMinutes: number | null,
+    resume: boolean
   ) => Promise<void>;
 }>();
 
@@ -149,6 +158,7 @@ const cli = ref<AgentCli>('claude');
 const model = ref('');
 const effort = ref('');
 const timeout = ref<number | ''>('');
+const resume = ref(true);
 const busy = ref(false);
 const error = ref<string | null>(null);
 
@@ -166,6 +176,7 @@ watch(
       model.value = task.model || '';
       effort.value = '';
       timeout.value = task.timeout_minutes ?? '';
+      resume.value = true;
       error.value = null;
       busy.value = false;
     }
@@ -186,7 +197,7 @@ const handleSubmit = async () => {
     const finalModel = model.value.trim() || null;
     const finalEffort = effort.value.trim() || null;
     const finalTimeout = typeof timeout.value === 'number' && timeout.value > 0 ? timeout.value : null;
-    await props.submit(cli.value, finalModel, finalEffort, finalTimeout);
+    await props.submit(cli.value, finalModel, finalEffort, finalTimeout, !!props.runPaused && resume.value);
     emit('close');
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -197,6 +208,16 @@ const handleSubmit = async () => {
 </script>
 
 <style scoped>
+.resume-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--text-primary, #f1f5f9);
+  cursor: pointer;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

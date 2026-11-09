@@ -7,6 +7,7 @@ pub mod engine;
 pub mod git;
 pub mod guides;
 pub mod log;
+pub mod memo;
 pub mod models;
 pub mod process;
 pub mod prompts;

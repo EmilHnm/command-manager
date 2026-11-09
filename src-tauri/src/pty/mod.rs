@@ -1,6 +1,7 @@
 pub mod backpressure;
 pub mod buffer;
 pub mod osc;
+pub mod profiles;
 pub mod session;
 pub mod shell_integration;
 pub mod terminal_io;

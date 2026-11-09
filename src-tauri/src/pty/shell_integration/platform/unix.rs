@@ -1,4 +1,6 @@
-use super::super::{powershell_has_psreadline, write_script, InteractiveShell, ShellKind};
+use super::super::{
+    powershell_has_psreadline, write_script, write_zsh_dir, InteractiveShell, ShellKind,
+};
 use crate::error::{Error, Result};
 use portable_pty::{CommandBuilder, SlavePty};
 
@@ -72,34 +74,7 @@ pub(super) fn spawn(
             command.env("CM_NONCE", &nonce);
         }
         ShellKind::Zsh => {
-            let directory = integration_root
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(std::env::temp_dir)
-                .join("shell-integration")
-                .join("1")
-                .join(format!("zsh-{}", uuid::Uuid::new_v4().simple()));
-            std::fs::create_dir_all(&directory).map_err(|e| Error::msg(e.to_string()))?;
-            // zsh reads .zshenv and .zshrc from ZDOTDIR, so pointing it at our
-            // directory would skip the user's ~/.zshenv (often where PATH is
-            // set) and make oh-my-zsh rebuild .zcompdump in every new tab.
-            // Each file switches ZDOTDIR back to the user's while their file
-            // runs, as VS Code's shell integration does.
-            let zshenv = "CM_APP_ZDOTDIR=$ZDOTDIR\n\
-                ZDOTDIR=${CM_USER_ZDOTDIR:-$HOME}\n\
-                if [[ -f $ZDOTDIR/.zshenv ]]; then source $ZDOTDIR/.zshenv; fi\n\
-                CM_USER_ZDOTDIR=$ZDOTDIR\n\
-                ZDOTDIR=$CM_APP_ZDOTDIR\n";
-            std::fs::write(directory.join(".zshenv"), zshenv)
-                .map_err(|e| Error::msg(e.to_string()))?;
-            let contents = format!(
-                "ZDOTDIR=$CM_USER_ZDOTDIR\n\
-                 if [[ -f $ZDOTDIR/.zshrc ]]; then source $ZDOTDIR/.zshrc; fi\n\
-                 {}\n\
-                 TRAPEXIT() {{ command rm -rf -- $CM_APP_ZDOTDIR; }}\n",
-                include_str!("../zsh.zsh")
-            );
-            std::fs::write(directory.join(".zshrc"), contents)
-                .map_err(|e| Error::msg(e.to_string()))?;
+            let directory = write_zsh_dir(integration_root)?;
             command.args(["-i"]);
             if let Ok(user_zdotdir) = std::env::var("ZDOTDIR") {
                 command.env("CM_USER_ZDOTDIR", user_zdotdir);
@@ -126,7 +101,7 @@ pub(super) fn spawn(
                 "cmd.exe shell integration is only available on Windows",
             ));
         }
-        ShellKind::Other => {
+        ShellKind::Wsl | ShellKind::Other => {
             command.arg("-i");
         }
     }

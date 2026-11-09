@@ -40,6 +40,7 @@ import type {
   RunSessionStatus,
   SystemSettings,
   BackupIntegrityResult,
+  TerminalProfile,
 } from '@/types/models';
 import { IPC_EVENTS } from '@/ipc/events';
 import type { KeybindingOverride, ParsedKeybindings } from '@/types/keybindings';
@@ -1176,7 +1177,22 @@ export const ipcClient = {
     };
   },
 
-  openTerminal: async (cwd?: string): Promise<{
+  /** The kinds of terminal a new tab can open on this machine. */
+  listTerminalProfiles: async (): Promise<TerminalProfile[]> => {
+    if (!usingNativeIpc()) {
+      return [
+        { id: 'pwsh', name: 'PowerShell 7', kind: 'powershell' },
+        { id: 'powershell', name: 'Windows PowerShell', kind: 'powershell' },
+        { id: 'cmd', name: 'Command Prompt', kind: 'cmd' },
+        { id: 'wsl', name: 'WSL (bản phân phối mặc định)', kind: 'wsl' },
+        { id: 'wsl:Ubuntu', name: 'Ubuntu', kind: 'wsl' },
+      ];
+    }
+    return invokeTauri<TerminalProfile[]>('terminal_profiles');
+  },
+
+  /** `profile` overrides the default terminal set in Settings. */
+  openTerminal: async (cwd?: string, profile?: string): Promise<{
     commandId: number;
     runEventId: string;
     pid?: number;
@@ -1197,7 +1213,10 @@ export const ipcClient = {
       return { commandId, runEventId, shellKind: 'mock', historyLevel: 2 };
     }
 
-    const terminal = await invokeTauri<BackendTerminal>('terminal_open', { cwd: cwd || null });
+    const terminal = await invokeTauri<BackendTerminal>('terminal_open', {
+      cwd: cwd || null,
+      profile: profile || null,
+    });
     const commandId = terminalUiIdFor(terminal.command_id);
     runEventToCommand.set(terminal.run_event_id, commandId);
     runEventToSession.set(
@@ -2133,6 +2152,32 @@ export const ipcClient = {
     if (!usingNativeIpc()) return [];
     return invokeTauri<string[]>('fs_read_folder_files', { path, deep });
   },
+
+  /** "Open in Command Manager" in File Explorer; null off Windows. */
+  explorerMenuStatus: async (): Promise<boolean | null> => {
+    if (!usingNativeIpc()) return null;
+    return invokeTauri<boolean | null>('explorer_menu_status');
+  },
+
+  explorerMenuSet: async (enabled: boolean): Promise<void> => {
+    if (!usingNativeIpc()) return;
+    await invokeTauri<void>('explorer_menu_set', { enabled });
+  },
+
+  /** Folders opened from File Explorer, not opened in a terminal yet. */
+  takeOpenDirs: async (): Promise<string[]> => {
+    if (!usingNativeIpc()) return [];
+    return invokeTauri<string[]>('app_take_open_dirs');
+  },
+
+  onOpenDir: async (handler: () => void): Promise<() => void> => {
+    if (!usingNativeIpc()) return () => undefined;
+    const { listen } = await import('@tauri-apps/api/event');
+    return listen(IPC_EVENTS.OPEN_DIR, () => handler());
+  },
+
+  /** False in the browser mock, where pickFolder always returns null. */
+  canPickFolder: (): boolean => usingNativeIpc(),
 
   pickFolder: async (): Promise<string | null> => {
     if (!usingNativeIpc()) return null;

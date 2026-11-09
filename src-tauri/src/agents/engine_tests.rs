@@ -109,7 +109,7 @@ case "$last" in
     ;;
   *"split the work"*|*"could not be used"*)
     out '{"type":"system","subtype":"init","session_id":"lead"}'
-    out '{"type":"result","subtype":"success","is_error":false,"session_id":"lead","result":"","structured_output":{"contract":"fn work()","checks":[{"repo":".","setup":" ","commands":["test -f README"," "]}],"tasks":[{"key":"a","title":"Task A","role":"backend","repos":'"$repos"',"description":"write a","acceptance":["a.txt"],"scope":["a.txt"],"depends_on":[]},{"key":"b","title":"Task B","role":"backend","repos":'"$repos"',"description":"write b","acceptance":["b.txt"],"scope":["b.txt"],"depends_on":["a"]}]}}'
+    out '{"type":"result","subtype":"success","is_error":false,"session_id":"lead","result":"","structured_output":{"contract":"fn work()","branch":"feat/Work Items","checks":[{"repo":".","setup":" ","commands":["test -f README"," "]}],"tasks":[{"key":"a","title":"Task A","role":"backend","repos":'"$repos"',"description":"write a","acceptance":["a.txt"],"scope":["a.txt"],"depends_on":[]},{"key":"b","title":"Task B","role":"backend","repos":'"$repos"',"description":"write b","acceptance":["b.txt"],"scope":["b.txt"],"depends_on":["a"]}]}}'
     ;;
   *"cut short"*)
     out '{"type":"system","subtype":"init","session_id":"'$resume'"}'
@@ -310,6 +310,8 @@ async fn a_run_goes_from_design_to_a_merge_in_the_base_branch() {
     assert_eq!(detail.run.status, run_status::WAITING);
     assert_eq!(detail.run.design_md.as_deref(), Some("Design OK"));
     assert_eq!(detail.run.contract.as_deref(), Some("fn work()"));
+    // The leader names the branch in the plan, cleaned for git.
+    assert_eq!(detail.run.integration_branch, "feat/Work-Items");
     assert_eq!(detail.run.leader_session.as_deref(), Some("lead"));
     let keys: Vec<&str> = detail.tasks.iter().map(|t| t.key.as_str()).collect();
     assert_eq!(keys, vec!["a", "b"]);

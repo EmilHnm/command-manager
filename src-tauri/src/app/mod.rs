@@ -1,4 +1,5 @@
 pub mod autostart;
+pub mod explorer_menu;
 pub mod shutdown;
 pub mod single_instance;
 

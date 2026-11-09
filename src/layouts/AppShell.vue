@@ -72,6 +72,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
+import { useOpenFromExplorer } from '@/composables/useOpenFromExplorer';
 import Titlebar from '@/components/titlebar/Titlebar.vue';
 import ActivityBar from '@/components/nav/ActivityBar.vue';
 import StatusBar from '@/components/statusbar/StatusBar.vue';
@@ -214,16 +215,19 @@ onMounted(async () => {
   });
   void transfers.listen().then((stop) => (unlistenTransfers = stop));
   void fileDrag.listenOsDrops().then((stop) => (unlistenOsDrops = stop));
+  void useOpenFromExplorer(router).listen().then((stop) => (unlistenOpenDir = stop));
   // Host names for transfer labels.
   void useSshHosts().fetchHosts();
 });
 
 let unlistenTransfers: (() => void) | null = null;
 let unlistenOsDrops: (() => void) | null = null;
+let unlistenOpenDir: (() => void) | null = null;
 
 onUnmounted(() => {
   unlistenTransfers?.();
   unlistenOsDrops?.();
+  unlistenOpenDir?.();
   if (unlistenHostkey) unlistenHostkey();
   if (unlistenAuth) unlistenAuth();
   disposeLifecycleListener();

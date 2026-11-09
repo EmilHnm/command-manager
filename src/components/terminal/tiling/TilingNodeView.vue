@@ -15,6 +15,7 @@
         @focus="$emit('focus', $event)"
         @select-tab="(pId, tId) => $emit('select-tab', pId, tId)"
         @new-tab="$emit('new-tab', $event)"
+        @new-tab-menu="(pId, x, y) => $emit('new-tab-menu', pId, x, y)"
         @close-tab="$emit('close-tab', $event)"
         @close-panel="$emit('close-panel', $event)"
         @split-right="$emit('split-right', $event)"
@@ -57,6 +58,7 @@
         @focus="$emit('focus', $event)"
         @select-tab="(pId, tId) => $emit('select-tab', pId, tId)"
         @new-tab="$emit('new-tab', $event)"
+        @new-tab-menu="(pId, x, y) => $emit('new-tab-menu', pId, x, y)"
         @close-tab="$emit('close-tab', $event)"
         @close-panel="$emit('close-panel', $event)"
         @split-right="$emit('split-right', $event)"
@@ -101,6 +103,7 @@
         @focus="$emit('focus', $event)"
         @select-tab="(pId, tId) => $emit('select-tab', pId, tId)"
         @new-tab="$emit('new-tab', $event)"
+        @new-tab-menu="(pId, x, y) => $emit('new-tab-menu', pId, x, y)"
         @close-tab="$emit('close-tab', $event)"
         @close-panel="$emit('close-panel', $event)"
         @split-right="$emit('split-right', $event)"
@@ -148,6 +151,7 @@ const emit = defineEmits<{
   (e: 'focus', panelId: string): void;
   (e: 'select-tab', panelId: string, tabId: string): void;
   (e: 'new-tab', panelId: string): void;
+  (e: 'new-tab-menu', panelId: string, x: number, y: number): void;
   (e: 'close-tab', tabId: string): void;
   (e: 'close-panel', panelId: string): void;
   (e: 'split-right', panelId: string): void;

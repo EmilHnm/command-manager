@@ -171,9 +171,10 @@
         <!-- New Terminal / Tab Button -->
         <button
           class="btn btn-primary btn-sm toolbar-action-btn new-term-btn"
-          title="Mở thêm một tab terminal mới vào panel hiện tại (Ctrl+N)"
+          title="Mở thêm một tab terminal mới vào panel hiện tại (Ctrl+N). Chuột phải để chọn loại terminal"
           :disabled="openingTerminal"
           @click="openEmptyTerminal()"
+          @contextmenu.prevent.stop="openNewTerminalMenu(null, $event.clientX, $event.clientY)"
         >
           <LoaderCircle v-if="openingTerminal" :size="12" class="spin" />
           <Plus v-else :size="13" />
@@ -278,6 +279,7 @@
               @focus="handlePanelFocus"
               @select-tab="handleSelectTab"
               @new-tab="handleNewTabInPanel"
+              @new-tab-menu="openNewTerminalMenu"
               @close-tab="handleCloseTab"
               @close-panel="handleClosePanel"
               @split-right="handleSplitRight"
@@ -310,6 +312,7 @@
             @focus="handlePanelFocus"
             @select-tab="handleSelectTab"
             @new-tab="handleNewTabInPanel"
+            @new-tab-menu="openNewTerminalMenu"
             @close-tab="handleCloseTab"
             @close-panel="handleClosePanel"
             @split-right="handleSplitRight"
@@ -340,8 +343,10 @@
             </p>
             <button
               class="btn btn-primary btn-sm"
+              title="Chuột phải để chọn loại terminal"
               :disabled="openingTerminal"
               @click="openEmptyTerminal()"
+              @contextmenu.prevent.stop="openNewTerminalMenu(null, $event.clientX, $event.clientY)"
             >
               <Plus :size="14" />
               <span>Mở Terminal Mới</span>
@@ -350,6 +355,16 @@
         </div>
       </div>
     </div>
+
+    <!-- Right click on a "+": pick the kind of terminal -->
+    <NewTerminalMenu
+      :visible="newTerminalMenu !== null"
+      :x="newTerminalMenu?.x ?? 0"
+      :y="newTerminalMenu?.y ?? 0"
+      :default-id="defaultTerminalProfile"
+      @pick="openTerminalOfProfile"
+      @close="newTerminalMenu = null"
+    />
 
     <!-- Rename Terminal Modal (MOD-14) -->
     <RenameTerminalModal
@@ -433,6 +448,7 @@ import KillPanelModal from '@/components/dialogs/KillPanelModal.vue';
 import TilingNodeView from './tiling/TilingNodeView.vue';
 import TilingPanel, { type OpenTabItem } from './tiling/TilingPanel.vue';
 import SessionsDrawer from './tiling/SessionsDrawer.vue';
+import NewTerminalMenu from './NewTerminalMenu.vue';
 import XtermPane from '@/components/terminal/XtermPane.vue';
 import { useKeyCommand, keyLabel } from '@/keybindings/dispatcher';
 import {
@@ -463,6 +479,7 @@ import { ipcClient } from '@/ipc/client';
 import { useSshHosts } from '@/composables/useSshHosts';
 import { useFileDrag } from '@/composables/useFileDrag';
 import { useRunTargetPicker } from '@/composables/useRunTargetPicker';
+import { useTerminalProfiles } from '@/composables/useTerminalProfiles';
 import type { FileLocation } from '@/types/files';
 
 const emit = defineEmits<{
@@ -875,7 +892,7 @@ const splitPanelWithNewTerminal = async (
 /**
  * Opens a new tab inside an existing panel, preserving its current working directory (CWD)
  */
-const handleNewTabInPanel = async (targetPanelId: string) => {
+const handleNewTabInPanel = async (targetPanelId: string, profileId?: string) => {
   if (openingTerminal.value) return;
   openingTerminal.value = true;
   try {
@@ -890,13 +907,13 @@ const handleNewTabInPanel = async (targetPanelId: string) => {
         : sourceTab?.cwd;
 
     await refreshProcesses();
-    const terminal = await ipcClient.openTerminal(cwd);
+    const terminal = await ipcClient.openTerminal(cwd, profileId);
     await refreshProcesses();
 
     const newTab: OpenTabItem = {
       id: `terminal-${terminal.commandId}-${Date.now()}`,
       commandId: terminal.commandId,
-      name: 'Terminal',
+      name: profileTabName(profileId),
       runEventId: terminal.runEventId,
       shellKind: terminal.shellKind,
       historyLevel: terminal.historyLevel,
@@ -1178,24 +1195,24 @@ const closeAllTabs = () => {
 // ----------------------------------------------------
 // Terminal Spawning (Toolbar / Programmatic)
 // ----------------------------------------------------
-const openEmptyTerminal = async () => {
+const openEmptyTerminal = async (profileId?: string) => {
   const panels = collectAllPanels(currentTilingRoot.value);
   if (panels.length > 0) {
     const targetPanelId = currentActivePanelId.value || panels[0].id;
-    await handleNewTabInPanel(targetPanelId);
+    await handleNewTabInPanel(targetPanelId, profileId);
   } else {
     // No panels exist, create first panel in current window
     if (openingTerminal.value) return;
     openingTerminal.value = true;
     try {
       await refreshProcesses();
-      const terminal = await ipcClient.openTerminal();
+      const terminal = await ipcClient.openTerminal(undefined, profileId);
       await refreshProcesses();
 
       const newTab: OpenTabItem = {
         id: `terminal-${terminal.commandId}-${Date.now()}`,
         commandId: terminal.commandId,
-        name: 'Terminal',
+        name: profileTabName(profileId),
         runEventId: terminal.runEventId,
         shellKind: terminal.shellKind,
         historyLevel: terminal.historyLevel,
@@ -1214,6 +1231,39 @@ const openEmptyTerminal = async () => {
     }
   }
 };
+
+// ----------------------------------------------------
+// Right click on a "+": pick the kind of terminal (Windows Terminal style)
+// ----------------------------------------------------
+const { profiles: terminalProfiles } = useTerminalProfiles();
+/** `panelId` null: the focused panel, as the toolbar button does. */
+const newTerminalMenu = ref<{ panelId: string | null; x: number; y: number } | null>(null);
+const defaultTerminalProfile = ref('');
+
+const openNewTerminalMenu = (panelId: string | null, x: number, y: number) => {
+  newTerminalMenu.value = { panelId, x, y };
+  // Read each time: the default can change in Settings meanwhile.
+  ipcClient
+    .getSettings()
+    .then((settings) => {
+      defaultTerminalProfile.value = settings.terminalShell || '';
+    })
+    .catch(() => {});
+};
+
+const openTerminalOfProfile = (profileId: string) => {
+  const panelId = newTerminalMenu.value?.panelId ?? null;
+  newTerminalMenu.value = null;
+  if (panelId && findPanelById(currentTilingRoot.value, panelId)) {
+    void handleNewTabInPanel(panelId, profileId);
+  } else {
+    void openEmptyTerminal(profileId);
+  }
+};
+
+/** A tab opened from the menu is named after its profile, as in Windows Terminal. */
+const profileTabName = (profileId?: string) =>
+  (profileId && terminalProfiles.value.find((p) => p.id === profileId)?.name) || 'Terminal';
 
 let filesTabSeq = 0;
 

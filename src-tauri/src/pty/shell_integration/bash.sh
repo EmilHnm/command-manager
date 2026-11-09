@@ -10,8 +10,20 @@ unset CM_NONCE
 # first user-entered readline buffer is observed rather than mistaken for a
 # command already handled by the hook.
 CM_LAST_HISTCMD=
+# Set in WSL tabs: the folder is reported as a Windows path (wslpath -w).
+CM_APP_WSL=${CM_WSL:-}
+unset CM_WSL
 
-if [[ -f "$HOME/.bashrc" && "${BASH_SOURCE[0]}" != "$HOME/.bashrc" ]]; then
+if [[ -n ${CM_SHELL_LOGIN:-} ]]; then
+  # WSL starts the user's shell as a login shell; --rcfile makes it a plain
+  # interactive one, so read the login files a login shell would.
+  unset CM_SHELL_LOGIN
+  if [[ -r /etc/profile ]]; then . /etc/profile; fi
+  if [[ -r "$HOME/.bash_profile" ]]; then . "$HOME/.bash_profile"
+  elif [[ -r "$HOME/.bash_login" ]]; then . "$HOME/.bash_login"
+  elif [[ -r "$HOME/.profile" ]]; then . "$HOME/.profile"
+  fi
+elif [[ -f "$HOME/.bashrc" && "${BASH_SOURCE[0]}" != "$HOME/.bashrc" ]]; then
   . "$HOME/.bashrc"
 fi
 
@@ -20,8 +32,9 @@ cm_escape() {
   for ((i=0; i<${#value}; i++)); do
     char=${value:i:1}
     printf -v code '%d' "'${char}"
-    if [[ $char == '\\' ]]; then out+='\\\\'
-    elif [[ $char == ';' ]]; then out+='\\x3b'
+    # Single quotes keep backslashes as they are: '\' is one, '\\' two.
+    if [[ $char == '\' ]]; then out+='\\'
+    elif [[ $char == ';' ]]; then out+='\x3b'
     elif (( code <= 32 )); then printf -v code '%02x' "$code"; out+="\\x$code"
     else out+=$char
     fi
@@ -59,7 +72,16 @@ cm_preexec() {
 cm_precmd() {
   local code=$?
   cm_osc "D;$code"
-  cm_osc "P;Cwd=$(cm_escape "$PWD")"
+  local cwd=$PWD
+  if [[ -n $CM_APP_WSL ]]; then
+    # One wslpath call per folder change, not per prompt.
+    if [[ $PWD != "${CM_WSL_PWD-}" ]]; then
+      CM_WSL_PWD=$PWD
+      CM_WSL_WINPWD=$(wslpath -w "$PWD" 2>/dev/null) || CM_WSL_WINPWD=
+    fi
+    cwd=${CM_WSL_WINPWD:-$PWD}
+  fi
+  cm_osc "P;Cwd=$(cm_escape "$cwd")"
   cm_osc A
 }
 

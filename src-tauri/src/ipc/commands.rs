@@ -1395,14 +1395,33 @@ fn command_run_blocking(
 /// history event. It still uses the same in-memory process manager and PTY
 /// stream as command-backed terminals, so input, resize, reattach, and stop
 /// behave consistently.
+///
+/// `profile` picks the kind of terminal (see `pty::profiles`); without one,
+/// the `terminal_shell` setting does.
 #[tauri::command]
-pub async fn terminal_open(app: AppHandle, cwd: Option<String>) -> Result<TerminalInfo> {
-    tauri::async_runtime::spawn_blocking(move || terminal_open_sync(app, cwd))
+pub async fn terminal_open(
+    app: AppHandle,
+    cwd: Option<String>,
+    profile: Option<String>,
+) -> Result<TerminalInfo> {
+    tauri::async_runtime::spawn_blocking(move || terminal_open_sync(app, cwd, profile))
         .await
         .map_err(|error| Error::msg(format!("terminal worker failed: {error}")))?
 }
 
-fn terminal_open_sync(app: AppHandle, cwd: Option<String>) -> Result<TerminalInfo> {
+/// The kinds of terminal a new tab can open on this machine.
+#[tauri::command]
+pub async fn terminal_profiles() -> Result<Vec<crate::pty::profiles::TerminalProfile>> {
+    tauri::async_runtime::spawn_blocking(crate::pty::profiles::list)
+        .await
+        .map_err(|error| Error::msg(format!("terminal worker failed: {error}")))
+}
+
+fn terminal_open_sync(
+    app: AppHandle,
+    cwd: Option<String>,
+    profile: Option<String>,
+) -> Result<TerminalInfo> {
     let cwd = cwd
         .map(std::path::PathBuf::from)
         .filter(|path| path.is_absolute() && path.is_dir());
@@ -1414,11 +1433,15 @@ fn terminal_open_sync(app: AppHandle, cwd: Option<String>) -> Result<TerminalInf
     let buf_bytes = buffer_bytes(&state);
     let ipc = state.ipc.clone();
     let integration_root = app::data_dir(&app).ok();
-    let preferred_shell = state
-        .db
-        .read(|c| settings::get(c, "terminal_shell"))
-        .ok()
-        .flatten()
+    let preferred_shell = profile
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            state
+                .db
+                .read(|c| settings::get(c, "terminal_shell"))
+                .ok()
+                .flatten()
+        })
         .filter(|value| !value.trim().is_empty());
     let load_powershell_profile = state
         .db
@@ -1828,6 +1851,28 @@ pub fn keybindings_export(
     Ok(destination.to_string_lossy().to_string())
 }
 
+/// "Open in Command Manager" in File Explorer; None off Windows.
+#[tauri::command]
+pub fn explorer_menu_status() -> Option<bool> {
+    app::explorer_menu::status()
+}
+
+#[tauri::command]
+pub fn explorer_menu_set(enabled: bool) -> Result<()> {
+    app::explorer_menu::set(enabled)
+}
+
+/// Folders opened from Explorer that the UI has not opened yet; existing
+/// folders only.
+#[tauri::command]
+pub fn app_take_open_dirs(pending: State<'_, app::explorer_menu::PendingDirs>) -> Vec<String> {
+    pending
+        .take()
+        .into_iter()
+        .filter(|dir| std::path::Path::new(dir).is_dir())
+        .collect()
+}
+
 #[tauri::command]
 pub fn autostart_os_is_enabled(app: AppHandle) -> Result<bool> {
     app::autostart::os_enabled(&app)
@@ -2061,8 +2106,50 @@ fn pick_folder_blocking() -> Result<Option<String>> {
             Ok(Some(path))
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        Ok(None)
+        // Cancel exits non-zero with empty stdout, which reads as None.
+        let output = std::process::Command::new("osascript")
+            .args([
+                "-e",
+                r#"POSIX path of (choose folder with prompt "Chọn thư mục")"#,
+            ])
+            .output()
+            .map_err(|e| Error::msg(e.to_string()))?;
+        Ok(picked_path(&output.stdout))
     }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let pickers: [(&str, &[&str]); 2] = [
+            (
+                "zenity",
+                &["--file-selection", "--directory", "--title=Chọn thư mục"],
+            ),
+            ("kdialog", &["--getexistingdirectory", "."]),
+        ];
+        for (program, args) in pickers {
+            match std::process::Command::new(program).args(args).output() {
+                Ok(output) => return Ok(picked_path(&output.stdout)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(Error::msg(error.to_string())),
+            }
+        }
+        // The caller falls back to typing the path.
+        Err(Error::msg(
+            "Không tìm thấy hộp chọn thư mục (cần zenity hoặc kdialog)",
+        ))
+    }
+}
+
+#[cfg(unix)]
+fn picked_path(stdout: &[u8]) -> Option<String> {
+    let path = String::from_utf8_lossy(stdout)
+        .trim_end_matches(['\n', '\r'])
+        .to_string();
+    // osascript ends folders with "/"; keep "/" itself.
+    let path = match path.strip_suffix('/') {
+        Some(rest) if !rest.is_empty() => rest.to_string(),
+        _ => path,
+    };
+    (!path.is_empty()).then_some(path)
 }

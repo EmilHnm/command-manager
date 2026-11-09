@@ -91,6 +91,94 @@ pub async fn dirty_files(root: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
+/// Rewrites as LF the files git keeps LF but the worktree has CRLF: an
+/// agent's own git (agy runs its shell without the app's environment) uses a
+/// system `core.autocrlf=true` and checks files out CRLF, which formatters
+/// that want LF then reject. Returns the files rewritten.
+pub async fn normalize_crlf(root: &Path) -> Result<Vec<String>> {
+    let out = output(root, &["ls-files", "--eol", "-z"]).await?;
+    if !out.status.success() {
+        return Ok(Vec::new());
+    }
+    let mut fixed = Vec::new();
+    for entry in out.stdout.split(|byte| *byte == 0) {
+        let entry = String::from_utf8_lossy(entry);
+        // "i/lf    w/crlf  attr/                 \tpath"
+        let Some((meta, path)) = entry.split_once('\t') else {
+            continue;
+        };
+        let mut fields = meta.split_whitespace();
+        if fields.next() != Some("i/lf") || fields.next() != Some("w/crlf") {
+            continue;
+        }
+        let file = root.join(path);
+        let Ok(data) = std::fs::read(&file) else {
+            continue;
+        };
+        let mut lf = Vec::with_capacity(data.len());
+        let mut bytes = data.iter().peekable();
+        while let Some(&byte) = bytes.next() {
+            if byte == b'\r' && bytes.peek() == Some(&&b'\n') {
+                continue;
+            }
+            lf.push(byte);
+        }
+        if std::fs::write(&file, lf).is_ok() {
+            fixed.push(path.to_string());
+        }
+    }
+    if !fixed.is_empty() {
+        // Rewritten with the same content git has: not a change.
+        let _ = output(root, &["update-index", "-q", "--refresh"]).await;
+    }
+    Ok(fixed)
+}
+
+/// Repository settings an agent must leave alone: a worktree shares the
+/// main checkout's `.git/config`, so a change there reaches the user's own
+/// checkout (line endings, hooks).
+const GUARDED_CONFIG: [&str; 3] = ["core.autocrlf", "core.eol", "core.hookspath"];
+
+/// The repository's own (`--local`) values of [`GUARDED_CONFIG`].
+pub async fn guarded_config(root: &Path) -> Vec<(&'static str, Option<String>)> {
+    let mut values = Vec::new();
+    for key in GUARDED_CONFIG {
+        let value = output(root, &["config", "--local", "--get", key])
+            .await
+            .ok()
+            .filter(|out| out.status.success())
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string());
+        values.push((key, value));
+    }
+    values
+}
+
+/// Puts back what [`guarded_config`] saw; returns the keys that had changed.
+pub async fn restore_guarded_config(
+    root: &Path,
+    before: &[(&'static str, Option<String>)],
+) -> Vec<String> {
+    let now = guarded_config(root).await;
+    let mut changed = Vec::new();
+    for ((key, was), (_, is)) in before.iter().zip(now.iter()) {
+        if was == is {
+            continue;
+        }
+        let restored = match was {
+            Some(value) => git(root, &["config", "--local", key, value]).await,
+            None => git(root, &["config", "--local", "--unset-all", key]).await,
+        };
+        if restored.is_ok() {
+            changed.push(format!(
+                "{key}: {} → {}",
+                is.as_deref().unwrap_or("(không đặt)"),
+                was.as_deref().unwrap_or("(không đặt)")
+            ));
+        }
+    }
+    changed
+}
+
 pub async fn branch_exists(root: &Path, branch: &str) -> bool {
     output(
         root,
@@ -272,6 +360,101 @@ pub async fn commit_style(dir: &Path, base: &str) -> String {
         ));
     }
     parts.join("\n\n")
+}
+
+/// How a repository names its branches: recent branch names, local and
+/// remote, and the branches its merge commits name, plus its commit style.
+/// Empty when it has no history (a new repository).
+pub async fn branch_style(dir: &Path, base: &str) -> String {
+    let mut parts = Vec::new();
+    let refs = git(
+        dir,
+        &[
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--count=80",
+            "--format=%(refname)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )
+    .await
+    .unwrap_or_default();
+    let mut names: Vec<String> = Vec::new();
+    for name in refs.lines().filter_map(short_ref) {
+        let trunk = ["main", "master", "develop", "dev", "HEAD", base];
+        if name.starts_with("cm/") || trunk.contains(&name) || names.iter().any(|n| n == name) {
+            continue;
+        }
+        names.push(name.to_string());
+        if names.len() == 20 {
+            break;
+        }
+    }
+    if !names.is_empty() {
+        let list: Vec<String> = names.iter().map(|name| format!("- {name}")).collect();
+        parts.push(format!("Recent branches:\n{}", list.join("\n")));
+    }
+    let merges: Vec<String> = git(dir, &["log", "-40", "--merges", "--format=%s", base])
+        .await
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| {
+            !line.starts_with("cm:") && (line.contains(" from ") || line.contains("branch"))
+        })
+        .take(10)
+        .map(|line| format!("- {line}"))
+        .collect();
+    if !merges.is_empty() {
+        parts.push(format!("Merge commits on `{base}`:\n{}", merges.join("\n")));
+    }
+    let commits = commit_style(dir, base).await;
+    if !commits.is_empty() {
+        parts.push(commits);
+    }
+    parts.join("\n\n")
+}
+
+/// `refs/heads/feat/x` and `refs/remotes/origin/feat/x` → `feat/x`.
+fn short_ref(refname: &str) -> Option<&str> {
+    if let Some(name) = refname.strip_prefix("refs/heads/") {
+        return Some(name);
+    }
+    let rest = refname.strip_prefix("refs/remotes/")?;
+    rest.split_once('/').map(|(_, name)| name)
+}
+
+/// Whether `name` is a valid branch name that no local or remote branch
+/// uses, nor clashes with: git cannot hold both `feat` and `feat/x`.
+pub async fn branch_name_free(dir: &Path, name: &str) -> bool {
+    if !output(dir, &["check-ref-format", "--branch", name])
+        .await
+        .is_ok_and(|out| out.status.success())
+    {
+        return false;
+    }
+    let Ok(refs) = git(
+        dir,
+        &[
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )
+    .await
+    else {
+        return false;
+    };
+    !refs.lines().filter_map(short_ref).any(|other| {
+        other == name
+            || other
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.starts_with('/'))
+            || name
+                .strip_prefix(other)
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
 }
 
 /// Runs the repository's commit-msg hook on `message`, as `git commit`
@@ -755,6 +938,42 @@ pub fn outside_scope(scope: &[String], files: &[String]) -> Vec<String> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn branch_names_are_free_unless_taken_or_clashing() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-q", "-b", "main"]).await.unwrap();
+        std::fs::write(root.join("a"), "a").unwrap();
+        commit_all(root, "feat: first").await.unwrap();
+        git(root, &["branch", "feat/login"]).await.unwrap();
+        git(root, &["branch", "fix"]).await.unwrap();
+        git(
+            root,
+            &["update-ref", "refs/remotes/origin/feat/remote-one", "HEAD"],
+        )
+        .await
+        .unwrap();
+
+        assert!(branch_name_free(root, "feat/cart").await);
+        assert!(!branch_name_free(root, "feat/login").await);
+        assert!(
+            !branch_name_free(root, "feat").await,
+            "feat/login is under it"
+        );
+        assert!(
+            !branch_name_free(root, "fix/typo").await,
+            "the branch fix is in the way"
+        );
+        assert!(!branch_name_free(root, "feat/remote-one").await);
+        assert!(!branch_name_free(root, "feat/bad..name").await);
+
+        let style = branch_style(root, "main").await;
+        assert!(style.contains("- feat/login"), "{style}");
+        assert!(style.contains("- feat/remote-one"), "{style}");
+        assert!(style.contains("- feat: first"), "{style}");
+        assert!(!style.contains("- main"), "{style}");
+    }
+
     #[test]
     fn scope_globs() {
         assert!(glob_match("src/**", "src/a/b.rs"));
@@ -835,6 +1054,37 @@ mod tests {
         delete_branch(&root, "cm/r/t1").await;
         assert!(!task.exists());
         assert!(!branch_exists(&root, "cm/r/t1").await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn crlf_left_by_an_agent_goes_back_to_lf_and_config_is_put_back() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("repo");
+        std::fs::create_dir(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]).await.unwrap();
+        std::fs::write(root.join("a.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(root.join("b.txt"), "keep\n").unwrap();
+        assert!(commit_all(&root, "init").await.unwrap());
+
+        // What an agent's own git with autocrlf=true leaves.
+        std::fs::write(root.join("a.txt"), "one\r\ntwo\r\n").unwrap();
+        assert_eq!(normalize_crlf(&root).await.unwrap(), vec!["a.txt"]);
+        assert_eq!(std::fs::read(root.join("a.txt")).unwrap(), b"one\ntwo\n");
+        assert!(dirty_files(&root).await.unwrap().is_empty());
+        assert!(normalize_crlf(&root).await.unwrap().is_empty());
+
+        let before = guarded_config(&root).await;
+        git(&root, &["config", "core.autocrlf", "false"])
+            .await
+            .unwrap();
+        git(&root, &["config", "core.eol", "lf"]).await.unwrap();
+        let changed = restore_guarded_config(&root, &before).await;
+        assert_eq!(changed.len(), 2, "{changed:?}");
+        assert!(output(&root, &["config", "--local", "--get", "core.eol"])
+            .await
+            .map(|out| !out.status.success())
+            .unwrap());
+        assert!(restore_guarded_config(&root, &before).await.is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -36,8 +36,9 @@ mod desktop {
     pub fn run() {
         tauri::Builder::default()
             .manage(app::shutdown::ShutdownState::default())
-            .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-                app::single_instance::on_second_instance(app);
+            .manage(app::explorer_menu::PendingDirs::default())
+            .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+                app::single_instance::on_second_instance(app, &argv);
             }))
             .plugin(tauri_plugin_autostart::init(
                 MacosLauncher::LaunchAgent,
@@ -82,6 +83,11 @@ mod desktop {
                     tray = tray.icon(icon.clone());
                 }
                 tray.build(app)?;
+
+                if let Some(dir) = app::explorer_menu::open_dir_arg(std::env::args()) {
+                    app.state::<app::explorer_menu::PendingDirs>().push(dir);
+                }
+                app::explorer_menu::refresh();
 
                 if app::autostart::launched_by_os_autostart() {
                     if let Some(window) = app.get_webview_window("main") {
@@ -177,6 +183,10 @@ mod desktop {
                 ipc::commands::session_start,
                 ipc::commands::command_run,
                 ipc::commands::terminal_open,
+                ipc::commands::terminal_profiles,
+                ipc::commands::explorer_menu_status,
+                ipc::commands::explorer_menu_set,
+                ipc::commands::app_take_open_dirs,
                 ipc::commands::session_stop,
                 ipc::commands::process_stop,
                 ipc::commands::pty_resize,

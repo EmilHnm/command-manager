@@ -129,6 +129,14 @@ export interface SystemSettings {
   agentsWorktreeDir: string;
 }
 
+/** A kind of terminal a new tab can open (pty::profiles). */
+export interface TerminalProfile {
+  /** What `terminalShell` and `openTerminal` take: pwsh, powershell, cmd, wsl, wsl:<distro>… */
+  id: string;
+  name: string;
+  kind: 'powershell' | 'cmd' | 'wsl' | 'unix';
+}
+
 export interface BackupIntegrityResult {
   valid: boolean;
   integrityOk: boolean;

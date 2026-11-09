@@ -128,12 +128,36 @@ const CLAUDE_BLOCKED_TOOLS: &[&str] = &[
     "EnterWorktree",
 ];
 
-/// The CLI reads its prompt from stdin: [`args`]' last item is written there
-/// instead. A prompt with the rules and context it carries, or a review with
-/// its diff and check output, can pass Windows' 32767-character command line
-/// ("os error 206"). Claude reads it after the trailing `--` it is given.
-pub fn prompt_on_stdin(cli: Cli) -> bool {
-    matches!(cli, Cli::Cursor | Cli::Claude)
+/// Takes the prompt (the last of [`args`]) out of `args` and returns what
+/// to write to the CLI's stdin instead: a prompt with the rules and context
+/// it carries, or a review with its diff and check output, can pass Windows'
+/// 32767-character command line ("os error 206"). Claude reads it after the
+/// trailing `--`, cursor-agent in -p mode; agy's -p wants a value, so it gets
+/// an empty one and reads the prompt as one stream-json user message.
+/// None: the CLI keeps its prompt as an argument.
+pub fn take_stdin_prompt(cli: Cli, args: &mut Vec<String>) -> Option<String> {
+    match cli {
+        Cli::Cursor | Cli::Claude => args.pop(),
+        Cli::Agy => {
+            let prompt = args.pop()?;
+            if args.last().map(String::as_str) != Some("-p") {
+                args.push(prompt);
+                return None;
+            }
+            args.push(String::new());
+            let at = args.len() - 2;
+            args.splice(
+                at..at,
+                ["--input-format".to_string(), "stream-json".to_string()],
+            );
+            let message = serde_json::json!({
+                "event": "user",
+                "message": { "role": "user", "content": prompt },
+            });
+            Some(format!("{message}\n"))
+        }
+        Cli::Codex => None,
+    }
 }
 
 /// Arguments after the program name. The prompt is always an argument of
@@ -384,7 +408,45 @@ impl Quota {
     }
 }
 
+/// The CLI's error is the network or the provider's API failing for a
+/// moment (a dropped connection, a 5xx, "overloaded"), not the work: the
+/// same step can go on in its session once the connection is back.
+pub fn is_network_error(error: &str) -> bool {
+    let error = error.to_lowercase();
+    [
+        "api error",
+        "request failed",
+        "connection reset",
+        "connection refused",
+        "connection attempt failed",
+        "connection closed",
+        "connection error",
+        "network error",
+        "socket hang up",
+        "wsarecv",
+        "wsasend",
+        "econnreset",
+        "econnrefused",
+        "etimedout",
+        "enotfound",
+        "eai_again",
+        "unexpected eof",
+        "tls handshake",
+        "overloaded",
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+    ]
+    .iter()
+    .any(|needle| error.contains(needle))
+}
+
 impl Outcome {
+    /// See [`is_network_error`]; out of usage is [`Outcome::hit_limit`].
+    pub fn network_error(&self) -> bool {
+        !self.hit_limit() && self.error.as_deref().is_some_and(is_network_error)
+    }
+
     /// The CLI stopped because the account is out of usage (Claude's "You've
     /// hit your session limit", codex's "usage limit"): wait, do not fail.
     pub fn hit_limit(&self) -> bool {
@@ -1208,6 +1270,63 @@ mod tests {
         assert!(dirs[0].join("sh.exe").is_file());
         let sh = sh();
         assert!(sh.is_absolute() && sh.is_file(), "{sh:?}");
+    }
+
+    #[test]
+    fn long_prompts_go_through_stdin() {
+        let strings = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let mut agy = strings(&[
+            "--output-format",
+            "stream-json",
+            "--conversation",
+            "c1",
+            "-p",
+            "do it",
+        ]);
+        let input = take_stdin_prompt(Cli::Agy, &mut agy).unwrap();
+        assert_eq!(
+            agy,
+            strings(&[
+                "--output-format",
+                "stream-json",
+                "--conversation",
+                "c1",
+                "--input-format",
+                "stream-json",
+                "-p",
+                ""
+            ])
+        );
+        let message: Value = serde_json::from_str(input.trim_end()).unwrap();
+        assert_eq!(message["event"], "user");
+        assert_eq!(message["message"]["content"], "do it");
+
+        let mut claude = strings(&["-p", "--", "review"]);
+        assert_eq!(
+            take_stdin_prompt(Cli::Claude, &mut claude).as_deref(),
+            Some("review")
+        );
+        assert_eq!(claude, strings(&["-p", "--"]));
+
+        let mut codex = strings(&["exec", "go"]);
+        assert_eq!(take_stdin_prompt(Cli::Codex, &mut codex), None);
+        assert_eq!(codex, strings(&["exec", "go"]));
+    }
+
+    #[test]
+    fn network_errors_are_told_from_the_work_failing() {
+        assert!(is_network_error(
+            "agy: API error (attempt 1): request failed: Post \"https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse\": read tcp [2606:4700::2]:54768->[2001:4860::]:443: wsarecv: A connection attempt failed"
+        ));
+        assert!(is_network_error("API Error: 529 Overloaded"));
+        assert!(is_network_error("fetch failed: ECONNRESET"));
+        assert!(!is_network_error("claude thoát với mã 3: not logged in"));
+        assert!(!is_network_error("Agent không thay đổi tệp nào"));
+        let quota = Outcome {
+            error: Some("API error: usage limit reached".into()),
+            ..Outcome::default()
+        };
+        assert!(quota.hit_limit() && !quota.network_error());
     }
 
     #[test]

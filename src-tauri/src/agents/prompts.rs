@@ -442,16 +442,57 @@ language. Do NOT modify any file. Reply with the document only.",
     )
 }
 
-pub fn plan(run: &Run, project: &Project) -> String {
+/// `branch_history`: how the repositories name branches and commits, for
+/// the `branch` field; None when the run's branch is already set.
+pub fn plan(run: &Run, project: &Project, branch_history: Option<&str>) -> String {
     format!(
         "Now split the work into tasks for the team, following your design:
 <design>
 {design}
 </design>
 
-{rules}",
+{rules}{branch}",
         design = run.design_md.as_deref().unwrap_or(""),
         rules = plan_rules(run, project),
+        branch = branch_history.map(branch_rule).unwrap_or_default(),
+    )
+}
+
+/// The types of the general branch rule (Conventional Commits).
+pub const BRANCH_TYPES: &[&str] = &[
+    "feat", "fix", "refactor", "perf", "docs", "test", "chore", "build", "ci", "style",
+];
+
+/// How the leader names the run's branch: the project's own habits when
+/// its history shows them, the general rule otherwise.
+fn branch_rule(history: &str) -> String {
+    let history = history.trim();
+    let evidence = if history.is_empty() {
+        "The repository has no history to follow yet: use the general rule.".to_string()
+    } else {
+        format!(
+            "How this project names its branches and commits:
+<history>
+{history}
+</history>
+When this history shows a convention of its own (other prefixes such as `feature/` or \
+`bugfix/`, ticket ids such as `ABC-123`, a scope, a case), follow it. Otherwise, or when \
+the history is mixed, use the general rule."
+        )
+    };
+    format!(
+        "
+- `branch`: the name of the git branch that carries this work and becomes the pull \
+request's branch. General rule: `<type>/<short-description>`; `type` is the kind of change, \
+one of {types} (`feat` new behaviour, `fix` bug fix, `refactor` no behaviour change, \
+`chore` tooling or upkeep); `short-description` is 2 to 5 lowercase English words in \
+kebab-case naming the change, e.g. `feat/cart-discount-codes`, `fix/login-redirect-loop`. \
+ASCII letters, digits, `-`, `_`, `.` and `/` only, at most 50 characters. {evidence}",
+        types = BRANCH_TYPES
+            .iter()
+            .map(|t| format!("`{t}`"))
+            .collect::<Vec<_>>()
+            .join(", "),
     )
 }
 
@@ -574,7 +615,21 @@ follow-up adds to or changes in the shared contract, \"\" if nothing.
     )
 }
 
-pub fn plan_schema(roles: &[String], repos: &[String]) -> Value {
+/// `with_branch`: the leader also names the run's branch (the first plan,
+/// before the branch exists).
+pub fn plan_schema(roles: &[String], repos: &[String], with_branch: bool) -> Value {
+    let mut schema = plan_schema_base(roles, repos);
+    if with_branch {
+        schema["required"]
+            .as_array_mut()
+            .expect("required is an array")
+            .push(json!("branch"));
+        schema["properties"]["branch"] = json!({ "type": "string" });
+    }
+    schema
+}
+
+fn plan_schema_base(roles: &[String], repos: &[String]) -> Value {
     let strings = json!({ "type": "array", "items": { "type": "string" } });
     json!({
         "type": "object",
@@ -781,7 +836,7 @@ checks, why) and what happens next, in the language of the request.",
 }
 
 pub fn push_failure_schema(roles: &[String], repos: &[String]) -> Value {
-    let plan = plan_schema(roles, repos);
+    let plan = plan_schema_base(roles, repos);
     json!({
         "type": "object",
         "additionalProperties": false,
@@ -1094,7 +1149,7 @@ pub fn test_guide_schema() -> Value {
 /// The leader's answer to a failed manual test: fix tasks, or none when it
 /// finds no bug (its summary then tells the person why).
 pub fn triage_schema(roles: &[String], repos: &[String]) -> Value {
-    let plan = plan_schema(roles, repos);
+    let plan = plan_schema_base(roles, repos);
     json!({
         "type": "object",
         "additionalProperties": false,
@@ -1295,7 +1350,7 @@ Answer in the language of the question.",
 /// Continues a step that was cut short (stopped, timed out, usage limit).
 pub fn resume_step(answer: &str) -> String {
     format!(
-        "Your previous turn was cut short before you finished (the process was stopped). \
+        "Your previous turn was cut short before you finished (the process was stopped or lost its connection). \
 Continue from where you left off: do not redo the reading or the changes already done, \
 and complete the original instructions. {answer}"
     )
@@ -1350,6 +1405,9 @@ pub struct Shared<'a> {
     pub done: &'a [&'a Task],
     /// How the task's repositories write commit messages.
     pub commit_style: &'a str,
+    /// What earlier agents of this task said and ran (`memo::memo`), for a
+    /// new agent that cannot continue their session.
+    pub memo: Option<&'a str>,
 }
 
 pub fn implement(
@@ -1359,11 +1417,25 @@ pub fn implement(
     earlier_work: bool,
     shared: &Shared,
 ) -> String {
-    let earlier = if earlier_work {
-        "\nThis worktree already contains earlier work on this task by another agent; \
-continue from it.\n"
-    } else {
-        ""
+    let earlier = match (shared.memo, earlier_work) {
+        (Some(memo), _) => format!(
+            "\nAn earlier agent worked on this task and was stopped or replaced before it \
+finished. {changes}What it said and the commands it ran, oldest first:
+<previous_agent>
+{memo}
+</previous_agent>
+Use it to pick up where it left off: check its changes against the task, keep what is \
+right and finish the rest; do not start over or repeat what it already found out.\n",
+            changes = if earlier_work {
+                "Its changes are in this worktree. "
+            } else {
+                "It left no changes in this worktree. "
+            },
+        ),
+        (None, true) => "\nThis worktree already contains earlier work on this task by another \
+agent; continue from it.\n"
+            .to_string(),
+        (None, false) => String::new(),
     };
     format!(
         "You are a {role} engineer in a team of AI agents. {place}
@@ -1379,7 +1451,9 @@ Rules:
 - Implement the task completely, including tests where the project has them.
 - Stay within the scope; if you must touch another file, keep the change minimal.
 - Do NOT run git commit, git push or change branches: the orchestrator commits for you \
-and opens the pull request (pushing is disabled here).
+and opens the pull request (pushing is disabled here). Run tests and other commands freely.
+- Never run `git config` (the repository's config is shared with the user's own checkout) \
+and never touch another worktree (`_integration` or other slots): the app merges there.
 - {verify}
 - Do not ask questions; make reasonable decisions and mention them at the end.
 - {code_language}

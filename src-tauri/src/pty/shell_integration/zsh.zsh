@@ -3,13 +3,17 @@ export HISTFILE=/dev/null
 export CM_SHELL_INTEGRATION=1
 CM_APP_NONCE=${CM_NONCE:-}
 unset CM_NONCE
+# Set in WSL tabs: the folder is reported as a Windows path (wslpath -w).
+CM_APP_WSL=${CM_WSL:-}
+unset CM_WSL
 
 cm_escape() {
   local value=$1 char out=
   for char in ${(s::)value}; do
     case "$char" in
-      \\) out+='\\\\' ;;
-      ';') out+='\\x3b' ;;
+      # Single quotes keep backslashes as they are: '\\' is two.
+      \\) out+='\\' ;;
+      ';') out+='\x3b' ;;
       $'\n'|$'\r'|$'\t'|$' ') printf -v char '%02x' "'$char"; out+="\\x$char" ;;
       *) out+=$char ;;
     esac
@@ -25,7 +29,16 @@ CM_PROMPT_B=$'%{\e]633;B\a%}'
 cm_precmd() {
   local code=$?
   cm_osc "D;$code"
-  cm_osc "P;Cwd=$(cm_escape "$PWD")"
+  local cwd=$PWD
+  if [[ -n $CM_APP_WSL ]]; then
+    # One wslpath call per folder change, not per prompt.
+    if [[ $PWD != "${CM_WSL_PWD-}" ]]; then
+      CM_WSL_PWD=$PWD
+      CM_WSL_WINPWD=$(wslpath -w "$PWD" 2>/dev/null) || CM_WSL_WINPWD=
+    fi
+    cwd=${CM_WSL_WINPWD:-$PWD}
+  fi
+  cm_osc "P;Cwd=$(cm_escape "$cwd")"
   cm_osc A
   [[ $PROMPT == *$CM_PROMPT_B* ]] || PROMPT="$PROMPT$CM_PROMPT_B"
 }

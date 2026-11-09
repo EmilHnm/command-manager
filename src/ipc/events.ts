@@ -7,6 +7,7 @@ export const IPC_EVENTS = {
   PROCESS_STATUS: 'process://status',
   SHUTDOWN_PROGRESS: 'app://shutdown-progress',
   SINGLE_INSTANCE: 'app://instance',
+  OPEN_DIR: 'app://open-dir',
   HISTORY_ADDED: 'history://added',
   CLOSE_REQUESTED: 'app://close-requested',
   COMMANDS_CHANGED: 'commands://changed',

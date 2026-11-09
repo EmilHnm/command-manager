@@ -1019,6 +1019,24 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn wsl_profile_opens_wsl_or_falls_back_to_a_windows_shell() {
+        let (_pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
+        let mut shell =
+            spawn_interactive_with_metadata(slave, None, Some(String::from("wsl")), false, None)
+                .expect("spawn wsl profile");
+        let _ = shell.child.kill();
+        let _ = shell.child.wait();
+        if crate::pty::profiles::wsl_executable().is_some() {
+            assert_eq!(shell.shell_kind, shell_integration::ShellKind::Wsl);
+            assert_eq!(shell.history_level, 2);
+            assert!(shell.nonce.is_none());
+        } else {
+            assert_ne!(shell.shell_kind, shell_integration::ShellKind::Wsl);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn cmd_preference_emits_prompt_markers_and_uses_level_two_history() {
         let (pty, slave) = PtySession::open(100, 30, 64 * 1024).expect("open pty");
         let mut shell =

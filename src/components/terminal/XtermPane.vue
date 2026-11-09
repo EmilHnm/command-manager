@@ -928,8 +928,11 @@ onBeforeUnmount(() => {
   }
 });
 
-const decodeOsc = (value: string) => value.replace(/\\x([0-9a-fA-F]{2})/g, (_, hex: string) =>
-  String.fromCharCode(Number.parseInt(hex, 16))).replace(/\\\\/g, '\\');
+// One pass, like osc.rs `unescape`: decoding `\xHH` first read the `\\x41`
+// of `C:\\x41…` as an escape, and `\\` afterwards collapsed the two
+// backslashes of a decoded `\\wsl.localhost` share into one.
+const decodeOsc = (value: string) => value.replace(/\\(?:x([0-9a-fA-F]{2})|\\)/g, (_, hex?: string) =>
+  hex ? String.fromCharCode(Number.parseInt(hex, 16)) : '\\');
 
 const updateInputShadow = (data: string) => {
   // Bracketed paste contains the actual payload between two escape markers.

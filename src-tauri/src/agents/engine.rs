@@ -11,6 +11,7 @@ use super::context;
 use super::git::{self, MergeError};
 use super::guides::{self, Guides, Use};
 use super::log::AgentLog;
+use super::memo;
 use super::process::{self, unix_now, RunError, Spawn, Stopped};
 use super::prompts;
 use super::workspace;
@@ -369,6 +370,9 @@ fn plain_tail(bytes: &[u8], max_bytes: usize) -> String {
 /// App setting: the folder new runs keep their worktrees in (empty: app data).
 pub const WORKTREE_DIR_SETTING: &str = "agents_worktree_dir";
 
+/// Waits before a step the network cut off is tried again (then it fails).
+const NETWORK_RETRY_WAITS: [u64; 2] = [30, 90];
+
 /// How long a push may take: pre-push hooks run the project's checks.
 const PUSH_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const GH_TIMEOUT: Duration = Duration::from_secs(3 * 60);
@@ -454,6 +458,9 @@ struct PlanAnswer {
     tasks: Vec<PlanTask>,
     #[serde(default)]
     checks: Vec<CheckProposal>,
+    /// The run's branch, asked for in the first plan only.
+    #[serde(default)]
+    branch: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -582,6 +589,43 @@ pub struct Engine {
 
 fn short(id: &str) -> &str {
     &id[..id.len().min(8)]
+}
+
+/// A branch name the leader proposed, made safe for git: ASCII letters,
+/// digits, `-_./`, no empty or dot-led parts, at most 60 characters.
+/// None when nothing usable is left.
+fn clean_branch_name(raw: &str) -> Option<String> {
+    let raw = raw.trim().trim_matches('`');
+    let raw = raw.strip_prefix("refs/heads/").unwrap_or(raw);
+    let raw = raw.strip_prefix("origin/").unwrap_or(raw);
+    let mapped: String = raw
+        .chars()
+        .map(|c| match c {
+            c if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/') => c,
+            _ => '-',
+        })
+        .collect();
+    let mut parts: Vec<String> = Vec::new();
+    for part in mapped.split('/') {
+        let mut part = part.to_string();
+        while part.contains("--") {
+            part = part.replace("--", "-");
+        }
+        while part.contains("..") {
+            part = part.replace("..", ".");
+        }
+        let part = part.trim_matches(['-', '.', '_']);
+        let part = part.strip_suffix(".lock").unwrap_or(part);
+        if !part.is_empty() {
+            parts.push(part.to_string());
+        }
+    }
+    let mut name = parts.join("/");
+    if name.len() > 60 {
+        name.truncate(60);
+        name = name.trim_end_matches(['-', '.', '_', '/']).to_string();
+    }
+    (!name.is_empty() && name != "HEAD" && !name.starts_with('-')).then_some(name)
 }
 
 impl Engine {
@@ -1149,9 +1193,99 @@ impl Engine {
     }
 
     /// `invoke`, with folders outside `cwd` the agent may read (or write,
-    /// by its access) too.
+    /// by its access) too. A step the network cut off is tried again after
+    /// a wait, in its session when it has one (each try its own invocation).
     #[allow(clippy::too_many_arguments)]
     async fn invoke_in(
+        &self,
+        run: &Run,
+        task: Option<&Task>,
+        cli_name: &str,
+        step_name: &str,
+        title: &str,
+        access: Access,
+        cwd: &Path,
+        resume: Option<&str>,
+        prompt: String,
+        schema: Option<&Value>,
+        control: &Control,
+        extra: &[PathBuf],
+    ) -> Step<Outcome> {
+        let mut resume = resume.map(str::to_string);
+        let mut prompt = prompt;
+        for (attempt, wait) in NETWORK_RETRY_WAITS
+            .iter()
+            .map(Some)
+            .chain(std::iter::once(None))
+            .enumerate()
+        {
+            let result = self
+                .invoke_once(
+                    run,
+                    task,
+                    cli_name,
+                    step_name,
+                    title,
+                    access,
+                    cwd,
+                    resume.as_deref(),
+                    prompt.clone(),
+                    schema,
+                    control,
+                    extra,
+                )
+                .await;
+            let cut = match &result {
+                Ok(outcome) => outcome.network_error(),
+                Err(StepError::Failed(message)) => adapter::is_network_error(message),
+                Err(_) => false,
+            };
+            let Some(wait) = wait.filter(|_| cut) else {
+                return result;
+            };
+            let session = self.interrupted_session(
+                &run.id,
+                task.map(|task| task.id.as_str()),
+                cli_name,
+                &[step_name],
+            )?;
+            self.env.changed(&run.id);
+            let note = format!(
+                "{cli_name} mất kết nối; thử lại sau {wait}s{} (lần {}/{})",
+                if session.is_some() {
+                    " trong phiên cũ"
+                } else {
+                    ""
+                },
+                attempt + 1,
+                NETWORK_RETRY_WAITS.len()
+            );
+            if let Some(task) = task {
+                let _ = self.update_task(&task.id, |task| task.status_note = Some(note.clone()));
+            }
+            let mut stop = control.stop.subscribe();
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(*wait)) => {}
+                _ = stop.wait_for(|stopped| *stopped) => return Err(StepError::Cancelled),
+            }
+            if control.stop.borrow().to_owned() {
+                return Err(StepError::Cancelled);
+            }
+            if let Some(task) = task {
+                let _ = self.update_task(&task.id, |task| task.status_note = None);
+            }
+            // In the session: go on from where it stopped. Without one the
+            // first prompt again (it never started).
+            if let Some(session) = session {
+                prompt = prompts::resume_step("");
+                resume = Some(session);
+            }
+        }
+        unreachable!("the last try returns")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn invoke_once(
         &self,
         run: &Run,
         task: Option<&Task>,
@@ -1348,6 +1482,20 @@ impl Engine {
                 ""
             }
         ));
+        // What the agent must leave as it is in the shared `.git/config`.
+        let repo_dirs: Vec<PathBuf> = if access == Access::ReadOnly {
+            Vec::new()
+        } else {
+            run.repos
+                .iter()
+                .map(|repo| workspace::repo_dir(cwd, &repo.path))
+                .filter(|dir| dir.join(".git").exists())
+                .collect()
+        };
+        let mut guarded = Vec::new();
+        for dir in &repo_dirs {
+            guarded.push(git::guarded_config(dir).await);
+        }
         let started = Instant::now();
         let result = process::run(
             Spawn {
@@ -1371,6 +1519,15 @@ impl Engine {
 
         invocation.finished_at = Some(now_unix());
         let elapsed = started.elapsed().as_secs();
+        for (dir, before) in repo_dirs.iter().zip(&guarded) {
+            let changed = git::restore_guarded_config(dir, before).await;
+            if !changed.is_empty() {
+                log.info(&format!(
+                    "Agent đã sửa .git/config (dùng chung với checkout của bạn); đã đặt lại: {}",
+                    changed.join(", ")
+                ));
+            }
+        }
         let outcome = match result {
             Ok(outcome) => {
                 invocation.session_id = outcome.session_id.clone().or(invocation.session_id);
@@ -1390,6 +1547,10 @@ impl Engine {
                     Some(error) => log.result(false, error),
                 }
                 let blocked = self.note_quota(cli_name, outcome.quota.as_ref(), &run.limits);
+                if outcome.network_error() {
+                    // Cut off by the network: "Thử lại" goes on in the session.
+                    invocation.resumable = true;
+                }
                 if outcome.hit_limit() {
                     // Out of usage mid-step: pause and continue it later.
                     invocation.resumable = true;
@@ -1413,10 +1574,10 @@ impl Engine {
                 invocation.cost_usd = partial.cost_usd;
                 invocation.ok = Some(false);
                 invocation.error = Some(error.to_string());
-                invocation.resumable = matches!(
-                    error,
-                    RunError::Cancelled | RunError::TimedOut | RunError::Quota(_)
-                );
+                invocation.resumable = match &error {
+                    RunError::Cancelled | RunError::TimedOut | RunError::Quota(_) => true,
+                    RunError::Failed(message) => adapter::is_network_error(message),
+                };
                 log.result(false, &error.to_string());
                 let blocked = self.note_quota(cli_name, partial.quota.as_ref(), &run.limits);
                 Err(match error {
@@ -1723,6 +1884,36 @@ impl Engine {
             .and_then(|inv| inv.session_id))
     }
 
+    /// What the earlier worker processes of a task said and ran, from their
+    /// raw logs; None when there were none (or they said nothing).
+    fn task_memo(&self, run_id: &str, task_id: &str) -> Result<Option<String>> {
+        let invocations = self.db().read(|c| repo::invocation_list(c, run_id))?;
+        let dir = self.run_dir(run_id);
+        let earlier: Vec<memo::EarlierRun> = invocations
+            .iter()
+            .filter(|inv| {
+                inv.task_id.as_deref() == Some(task_id)
+                    && matches!(inv.step.as_str(), "implement" | "fix")
+            })
+            .filter_map(|inv| {
+                let raw = std::fs::read_to_string(dir.join(format!("{}.jsonl", inv.id))).ok()?;
+                let ended = match (inv.ok, &inv.error) {
+                    (Some(true), _) => "finished".to_string(),
+                    _ if inv.resumable => "stopped before it finished".to_string(),
+                    (_, Some(error)) => format!("failed: {}", error.lines().next().unwrap_or("")),
+                    _ => "stopped before it finished".to_string(),
+                };
+                Some(memo::EarlierRun {
+                    cli: &inv.cli,
+                    step: &inv.step,
+                    ended,
+                    raw,
+                })
+            })
+            .collect();
+        Ok(memo::memo(&earlier, memo::MEMO_BYTES))
+    }
+
     /// The project's rules and skills, as they are now.
     fn guides(project: &Project) -> Guides {
         let repos: Vec<String> = project.repos.iter().map(|repo| repo.path.clone()).collect();
@@ -2004,9 +2195,12 @@ impl Engine {
         let project = self.project(run)?;
         let roles: Vec<String> = run.roles.iter().map(|r| r.role.clone()).collect();
         let repos: Vec<String> = run.repos.iter().map(|r| r.path.clone()).collect();
-        let schema = prompts::plan_schema(&roles, &repos);
+        // The leader names the run's branch until the work lands on it.
+        let name_branch = run.batch() == 0 && !self.integration_started(run, &project).await;
+        let schema = prompts::plan_schema(&roles, &repos, name_branch);
         let earlier = self.db().read(|c| repo::task_list(c, &run.id))?;
-        let parse = |value: Value| -> Result<(String, Vec<TaskDraft>, Vec<CheckProposal>)> {
+        type Plan = (String, Vec<TaskDraft>, Vec<CheckProposal>, Option<String>);
+        let parse = |value: Value| -> Result<Plan> {
             let answer: PlanAnswer = serde_json::from_value(value)
                 .map_err(|error| Error::msg(format!("plan does not match the schema: {error}")))?;
             let drafts: Vec<TaskDraft> = answer
@@ -2029,6 +2223,7 @@ impl Engine {
                 answer.contract,
                 Self::check_drafts(run, &earlier, drafts)?,
                 answer.checks,
+                answer.branch,
             ))
         };
         let interrupted = self.interrupted_session(&run.id, None, &run.leader_cli, &["plan"])?;
@@ -2061,10 +2256,19 @@ impl Engine {
                         prompts::follow_up(run, &project, &followup.request, &done, &files),
                     )
                 }
-                None => (run.leader_session.as_deref(), prompts::plan(run, &project)),
+                None => {
+                    let history = match name_branch {
+                        true => Some(self.branch_history(run, &project).await),
+                        false => None,
+                    };
+                    (
+                        run.leader_session.as_deref(),
+                        prompts::plan(run, &project, history.as_deref()),
+                    )
+                }
             },
         };
-        let ((contract, drafts, suggested), outcome) = self
+        let ((contract, drafts, suggested, branch), outcome) = self
             .ask_json(
                 run,
                 None,
@@ -2091,7 +2295,14 @@ impl Engine {
             stage::IMPLEMENT
         };
         let suggested = Self::proposals(&project, suggested);
+        let branch = match branch.filter(|_| name_branch) {
+            Some(name) => self.free_branch_name(run, &project, &name).await,
+            None => None,
+        };
         self.update_run(&run.id, |run| {
+            if let Some(branch) = branch {
+                run.integration_branch = branch;
+            }
             run.contract = Some(contract);
             run.suggested_checks = suggested;
             run.pending_feedback = None;
@@ -2101,6 +2312,74 @@ impl Engine {
             run.stage = next.into();
         })?;
         Ok(Flow::Continue)
+    }
+
+    /// Whether the run's branch exists in some repo: from then on its name
+    /// stays.
+    async fn integration_started(&self, run: &Run, project: &Project) -> bool {
+        for repo in &run.repos {
+            let root = workspace::repo_dir(Path::new(&project.path), &repo.path);
+            if git::branch_exists(&root, &run.integration_branch).await {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// How the repos of the run name their branches and commits, for the
+    /// leader to name the run's branch alike.
+    async fn branch_history(&self, run: &Run, project: &Project) -> String {
+        let mut parts = Vec::new();
+        for repo in &run.repos {
+            let root = workspace::repo_dir(Path::new(&project.path), &repo.path);
+            let style = git::branch_style(&root, &repo.base_branch).await;
+            if style.is_empty() {
+                continue;
+            }
+            parts.push(if run.repos.len() > 1 {
+                format!(
+                    "Repository `{}`:
+{style}",
+                    repo.path
+                )
+            } else {
+                style
+            });
+        }
+        parts.join(
+            "
+
+",
+        )
+    }
+
+    /// The leader's branch name, cleaned and made unique in every repo
+    /// (`-2`, `-3`... when taken). None: keep the current name.
+    async fn free_branch_name(
+        &self,
+        run: &Run,
+        project: &Project,
+        proposed: &str,
+    ) -> Option<String> {
+        let base = clean_branch_name(proposed)?;
+        if base == run.integration_branch {
+            return None;
+        }
+        'candidates: for n in 1..=20 {
+            let name = if n == 1 {
+                base.clone()
+            } else {
+                format!("{base}-{n}")
+            };
+            for repo in &run.repos {
+                let root = workspace::repo_dir(Path::new(&project.path), &repo.path);
+                if !git::branch_name_free(&root, &name).await {
+                    continue 'candidates;
+                }
+            }
+            return Some(name);
+        }
+        None
     }
 
     /// Checks the drafts of the current batch against the tasks delivered
@@ -3115,15 +3394,23 @@ impl Engine {
             Use::Work,
         );
         let commit_style = self.commit_style(run, &worktree, &task.repos).await;
+        let interrupted =
+            self.interrupted_session(&run.id, Some(&task.id), &task.cli, &["implement", "fix"])?;
+        // No session to continue (another agent or model took the task): it
+        // gets a memo of what the agents before it said and ran.
+        let memo = if interrupted.is_none() && task.worker_session.is_none() {
+            self.task_memo(&run.id, &task.id)?
+        } else {
+            None
+        };
         let shared = prompts::Shared {
             design_file: design_file.as_deref(),
             files: &files,
             done: &done,
             guides: &guides,
             commit_style: &commit_style,
+            memo: memo.as_deref(),
         };
-        let interrupted =
-            self.interrupted_session(&run.id, Some(&task.id), &task.cli, &["implement", "fix"])?;
         let (prompt, resume, step) = match (&interrupted, &review, &task.worker_session) {
             (Some(session), _, _) => (
                 prompts::resume_step(&format!(
@@ -3390,7 +3677,21 @@ impl Engine {
         }
         let (id, log) = self.open_side_log(run_id, task_id, "check", title);
         let mut results = Vec::new();
+        let mut normalized: Vec<&Path> = Vec::new();
         for job in jobs {
+            // CRLF an agent's own git left (see `git::normalize_crlf`), once a folder.
+            if !normalized.contains(&job.cwd.as_path()) {
+                normalized.push(&job.cwd);
+                if let Ok(fixed) = git::normalize_crlf(&job.cwd).await {
+                    if !fixed.is_empty() {
+                        log.info(&format!(
+                            "{}{} tệp CRLF đã đưa về LF như trong git",
+                            workspace::label(&job.repo),
+                            fixed.len()
+                        ));
+                    }
+                }
+            }
             let shown = format!("{}{}", workspace::label(&job.repo), job.command);
             log.heading(&format!("$ {shown}"));
             let started = Instant::now();
@@ -6196,6 +6497,12 @@ impl Engine {
             task.model = clean(model.clone());
             task.effort = clean(effort.clone());
             task.worker_session = None;
+            task.status_note = None;
+            // The worker's part is done: the checks and the review go on,
+            // and the new agent takes the fixes they ask for.
+            if task.status == task_status::CHECKING || task.status == task_status::REVIEW {
+                return;
+            }
             let fixing = task
                 .last_review
                 .as_ref()
@@ -6205,7 +6512,6 @@ impl Engine {
             } else {
                 task_status::READY.into()
             };
-            task.status_note = None;
         })?;
         Ok(())
     }
@@ -6327,5 +6633,45 @@ mod push_tests {
             "pre-push: x is behind origin/develop. Rebase before pushing"
         );
         assert_eq!(super::push_error("a\nb\nc\nd\ne"), "b · c · d · e");
+    }
+}
+
+#[cfg(test)]
+mod branch_name_tests {
+    use super::clean_branch_name;
+
+    #[test]
+    fn leader_branch_names_are_made_safe_for_git() {
+        let clean = clean_branch_name;
+        assert_eq!(
+            clean("feat/cart-discount-codes").as_deref(),
+            Some("feat/cart-discount-codes")
+        );
+        assert_eq!(
+            clean(" `fix/Login redirect loop` ").as_deref(),
+            Some("fix/Login-redirect-loop")
+        );
+        assert_eq!(
+            clean("refs/heads/feature/ABC-123-x").as_deref(),
+            Some("feature/ABC-123-x")
+        );
+        assert_eq!(clean("origin/feat/x").as_deref(), Some("feat/x"));
+        assert_eq!(
+            clean("feat//..hidden/a..b/x.lock").as_deref(),
+            Some("feat/hidden/a.b/x")
+        );
+        assert_eq!(
+            clean("feat/sửa lỗi đăng nhập").as_deref(),
+            Some("feat/s-a-l-i-ng-nh-p")
+        );
+        assert_eq!(
+            clean(r"feat/a~b^c:d?e*f[g\h").as_deref(),
+            Some("feat/a-b-c-d-e-f-g-h")
+        );
+        let long = clean(&format!("feat/{}", "a-".repeat(50))).unwrap();
+        assert!(long.len() <= 60 && !long.ends_with('-'), "{long}");
+        assert_eq!(clean("  "), None);
+        assert_eq!(clean("///"), None);
+        assert_eq!(clean("HEAD"), None);
     }
 }
